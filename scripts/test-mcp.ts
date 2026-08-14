@@ -39,5 +39,27 @@ console.log('list_devices:', JSON.stringify(r1.content))
 const r2 = await client.callTool({ name: 'read_register', arguments: { device_id: obj.id, register_id: reg0.id } })
 console.log('read_register:', JSON.stringify(r2.content))
 
+// CRUD tools
+const g2 = await client.callTool({ name: 'create_group', arguments: { device_id: obj.id, name: '测试组', start_address: 20, quantity: 5 } })
+console.log('create_group:', JSON.stringify(g2.content))
+const g2id = JSON.parse((g2.content[0] as any).text).id
+
+const r3 = await client.callTool({ name: 'create_register', arguments: { group_id: g2id, alias: '新寄存器', start_address: 20, data_type: 'uint16' } })
+console.log('create_register:', JSON.stringify(r3.content))
+const r3id = JSON.parse((r3.content[0] as any).text).id
+
+const r4 = await client.callTool({ name: 'update_register', arguments: { register_id: r3id, alias: '改别名', data_type: 'float16' } })
+console.log('update_register:', JSON.stringify(r4.content))
+
+const r5 = await client.callTool({ name: 'update_group', arguments: { group_id: g2id, quantity: 10 } })
+console.log('update_group:', JSON.stringify(r5.content))
+
+const r6 = await client.callTool({ name: 'delete_register', arguments: { register_id: r3id } })
+console.log('delete_register:', JSON.stringify(r6.content))
+
+const r7 = await client.callTool({ name: 'delete_group', arguments: { group_id: g2id } })
+console.log('delete_group:', JSON.stringify(r7.content))
+
 await client.close()
 console.log('MCP TEST OK')
+process.exit(0)

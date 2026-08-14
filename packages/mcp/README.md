@@ -26,6 +26,12 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `read_all` | `device_id` | 读某设备全部寄存器快照 |
 | `query_history` | `device_id, register_id, start, end` | 查历史时序 |
 | `write_register` | `device_id, register_id, value` | 写寄存器（FC16，控制真机） |
+| `create_group` | `device_id, name, function_code?, start_address, quantity, slave_id?, poll_interval_ms?` | 新建分组 |
+| `update_group` | `group_id, name?, slave_id?, function_code?, start_address?, quantity?, poll_interval_ms?, is_active?` | 更改分组 |
+| `create_register` | `group_id, alias?, function_code?, start_address, data_type?` | 新增寄存器 |
+| `update_register` | `register_id, alias?, data_type?` | 更改别名/类型 |
+| `delete_register` | `register_id` | 删除寄存器 |
+| `delete_group` | `group_id` | 删除分组 |
 
 ## DSH 接入（cordis.yml）
 
