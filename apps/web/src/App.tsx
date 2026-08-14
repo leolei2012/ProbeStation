@@ -6,7 +6,7 @@ interface Register { id: number; groupId: number; objectId: number; alias: strin
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
 
 type Lang = 'zh' | 'en'
-type Theme = 'light' | 'dark'
+type Theme = 'light' | 'dark' | 'system'
 type T = (key: string) => string
 
 const I18N: Record<Lang, Record<string, string>> = {
@@ -30,7 +30,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     write: '写', valuePh: '值',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
-    appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色',
+    appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
     appInfo: '应用信息', version: '版本', arch: '架构', persistence: '持久化',
     dataMgmt: '数据管理', runLogs: '运行日志', clearLogs: '清空日志', logsCleared: '日志已清空',
@@ -56,7 +56,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     write: 'Write', valuePh: 'value',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
-    appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark',
+    appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
     appInfo: 'App info', version: 'Version', arch: 'Architecture', persistence: 'Persistence',
     dataMgmt: 'Data management', runLogs: 'Runtime logs', clearLogs: 'Clear logs', logsCleared: 'Logs cleared',
@@ -71,7 +71,7 @@ const api = {
 }
 
 export default function App() {
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('ps-theme') as Theme) ?? 'light')
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('ps-theme') as Theme) ?? 'system')
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('ps-lang') as Lang) ?? 'zh')
   const [devices, setDevices] = useState<Device[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -82,7 +82,17 @@ export default function App() {
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
 
-  useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('ps-theme', theme) }, [theme])
+  useEffect(() => {
+    const apply = () => {
+      const r = theme === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme
+      document.documentElement.setAttribute('data-theme', r)
+    }
+    apply()
+    localStorage.setItem('ps-theme', theme)
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
+  }, [theme])
   useEffect(() => { localStorage.setItem('ps-lang', lang) }, [lang])
 
   const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices) }, [])
@@ -242,6 +252,7 @@ function SettingsView({ t, theme, setTheme, lang, setLang }: {
           <div className="seg">
             <button className={theme === 'light' ? 'selected' : ''} onClick={() => setTheme('light')}>{t('light')}</button>
             <button className={theme === 'dark' ? 'selected' : ''} onClick={() => setTheme('dark')}>{t('dark')}</button>
+            <button className={theme === 'system' ? 'selected' : ''} onClick={() => setTheme('system')}>{t('system')}</button>
           </div>
         </div>
       </div>

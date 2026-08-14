@@ -353,3 +353,24 @@
 
 - 前端继续：历史曲线图、设备详情分 tab。
 - Phase 5：降采样/保留、AI 测试层。
+
+---
+
+## 2026-08-14（续）—— 前端复刻 DSH 设计语言
+
+### 完成内容
+
+- 从 `reference/deepseek-harness-master/packages/client/ui-theme/src/styles/` 提取 DSH 设计令牌：
+  - 色板：蓝灰中性色（`neutral-bluish`）+ DeepSeek 蓝 `rgb(65,118,230)` 强调色。
+  - 近黑主按钮（`brand-primary`）、极浅灰侧栏（`#f9fafb` 浅色 / `#1b1b1c` 深色）。
+  - 字体栈（SF Pro / PingFang / Microsoft YaHei）。
+- `styles.css` 全部换成 DSH 精确色值；`App.tsx` 主题加 **system（跟随系统）**，三段切换，默认 system。
+
+### 关键点
+
+- 主题令牌对齐 DSH：`--dsw-static-neutral-bluish-*`、`--dsw-static-deepseek-*`。
+- 主题偏好 light/dark/system，system 用 matchMedia 跟随 OS 深色。
+
+### 下一步
+
+- 继续前端（历史曲线图、分 tab），或 Phase 5。
