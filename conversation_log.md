@@ -138,3 +138,24 @@
 ### 下一步
 
 - Phase 3c：`apps/web` React + Vite 前端 shell（设备列表 + 实时值表 + WS 联动）。
+
+---
+
+## 2026-08-14（续）—— Phase 3c：React 前端 + 全栈打通
+
+### 完成内容
+
+- `apps/web`：React 18 + Vite 6 前端（设备列表 + 实时值表 + WS 联动），`vite build` 通过。
+- 端到端 demo `scripts/demo-full.ts`：config + modbus + poller + store + api 串起来，真实轮询 3 次 → latest/query 全正确。
+- 至此 Phase 3 完成：config 元数据 + api(REST+WS) + React 前端。
+
+### 关键点
+
+- 前端 dev 用 vite proxy 把 `/api`、`/ws` 转发到后端 8080；生产由后端 serve dist（待接线）。
+- poller 的 `registerId` 仍用 `startAddress` 占位（与 config 真实 register id 未对齐，Phase 4 接）。
+
+### 下一步（Phase 4）
+
+- slave 模拟器、ota、importer（MBS/MBP 导入）、sink 导出、rule 告警。
+- poller ↔ config 对齐（真实 register id、循环轮询、暂停/重连）。
+- 生产接线：CLI 启动全插件 + serve 前端 dist。

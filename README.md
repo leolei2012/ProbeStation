@@ -17,7 +17,7 @@ DSH（DeepSeek Harness）「一切皆插件」的理念组织代码。
 | 0 | 架构方案（选型、插件边界、数据模型、路线） | ✅ |
 | 1 | monorepo 脚手架 + Cordis 运行时 + core 插件 | ✅ |
 | 2 | modbus 驱动 + poller + store（轮询→落库→查询闭环） | ✅ |
-| 3 | api + ws + client（React 前端） | ⬜ |
+| 3 | api + ws + client（React 前端） | ✅ |
 | 4 | slave 模拟器、ota、importer、sink 导出、rule 告警 | ⬜ |
 | 5 | 降采样/保留、AI 测试层对接 | ⬜ |
 
