@@ -5,6 +5,65 @@ interface Device { id: number; name: string; ip: string; port: number; mode: str
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
 
+type Lang = 'zh' | 'en'
+type Theme = 'light' | 'dark'
+type T = (key: string) => string
+
+const I18N: Record<Lang, Record<string, string>> = {
+  zh: {
+    brand: '砺台',
+    brandSub: 'ProbeStation · 设备观测与测试',
+    newDevice: '＋ 新建设备',
+    devices: '设备',
+    noDevices: '暂无设备，点上方新建',
+    settings: '⚙ 设置',
+    emptyHint: '选择左侧设备，或新建设备开始观测',
+    polling: '轮询中',
+    stopped: '已停用',
+    pause: '暂停',
+    resume: '启用',
+    exportCsv: '导出 CSV',
+    exportXlsx: '导出 XLSX',
+    deleteDevice: '删除设备',
+    regCount: '{n} 个寄存器',
+    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '实时值', colQuality: '质量', colWrite: '写值',
+    write: '写', valuePh: '值',
+    noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
+    settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
+    appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色',
+    language: '语言',
+    appInfo: '应用信息', version: '版本', arch: '架构', persistence: '持久化',
+    dataMgmt: '数据管理', runLogs: '运行日志', clearLogs: '清空日志', logsCleared: '日志已清空',
+    newDeviceTitle: '新建设备', name: '名称', ip: 'IP 地址', port: '端口', cancel: '取消', add: '添加',
+  },
+  en: {
+    brand: 'ProbeStation',
+    brandSub: 'Device observation & testing',
+    newDevice: '＋ New Device',
+    devices: 'Devices',
+    noDevices: 'No devices, create one above',
+    settings: '⚙ Settings',
+    emptyHint: 'Select a device or create one to start',
+    polling: 'Polling',
+    stopped: 'Stopped',
+    pause: 'Pause',
+    resume: 'Resume',
+    exportCsv: 'Export CSV',
+    exportXlsx: 'Export XLSX',
+    deleteDevice: 'Delete',
+    regCount: '{n} registers',
+    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write',
+    write: 'Write', valuePh: 'value',
+    noRegisters: 'No registers (import MBS/MBP via API)',
+    settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
+    appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark',
+    language: 'Language',
+    appInfo: 'App info', version: 'Version', arch: 'Architecture', persistence: 'Persistence',
+    dataMgmt: 'Data management', runLogs: 'Runtime logs', clearLogs: 'Clear logs', logsCleared: 'Logs cleared',
+    newDeviceTitle: 'New device', name: 'Name', ip: 'IP address', port: 'Port', cancel: 'Cancel', add: 'Add',
+  },
+}
+
 const api = {
   get: (url: string) => fetch(url).then((r) => r.json()),
   post: (url: string, body?: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) }).then((r) => r.json()),
@@ -12,6 +71,8 @@ const api = {
 }
 
 export default function App() {
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('ps-theme') as Theme) ?? 'light')
+  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('ps-lang') as Lang) ?? 'zh')
   const [devices, setDevices] = useState<Device[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [view, setView] = useState<'device' | 'settings'>('device')
@@ -19,8 +80,12 @@ export default function App() {
   const [latest, setLatest] = useState<Record<number, LatestValue>>({})
   const [showAdd, setShowAdd] = useState(false)
 
-  const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices) }, [])
+  const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
 
+  useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('ps-theme', theme) }, [theme])
+  useEffect(() => { localStorage.setItem('ps-lang', lang) }, [lang])
+
+  const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices) }, [])
   const refreshRegisters = useCallback((id: number) => {
     api.get('/api/monitor_objects/' + id + '/groups').then(async (groups: Array<{ id: number }>) => {
       const all: Register[] = []
@@ -33,20 +98,14 @@ export default function App() {
   }, [])
 
   useEffect(() => { refreshDevices() }, [refreshDevices])
-  useEffect(() => {
-    if (selectedId != null) { setView('device'); refreshRegisters(selectedId) }
-  }, [selectedId, refreshRegisters])
+  useEffect(() => { if (selectedId != null) { setView('device'); refreshRegisters(selectedId) } }, [selectedId, refreshRegisters])
   useEffect(() => {
     const ws = new WebSocket('ws://' + location.host + '/ws')
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data)
       if (msg.type === 'latest') setLatest(msg.data)
       else if (msg.type === 'poller/result') {
-        setLatest((prev) => {
-          const next = { ...prev }
-          for (const p of msg.points) next[p.registerId] = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp }
-          return next
-        })
+        setLatest((prev) => { const next = { ...prev }; for (const p of msg.points) next[p.registerId] = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp }; return next })
       }
     }
     return () => ws.close()
@@ -55,12 +114,9 @@ export default function App() {
   const addDevice = useCallback(async (name: string, ip: string, port: number) => {
     if (!name || !ip) return
     await api.post('/api/monitor_objects', { name, ip, port })
-    setShowAdd(false)
-    refreshDevices()
+    setShowAdd(false); refreshDevices()
   }, [refreshDevices])
-
   const toggleDevice = useCallback(async (id: number) => { await api.post('/api/monitor_objects/' + id + '/toggle'); refreshDevices() }, [refreshDevices])
-
   const deleteDevice = useCallback(async (id: number) => {
     await api.del('/api/monitor_objects/' + id)
     if (selectedId === id) setSelectedId(null)
@@ -73,11 +129,11 @@ export default function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <div className="brand">砺台</div>
-          <div className="brand-sub">ProbeStation · 设备观测与测试</div>
-          <button className="new-btn" onClick={() => setShowAdd(true)}>＋ 新建设备</button>
+          <div className="brand">{t('brand')}</div>
+          <div className="brand-sub">{t('brandSub')}</div>
+          <button className="new-btn" onClick={() => setShowAdd(true)}>{t('newDevice')}</button>
         </div>
-        <div className="sidebar-section">设备</div>
+        <div className="sidebar-section">{t('devices')}</div>
         <div className="device-list">
           {devices.map((d) => (
             <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => setSelectedId(d.id)}>
@@ -89,61 +145,51 @@ export default function App() {
               <button className="device-del" onClick={(e) => { e.stopPropagation(); deleteDevice(d.id) }}>×</button>
             </div>
           ))}
-          {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>暂无设备，点上方新建</div>}
+          {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
         </div>
         <div className="sidebar-footer">
-          <button className={'settings-btn' + (view === 'settings' ? ' active' : '')} onClick={() => setView('settings')}>⚙ 设置</button>
+          <button className={'settings-btn' + (view === 'settings' ? ' active' : '')} onClick={() => setView('settings')}>{t('settings')}</button>
         </div>
       </aside>
 
       <main className="main">
         {view === 'settings'
-          ? <SettingsView />
+          ? <SettingsView t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} />
           : selected
-            ? <DeviceView device={selected} registers={registers} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} />
-            : <EmptyState />}
+            ? <DeviceView t={t} device={selected} registers={registers} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} />
+            : <EmptyState t={t} />}
       </main>
 
-      {showAdd && <AddDeviceModal onClose={() => setShowAdd(false)} onAdd={addDevice} />}
+      {showAdd && <AddDeviceModal t={t} onClose={() => setShowAdd(false)} onAdd={addDevice} />}
     </div>
   )
 }
 
-function EmptyState() {
-  return (
-    <div className="empty-state">
-      <div className="big">🛰️</div>
-      <div>选择左侧设备，或新建设备开始观测</div>
-    </div>
-  )
+function EmptyState({ t }: { t: T }) {
+  return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div></div>
 }
 
-function DeviceView({ device, registers, latest, onToggle, onDelete }: {
-  device: Device; registers: Register[]; latest: Record<number, LatestValue>
+function DeviceView({ t, device, registers, latest, onToggle, onDelete }: {
+  t: T; device: Device; registers: Register[]; latest: Record<number, LatestValue>
   onToggle: (id: number) => void; onDelete: (id: number) => void
 }) {
   const exportCsv = () => { const now = new Date().toISOString(); window.open('/api/export/csv?object_id=' + device.id + '&start=2000-01-01T00:00:00Z&end=' + now) }
   const exportXlsx = () => { const now = new Date().toISOString(); window.open('/api/export/xlsx?object_id=' + device.id + '&start=2000-01-01T00:00:00Z&end=' + now) }
-
   return (
     <div>
       <div className="device-head">
         <span className="name">{device.name}</span>
-        <span className={'status-badge' + (device.isActive ? ' on' : '')}>{device.isActive ? '轮询中' : '已停用'}</span>
+        <span className={'status-badge' + (device.isActive ? ' on' : '')}>{device.isActive ? t('polling') : t('stopped')}</span>
       </div>
-      <div className="main-sub">{device.ip}:{device.port} · {registers.length} 个寄存器</div>
-
+      <div className="main-sub">{device.ip}:{device.port} · {t('regCount').replace('{n}', String(registers.length))}</div>
       <div className="toolbar">
-        <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? '暂停' : '启用'}</button>
-        <button className="btn" onClick={exportCsv}>导出 CSV</button>
-        <button className="btn" onClick={exportXlsx}>导出 XLSX</button>
-        <button className="btn danger" onClick={() => onDelete(device.id)}>删除设备</button>
+        <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? t('pause') : t('resume')}</button>
+        <button className="btn" onClick={exportCsv}>{t('exportCsv')}</button>
+        <button className="btn" onClick={exportXlsx}>{t('exportXlsx')}</button>
+        <button className="btn danger" onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
       </div>
-
       <table className="reg">
-        <thead>
-          <tr><th>别名</th><th>地址</th><th>类型</th><th>实时值</th><th>质量</th><th>写值</th></tr>
-        </thead>
+        <thead><tr><th>{t('colAlias')}</th><th>{t('colAddr')}</th><th>{t('colType')}</th><th>{t('colValue')}</th><th>{t('colQuality')}</th><th>{t('colWrite')}</th></tr></thead>
         <tbody>
           {registers.map((r) => {
             const v = latest[r.id]
@@ -154,18 +200,18 @@ function DeviceView({ device, registers, latest, onToggle, onDelete }: {
                 <td className="kv">{r.dataType}</td>
                 <td className="value">{v ? v.rawValue : '—'}</td>
                 <td className="kv">{v ? v.quality : '—'}</td>
-                <td><WriteCell reg={r} /></td>
+                <td><WriteCell t={t} reg={r} /></td>
               </tr>
             )
           })}
-          {registers.length === 0 && <tr><td colSpan={6} className="kv">暂无寄存器（可通过 API 导入 MBS/MBP 文件）</td></tr>}
+          {registers.length === 0 && <tr><td colSpan={6} className="kv">{t('noRegisters')}</td></tr>}
         </tbody>
       </table>
     </div>
   )
 }
 
-function WriteCell({ reg }: { reg: Register }) {
+function WriteCell({ t, reg }: { t: T; reg: Register }) {
   const [val, setVal] = useState('')
   const write = async () => {
     if (val === '') return
@@ -174,30 +220,52 @@ function WriteCell({ reg }: { reg: Register }) {
   }
   return (
     <div style={{ display: 'flex', gap: 4 }}>
-      <input className="write-input" value={val} onChange={(e) => setVal(e.target.value)} placeholder="值" />
-      <button className="btn" onClick={write}>写</button>
+      <input className="write-input" value={val} onChange={(e) => setVal(e.target.value)} placeholder={t('valuePh')} />
+      <button className="btn" onClick={write}>{t('write')}</button>
     </div>
   )
 }
 
-function SettingsView() {
+function SettingsView({ t, theme, setTheme, lang, setLang }: {
+  t: T; theme: Theme; setTheme: (v: Theme) => void; lang: Lang; setLang: (v: Lang) => void
+}) {
   const [msg, setMsg] = useState('')
-  const clearLogs = async () => { await api.post('/api/logs/clear'); setMsg('日志已清空') }
+  const clearLogs = async () => { await api.post('/api/logs/clear'); setMsg(t('logsCleared')) }
   return (
     <div>
-      <div className="main-title">设置</div>
-      <div className="main-sub">应用与数据管理</div>
+      <div className="main-title">{t('settingsTitle')}</div>
+      <div className="main-sub">{t('settingsSub')}</div>
       <div className="settings-card">
-        <h4>应用信息</h4>
-        <div className="setting-row"><span>版本</span><span className="kv">0.1.0</span></div>
-        <div className="setting-row"><span>架构</span><span className="kv">Cordis 插件化 · TypeScript</span></div>
-        <div className="setting-row"><span>持久化</span><span className="kv">SQLite 元数据 + DuckDB 时序</span></div>
+        <h4>{t('appearance')}</h4>
+        <div className="setting-row">
+          <span>{t('themeLabel')}</span>
+          <div className="seg">
+            <button className={theme === 'light' ? 'selected' : ''} onClick={() => setTheme('light')}>{t('light')}</button>
+            <button className={theme === 'dark' ? 'selected' : ''} onClick={() => setTheme('dark')}>{t('dark')}</button>
+          </div>
+        </div>
       </div>
       <div className="settings-card">
-        <h4>数据管理</h4>
+        <h4>{t('language')}</h4>
         <div className="setting-row">
-          <span>运行日志</span>
-          <button className="btn" onClick={clearLogs}>清空日志</button>
+          <span>{t('language')}</span>
+          <div className="seg">
+            <button className={lang === 'zh' ? 'selected' : ''} onClick={() => setLang('zh')}>中文</button>
+            <button className={lang === 'en' ? 'selected' : ''} onClick={() => setLang('en')}>English</button>
+          </div>
+        </div>
+      </div>
+      <div className="settings-card">
+        <h4>{t('appInfo')}</h4>
+        <div className="setting-row"><span>{t('version')}</span><span className="kv">0.1.0</span></div>
+        <div className="setting-row"><span>{t('arch')}</span><span className="kv">Cordis · TypeScript</span></div>
+        <div className="setting-row"><span>{t('persistence')}</span><span className="kv">SQLite + DuckDB</span></div>
+      </div>
+      <div className="settings-card">
+        <h4>{t('dataMgmt')}</h4>
+        <div className="setting-row">
+          <span>{t('runLogs')}</span>
+          <button className="btn" onClick={clearLogs}>{t('clearLogs')}</button>
         </div>
         {msg && <div className="kv" style={{ marginTop: 8 }}>{msg}</div>}
       </div>
@@ -205,23 +273,23 @@ function SettingsView() {
   )
 }
 
-function AddDeviceModal({ onClose, onAdd }: { onClose: () => void; onAdd: (name: string, ip: string, port: number) => void }) {
+function AddDeviceModal({ t, onClose, onAdd }: { t: T; onClose: () => void; onAdd: (name: string, ip: string, port: number) => void }) {
   const [name, setName] = useState('')
   const [ip, setIp] = useState('')
   const [port, setPort] = useState('8899')
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>新建设备</h3>
-        <label>名称</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="设备名称" autoFocus />
-        <label>IP 地址</label>
-        <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.90.32" />
-        <label>端口</label>
+        <h3>{t('newDeviceTitle')}</h3>
+        <label>{t('name')}</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        <label>{t('ip')}</label>
+        <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.90.176" />
+        <label>{t('port')}</label>
         <input value={port} onChange={(e) => setPort(e.target.value)} placeholder="8899" />
         <div className="modal-actions">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn primary" onClick={() => onAdd(name, ip, Number(port))}>添加</button>
+          <button className="btn" onClick={onClose}>{t('cancel')}</button>
+          <button className="btn primary" onClick={() => onAdd(name, ip, Number(port))}>{t('add')}</button>
         </div>
       </div>
     </div>
