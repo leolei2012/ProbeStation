@@ -75,7 +75,7 @@ export default function App() {
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('ps-lang') as Lang) ?? 'zh')
   const [devices, setDevices] = useState<Device[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [view, setView] = useState<'device' | 'settings'>('device')
+  const [showSettings, setShowSettings] = useState(false)
   const [registers, setRegisters] = useState<Register[]>([])
   const [latest, setLatest] = useState<Record<number, LatestValue>>({})
   const [showAdd, setShowAdd] = useState(false)
@@ -108,7 +108,7 @@ export default function App() {
   }, [])
 
   useEffect(() => { refreshDevices() }, [refreshDevices])
-  useEffect(() => { if (selectedId != null) { setView('device'); refreshRegisters(selectedId) } }, [selectedId, refreshRegisters])
+  useEffect(() => { if (selectedId != null) refreshRegisters(selectedId) }, [selectedId, refreshRegisters])
   useEffect(() => {
     const ws = new WebSocket('ws://' + location.host + '/ws')
     ws.onmessage = (e) => {
@@ -158,19 +158,18 @@ export default function App() {
           {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
         </div>
         <div className="sidebar-footer">
-          <button className={'settings-btn' + (view === 'settings' ? ' active' : '')} onClick={() => setView('settings')}>{t('settings')}</button>
+          <button className="settings-btn" onClick={() => setShowSettings(true)}>{t('settings')}</button>
         </div>
       </aside>
 
       <main className="main">
-        {view === 'settings'
-          ? <SettingsView t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} />
-          : selected
-            ? <DeviceView t={t} device={selected} registers={registers} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} />
-            : <EmptyState t={t} />}
+        {selected
+          ? <DeviceView t={t} device={selected} registers={registers} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} />
+          : <EmptyState t={t} />}
       </main>
 
       {showAdd && <AddDeviceModal t={t} onClose={() => setShowAdd(false)} onAdd={addDevice} />}
+      {showSettings && <SettingsModal t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} onClose={() => setShowSettings(false)} />}
     </div>
   )
 }
@@ -236,15 +235,18 @@ function WriteCell({ t, reg }: { t: T; reg: Register }) {
   )
 }
 
-function SettingsView({ t, theme, setTheme, lang, setLang }: {
-  t: T; theme: Theme; setTheme: (v: Theme) => void; lang: Lang; setLang: (v: Lang) => void
+function SettingsModal({ t, theme, setTheme, lang, setLang, onClose }: {
+  t: T; theme: Theme; setTheme: (v: Theme) => void; lang: Lang; setLang: (v: Lang) => void; onClose: () => void
 }) {
   const [msg, setMsg] = useState('')
   const clearLogs = async () => { await api.post('/api/logs/clear'); setMsg(t('logsCleared')) }
   return (
-    <div>
-      <div className="main-title">{t('settingsTitle')}</div>
-      <div className="main-sub">{t('settingsSub')}</div>
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span>{t('settingsTitle')}</span>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
       <div className="settings-card">
         <h4>{t('appearance')}</h4>
         <div className="setting-row">
@@ -279,6 +281,7 @@ function SettingsView({ t, theme, setTheme, lang, setLang }: {
           <button className="btn" onClick={clearLogs}>{t('clearLogs')}</button>
         </div>
         {msg && <div className="kv" style={{ marginTop: 8 }}>{msg}</div>}
+      </div>
       </div>
     </div>
   )
