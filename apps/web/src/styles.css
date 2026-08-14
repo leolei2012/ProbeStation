@@ -158,5 +158,5 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 .firmware-card { max-width: 560px; }
 .group-block { margin-bottom: 22px; }
-.group-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .group-name { font-size: 13px; font-weight: 600; }

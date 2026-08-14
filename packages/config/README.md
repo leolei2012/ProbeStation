@@ -21,7 +21,7 @@ class ConfigStore {
   deleteObject(id): void                                // 级联删 group + register
   toggleObject(id): DeviceRecord | undefined            // 切换 is_active
   // Groups（寄存器组）
-  listGroups(objectId) / getGroup(id) / createGroup(...) / updateGroup(id, fields) / deleteGroup(id) / toggleGroup(id)
+  listGroups(objectId) / getGroup(id) / createGroup(objectId, name, functionCode, startAddress, quantity, mode?, slaveId?, pollIntervalMs?) / updateGroup(id, fields) / deleteGroup(id) / toggleGroup(id)
   // Registers（寄存器）
   listRegisters(groupId) / listRegistersByObject(objectId) / getRegister(id)
   createRegister(groupId, objectId, alias, functionCode, startAddress, dataType?)

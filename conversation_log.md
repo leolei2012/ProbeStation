@@ -417,3 +417,20 @@
 - `docs/01` 立项纪要 → `docs/02` 架构方案 → `docs/03` 开发接手指南
 - `conversation_log.md` — 讨论流水
 - 每个包 `README.md` — 插件契约（11 插件 + 2 app 全覆盖）
+
+---
+
+## 2026-08-14（续）—— 分组管理 + 按组 scan rate / slave id
+
+### 完成内容
+
+- `register_groups` 表新增 `slave_id`（默认 1）+ `poll_interval_ms`（默认 1000，scan rate）。
+- `modbus` 驱动改为**多从站**：每个 slave id 一个 TCP 连接（`Map<slaveId, connection>`），read/write 方法带 slaveId 参数。
+- `poller` 按组 scan rate 轮询（`lastPoll` 跟踪，只轮询到期的组）+ 按组 slave id 读。
+- `api` 分组 create/update 接受 slaveId/pollIntervalMs；写寄存器按寄存器的组 slave id 路由。
+- 前端 Live 页：分组管理（新建/编辑/删除/暂停分组，字段：组名/从站ID/功能码/起始地址/数量/扫描间隔）。
+- 测试 `scripts/test-groups.ts`：分组 CRUD + 新字段全通过。
+
+### 注意
+
+- schema 加了列，**旧 data/ 需删除重置**（测试已清理）。

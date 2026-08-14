@@ -3,7 +3,6 @@ import z from 'schemastery'
 import net from 'node:net'
 import { ModbusTCPClient } from 'jsmodbus'
 
-/** Cordis plugin name. */
 export const name = 'modbus'
 
 export interface Config {
@@ -16,82 +15,82 @@ export const Config: z<Config> = z.object({
   defaultUnitId: z.number().default(1),
 })
 
-/** Transport-agnostic Modbus driver, mirroring the legacy Python abstraction. */
+/** 传输无关的 Modbus 驱动抽象。每个 slave id（unit id）一个 TCP 连接。 */
 export interface ModbusDriver {
   connect(host: string, port: number): Promise<void>
   disconnect(): void
   isConnected(): boolean
-  readHoldingRegisters(address: number, count: number): Promise<number[]>
-  readInputRegisters(address: number, count: number): Promise<number[]>
-  writeRegister(address: number, value: number): Promise<void>
-  writeRegisters(address: number, values: number[]): Promise<void>
+  readHoldingRegisters(address: number, count: number, slaveId?: number): Promise<number[]>
+  readInputRegisters(address: number, count: number, slaveId?: number): Promise<number[]>
+  writeRegister(address: number, value: number, slaveId?: number): Promise<void>
+  writeRegisters(address: number, values: number[], slaveId?: number): Promise<void>
 }
 
-/** jsmodbus provider of {@link ModbusDriver}. */
 class JsmodbusDriver implements ModbusDriver {
-  private socket: net.Socket | null = null
-  private client: ModbusTCPClient | null = null
+  private host = ''
+  private port = 0
+  private ready = false
+  private readonly clients = new Map<number, { socket: net.Socket; client: ModbusTCPClient }>()
 
   constructor(private readonly config: Config) {}
 
   async connect(host: string, port: number): Promise<void> {
-    this.socket = new net.Socket()
-    this.client = new ModbusTCPClient(this.socket, this.config.defaultUnitId, this.config.defaultTimeoutMs)
-    await new Promise<void>((resolve, reject) => {
-      const s = this.socket!
-      s.once('connect', resolve)
-      s.once('error', reject)
-      s.connect(port, host)
-    })
+    this.host = host
+    this.port = port
+    this.ready = true
   }
 
   disconnect(): void {
-    this.socket?.destroy()
-    this.socket = null
-    this.client = null
+    for (const c of this.clients.values()) c.socket.destroy()
+    this.clients.clear()
+    this.ready = false
   }
 
-  isConnected(): boolean {
-    return this.socket !== null && !this.socket.destroyed && this.socket.writable
-  }
+  isConnected(): boolean { return this.ready }
 
-  private requireClient(): ModbusTCPClient {
-    if (!this.client) throw new Error('modbus driver is not connected')
-    return this.client
+  private async getClient(slaveId: number): Promise<ModbusTCPClient> {
+    const existing = this.clients.get(slaveId)
+    if (existing && !existing.socket.destroyed && existing.socket.writable) return existing.client
+    const socket = new net.Socket()
+    const client = new ModbusTCPClient(socket, slaveId, this.config.defaultTimeoutMs)
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve)
+      socket.once('error', reject)
+      socket.connect(this.port, this.host)
+    })
+    this.clients.set(slaveId, { socket, client })
+    return client
   }
 
   private static toValues(body: any): number[] {
-    if (body.isException) throw new Error(`modbus exception code=${body.exceptionCode ?? body.code}`)
+    if (body.isException) throw new Error('modbus exception code=' + (body.exceptionCode ?? body.code))
     const arr = body.valuesAsArray as number[] | undefined
     return arr ? Array.from(arr) : []
   }
 
-  async readHoldingRegisters(address: number, count: number): Promise<number[]> {
-    const res = await this.requireClient().readHoldingRegisters(address, count)
+  async readHoldingRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+    const res = await (await this.getClient(slaveId)).readHoldingRegisters(address, count)
     return JsmodbusDriver.toValues(res.response.body)
   }
 
-  async readInputRegisters(address: number, count: number): Promise<number[]> {
-    const res = await this.requireClient().readInputRegisters(address, count)
+  async readInputRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+    const res = await (await this.getClient(slaveId)).readInputRegisters(address, count)
     return JsmodbusDriver.toValues(res.response.body)
   }
 
-  async writeRegister(address: number, value: number): Promise<void> {
-    const res = await this.requireClient().writeSingleRegister(address, value)
+  async writeRegister(address: number, value: number, slaveId = 1): Promise<void> {
+    const res = await (await this.getClient(slaveId)).writeSingleRegister(address, value)
     JsmodbusDriver.toValues(res.response.body)
   }
 
-  async writeRegisters(address: number, values: number[]): Promise<void> {
-    const res = await this.requireClient().writeMultipleRegisters(address, values)
+  async writeRegisters(address: number, values: number[], slaveId = 1): Promise<void> {
+    const res = await (await this.getClient(slaveId)).writeMultipleRegisters(address, values)
     JsmodbusDriver.toValues(res.response.body)
   }
 }
 
-/** Provide `ctx.modbus` (driver factory) to consumers. */
 export function apply(ctx: Context, config: Config): void {
   ctx.provide('modbus', {
-    createDriver(): ModbusDriver {
-      return new JsmodbusDriver(config)
-    },
+    createDriver(): ModbusDriver { return new JsmodbusDriver(config) },
   })
 }

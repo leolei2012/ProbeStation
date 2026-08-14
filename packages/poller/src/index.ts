@@ -4,73 +4,48 @@ import z from 'schemastery'
 export const name = 'poller'
 export const inject = ['config', 'modbus', 'store']
 
-export interface RegisterGroup {
-  id: number
-  functionCode: number
-  startAddress: number
-  quantity: number
-}
+export interface RegisterGroup { id: number; functionCode: number; startAddress: number; quantity: number; slaveId?: number }
+export interface Device { id: number; host: string; port: number; groups: RegisterGroup[] }
 
-export interface Device {
-  id: number
-  host: string
-  port: number
-  groups: RegisterGroup[]
-}
+export interface Config { pollIntervalMs: number }
+export const Config: z<Config> = z.object({ pollIntervalMs: z.number().default(1000) })
 
-export interface Config {
-  pollIntervalMs: number
-}
-
-export const Config: z<Config> = z.object({
-  pollIntervalMs: z.number().default(1000),
-})
-
-/** Polling engine: reads every active master device's groups and writes samples to the store. */
+/** 轮询引擎：按设备循环，按组 scan rate（poll_interval_ms）与 slave id 独立轮询。 */
 class PollingEngine {
   private drivers = new Map<number, any>()
   private timers: NodeJS.Timeout[] = []
+  private lastPoll = new Map<number, number>()
 
   constructor(private readonly ctx: any, private readonly config: Config) {}
 
-  /** One-shot poll (tests / manual). registerId falls back to startAddress. */
+  /** 一次性轮询（测试/手动）：忽略 scan rate，读所有组。 */
   async pollOnce(device: Device): Promise<void> {
     const driver = this.ctx.modbus.createDriver()
     await driver.connect(device.host, device.port)
     try {
       const points: Array<Record<string, unknown>> = []
       for (const g of device.groups) {
-        const values: number[] = await driver.readHoldingRegisters(g.startAddress, g.quantity)
+        const values: number[] = await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
         for (let i = 0; i < values.length; i++) {
-          points.push({
-            objectId: device.id,
-            registerId: g.startAddress + i,
-            timestamp: new Date().toISOString(),
-            rawValue: values[i],
-            quality: 'good',
-          })
+          points.push({ objectId: device.id, registerId: g.startAddress + i, timestamp: new Date().toISOString(), rawValue: values[i], quality: 'good' })
         }
       }
       this.ctx.emit('poller/result', { objectId: device.id, points })
       this.ctx.store.write(points)
       await this.ctx.store.flush()
-    } finally {
-      driver.disconnect()
-    }
+    } finally { driver.disconnect() }
   }
 
-  /** Start continuous polling for all active master devices (from config). */
   startAll(): void {
     const objects = this.ctx.config.listObjects().filter((o: any) => o.isActive && o.mode !== 'slave')
     for (const obj of objects) {
-      const loop = () => { void this.pollObject(obj).catch((e) => this.ctx.logger('poller').warn(`poll ${obj.name} failed: ${e?.message ?? e}`)) }
+      const loop = () => { void this.pollObject(obj).catch((e) => this.logPollError(obj, e)) }
       void loop()
       this.timers.push(setInterval(loop, this.config.pollIntervalMs))
     }
-    this.ctx.logger('poller').info(`started polling ${objects.length} device(s)`)
+    this.ctx.logger('poller').info('started polling ' + objects.length + ' device(s)')
   }
 
-  /** Stop all loops and close connections. */
   stopAll(): void {
     for (const t of this.timers) clearInterval(t)
     this.timers = []
@@ -78,45 +53,44 @@ class PollingEngine {
     this.drivers.clear()
   }
 
-  private async pollObject(obj: any): Promise<void> {
+  /** 写寄存器（FC06/FC16），复用持久连接，按 slave id 路由。 */
+  async write(objectId: number, address: number, value: number, method: 'single' | 'multiple' = 'multiple', slaveId = 1): Promise<void> {
+    const obj = this.ctx.config.getObject(objectId)
+    if (!obj) throw new Error('object ' + objectId + ' not found')
     const driver = await this.getDriver(obj)
-    try {
-      const groups = this.ctx.config.listGroups(obj.id).filter((g: any) => g.isActive)
-      const registers = this.ctx.config.listRegistersByObject(obj.id)
-      const addrToId = new Map<number, number>()
-      for (const r of registers) addrToId.set(r.startAddress, r.id)
+    if (method === 'multiple') await driver.writeRegisters(address, [value], slaveId)
+    else await driver.writeRegister(address, value, slaveId)
+  }
 
-      const points: Array<Record<string, unknown>> = []
-      for (const g of groups) {
-        const values: number[] = await driver.readHoldingRegisters(g.startAddress, g.quantity)
-        for (let i = 0; i < values.length; i++) {
-          const addr = g.startAddress + i
-          points.push({
-            objectId: obj.id,
-            registerId: addrToId.get(addr) ?? addr,
-            timestamp: new Date().toISOString(),
-            rawValue: values[i],
-            quality: 'good',
-          })
-        }
+  private async pollObject(obj: any): Promise<void> {
+    const groups = this.ctx.config.listGroups(obj.id).filter((g: any) => g.isActive)
+    const registers = this.ctx.config.listRegistersByObject(obj.id)
+    const addrToId = new Map<number, number>()
+    for (const r of registers) addrToId.set(r.startAddress, r.id)
+
+    const now = Date.now()
+    const points: Array<Record<string, unknown>> = []
+    for (const g of groups) {
+      const last = this.lastPoll.get(g.id) ?? 0
+      if (now - last < (g.pollIntervalMs ?? this.config.pollIntervalMs)) continue
+      this.lastPoll.set(g.id, now)
+
+      const driver = await this.getDriver(obj)
+      const values: number[] = await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
+      for (let i = 0; i < values.length; i++) {
+        const addr = g.startAddress + i
+        points.push({ objectId: obj.id, registerId: addrToId.get(addr) ?? addr, timestamp: new Date().toISOString(), rawValue: values[i], quality: 'good' })
       }
+    }
+    if (points.length > 0) {
       this.ctx.emit('poller/result', { objectId: obj.id, points })
       this.ctx.store.write(points)
-    } catch (e) {
-      // drop the driver so the next poll reconnects
-      const d = this.drivers.get(obj.id)
-      if (d) { d.disconnect(); this.drivers.delete(obj.id) }
-      throw e
     }
   }
 
-  /** 写一个寄存器（FC06 单写 / FC16 多写），复用持久连接。 */
-  async write(objectId: number, address: number, value: number, method: 'single' | 'multiple' = 'multiple'): Promise<void> {
-    const obj = this.ctx.config.getObject(objectId)
-    if (!obj) throw new Error(`object ${objectId} not found`)
-    const driver = await this.getDriver(obj)
-    if (method === 'multiple') await driver.writeRegisters(address, [value])
-    else await driver.writeRegister(address, value)
+  private logPollError(obj: any, e: any): void {
+    const msg = e && e.message ? e.message : String(e)
+    this.ctx.logger('poller').warn('poll ' + obj.name + ' failed: ' + msg)
   }
 
   private async getDriver(obj: any): Promise<any> {
@@ -130,6 +104,4 @@ class PollingEngine {
   }
 }
 
-export function apply(ctx: Context, config: Config): void {
-  ctx.provide('poller', new PollingEngine(ctx, config))
-}
+export function apply(ctx: Context, config: Config): void { ctx.provide('poller', new PollingEngine(ctx, config)) }

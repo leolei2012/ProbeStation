@@ -44,7 +44,7 @@ export function apply(ctx: Context, config: Config): void {
   app.post('/api/monitor_objects/:id/groups', async (req) => {
     const oid = Number((req.params as any).id)
     const b = req.body as any
-    return cfg.createGroup(oid, b.name, b.functionCode ?? 3, b.startAddress ?? 0, b.quantity ?? 1, b.mode ?? 'read')
+    return cfg.createGroup(oid, b.name, b.functionCode ?? 3, b.startAddress ?? 0, b.quantity ?? 1, b.mode ?? 'read', b.slaveId ?? 1, b.pollIntervalMs ?? 1000)
   })
   app.put('/api/groups/:id', async (req) => cfg.updateGroup(Number((req.params as any).id), req.body as any))
   app.delete('/api/groups/:id', async (req) => { cfg.deleteGroup(Number((req.params as any).id)); return { ok: true } })
@@ -69,7 +69,8 @@ export function apply(ctx: Context, config: Config): void {
     const b = req.body as any
     const value = Number(b.value)
     const method = b.method === 'single' ? 'single' : 'multiple'
-    await poller.write(reg.objectId, reg.startAddress, value, method)
+    const grp = cfg.getGroup(reg.groupId)
+    await poller.write(reg.objectId, reg.startAddress, value, method, grp?.slaveId ?? 1)
     cfg.log('INFO', 'api', `write register ${id} = ${value}`)
     return { register_id: id, value, method }
   })

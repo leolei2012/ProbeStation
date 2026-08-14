@@ -3,7 +3,7 @@ import './styles.css'
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
-interface DeviceGroup { id: number; name: string; functionCode: number; startAddress: number; quantity: number; registers: Register[] }
+interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number; registers: Register[] }
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
 
 type Lang = 'zh' | 'en'
@@ -33,6 +33,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
     tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件',
     groupCount: '{n} 组',
+    newGroup: '新建分组', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', scanRate: '扫描间隔(ms)', edit: '编辑', save: '保存',
     histHint: '最近 1 小时数据', curveHint: '最近 1 小时曲线', firmwareHint: '固件升级功能规划中（OTA）',
     appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
@@ -62,6 +63,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
     tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware',
     groupCount: '{n} groups',
+    newGroup: 'New Group', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', scanRate: 'Scan rate(ms)', edit: 'Edit', save: 'Save',
     histHint: 'Last 1 hour', curveHint: 'Last 1 hour', firmwareHint: 'Firmware upgrade (OTA) is planned',
     appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
@@ -74,6 +76,7 @@ const I18N: Record<Lang, Record<string, string>> = {
 const api = {
   get: (url: string) => fetch(url).then((r) => r.json()),
   post: (url: string, body?: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) }).then((r) => r.json()),
+  put: (url: string, body: unknown) => fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()),
   del: (url: string) => fetch(url, { method: 'DELETE' }).then((r) => r.json()),
 }
 
@@ -106,11 +109,11 @@ export default function App() {
 
   const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices) }, [])
   const refreshRegisters = useCallback((id: number) => {
-    api.get('/api/monitor_objects/' + id + '/groups').then(async (gs: Array<{ id: number; name: string; functionCode: number; startAddress: number; quantity: number }>) => {
+    api.get('/api/monitor_objects/' + id + '/groups').then(async (gs: Array<{ id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number }>) => {
       const out: DeviceGroup[] = []
       for (const g of gs) {
         const regs: Register[] = await api.get('/api/groups/' + g.id + '/registers')
-        out.push({ id: g.id, name: g.name, functionCode: g.functionCode, startAddress: g.startAddress, quantity: g.quantity, registers: regs })
+        out.push({ id: g.id, name: g.name, slaveId: g.slaveId, functionCode: g.functionCode, startAddress: g.startAddress, quantity: g.quantity, pollIntervalMs: g.pollIntervalMs, isActive: g.isActive, registers: regs })
       }
       setGroups(out)
     })
@@ -183,7 +186,7 @@ export default function App() {
 
       <main className="main">
         {selected
-          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} />
+          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
           : <EmptyState t={t} />}
       </main>
 
@@ -197,9 +200,9 @@ function EmptyState({ t }: { t: T }) {
   return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div></div>
 }
 
-function DeviceView({ t, device, groups, latest, onToggle, onDelete }: {
+function DeviceView({ t, device, groups, latest, onToggle, onDelete, onRefresh }: {
   t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>
-  onToggle: (id: number) => void; onDelete: (id: number) => void
+  onToggle: (id: number) => void; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
   const registers = groups.flatMap((g) => g.registers)
@@ -214,7 +217,7 @@ function DeviceView({ t, device, groups, latest, onToggle, onDelete }: {
       </div>
       <div className="main-sub">{device.ip}:{device.port} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
       <TabBar tabs={[t('tabLive'), t('tabHistory'), t('tabCurve'), t('tabFirmware')]} active={tab} onChange={setTab} />
-      {tab === 0 && <LiveTable t={t} groups={groups} latest={latest} />}
+      {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} onRefresh={() => onRefresh(device.id)} />}
       {tab === 1 && <HistoryTable t={t} device={device} registers={registers} />}
       {tab === 2 && <CurveChart t={t} device={device} registers={registers} />}
       {tab === 3 && <FirmwareView t={t} />}
@@ -232,14 +235,26 @@ function TabBar({ tabs, active, onChange }: { tabs: string[]; active: number; on
   )
 }
 
-function LiveTable({ t, groups, latest }: { t: T; groups: DeviceGroup[]; latest: Record<number, LatestValue> }) {
+function LiveTable({ t, device, groups, latest, onRefresh }: {
+  t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>; onRefresh: () => void
+}) {
+  const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
+  const toggleGroup = async (id: number) => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() }
+  const deleteGroup = async (id: number) => { await api.del('/api/groups/' + id); onRefresh() }
   return (
     <div>
+      <div className="toolbar">
+        <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
+      </div>
       {groups.map((g) => (
         <div key={g.id} className="group-block">
           <div className="group-head">
             <span className="group-name">{g.name}</span>
-            <span className="kv">FC{g.functionCode} · 起始 {g.startAddress} · {g.quantity} 个</span>
+            <span className="kv">FC{g.functionCode} · 从站 {g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个 · {g.pollIntervalMs}ms</span>
+            <div style={{ flex: 1 }} />
+            <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>
+            <button className="btn" onClick={() => toggleGroup(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
+            <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteDevice')}</button>
           </div>
           <table className="reg">
             <thead><tr><th>{t('colAlias')}</th><th>{t('colAddr')}</th><th>{t('colType')}</th><th>{t('colValue')}</th><th>{t('colQuality')}</th><th>{t('colWrite')}</th></tr></thead>
@@ -263,6 +278,47 @@ function LiveTable({ t, groups, latest }: { t: T; groups: DeviceGroup[]; latest:
         </div>
       ))}
       {groups.length === 0 && <div className="kv">{t('noRegisters')}</div>}
+      {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh() }} />}
+    </div>
+  )
+}
+
+function GroupModal({ t, device, initial, onClose, onSaved }: {
+  t: T; device: Device; initial: DeviceGroup | null; onClose: () => void; onSaved: () => void
+}) {
+  const [name, setName] = useState(initial?.name ?? '')
+  const [slaveId, setSlaveId] = useState(String(initial?.slaveId ?? 1))
+  const [functionCode, setFunctionCode] = useState(String(initial?.functionCode ?? 3))
+  const [startAddress, setStartAddress] = useState(String(initial?.startAddress ?? 0))
+  const [quantity, setQuantity] = useState(String(initial?.quantity ?? 1))
+  const [pollIntervalMs, setPollIntervalMs] = useState(String(initial?.pollIntervalMs ?? 1000))
+  const save = async () => {
+    const body = { name, slaveId: Number(slaveId), functionCode: Number(functionCode), startAddress: Number(startAddress), quantity: Number(quantity), pollIntervalMs: Number(pollIntervalMs) }
+    if (initial) await api.put('/api/groups/' + initial.id, body)
+    else await api.post('/api/monitor_objects/' + device.id + '/groups', body)
+    onSaved()
+  }
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{initial ? t('editGroup') : t('newGroup')}</h3>
+        <label>{t('groupName')}</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        <label>{t('slaveId')}</label>
+        <input value={slaveId} onChange={(e) => setSlaveId(e.target.value)} />
+        <label>{t('functionCode')}</label>
+        <input value={functionCode} onChange={(e) => setFunctionCode(e.target.value)} />
+        <label>{t('startAddress')}</label>
+        <input value={startAddress} onChange={(e) => setStartAddress(e.target.value)} />
+        <label>{t('quantity')}</label>
+        <input value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+        <label>{t('scanRate')}</label>
+        <input value={pollIntervalMs} onChange={(e) => setPollIntervalMs(e.target.value)} />
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>{t('cancel')}</button>
+          <button className="btn primary" onClick={save}>{t('save')}</button>
+        </div>
+      </div>
     </div>
   )
 }
