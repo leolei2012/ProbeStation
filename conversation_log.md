@@ -217,3 +217,17 @@
 
 - 前端设备管理 UI（设备/寄存器 CRUD + 写值界面）。
 - importer（MBS/MBP）、sink（CSV/XLSX）、rule（告警）。
+
+---
+
+## 2026-08-14（续）—— Phase 4.3b：前端设备管理 UI
+
+### 完成内容
+
+- `apps/web` 扩展：设备增删改查/toggle + 选中设备看寄存器实时值 + 写寄存器按钮（FC16）。
+- `vite build` 通过。至此「写寄存器 + config CRUD + 前端管理」闭环完成。
+
+### 下一步（Phase 4 剩余）
+
+- importer（MBS/MBP 导入）、sink（CSV/XLSX 导出）、rule（告警）。
+- Phase 5：降采样/保留、AI 测试层。
