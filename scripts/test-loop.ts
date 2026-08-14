@@ -1,6 +1,7 @@
 import net from 'node:net'
 import { ModbusTCPServer } from 'jsmodbus'
 import { Context } from 'cordis'
+import * as configPlugin from '../packages/config/src/index.ts'
 import * as modbusPlugin from '../packages/modbus/src/index.ts'
 import * as storePlugin from '../packages/store/src/index.ts'
 import * as pollerPlugin from '../packages/poller/src/index.ts'
@@ -21,6 +22,7 @@ console.log('slave listening on 127.0.0.1:8502')
 
 // 2. boot cordis app
 const ctx = new Context()
+await ctx.plugin(configPlugin, { dbPath: ':memory:' })
 await ctx.plugin(modbusPlugin, { defaultTimeoutMs: 2000, defaultUnitId: 1 })
 await ctx.plugin(storePlugin, { dbPath: ':memory:', flushIntervalMs: 5000, flushBatchSize: 100 })
 await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
@@ -44,3 +46,4 @@ console.log('query addr4096:', JSON.stringify(rows4096))
 console.log('LOOP TEST OK')
 
 netServer.close()
+process.exit(0)

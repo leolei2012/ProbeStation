@@ -17,13 +17,14 @@ export const inject = ['config', 'modbus', 'store']
 ## 服务 `ctx.poller`
 
 ```ts
-interface RegisterGroup { id; functionCode; startAddress; quantity }
+interface RegisterGroup { id; functionCode; startAddress; quantity; slaveId?; pollIntervalMs? }
 interface Device { id; host; port; groups: RegisterGroup[] }
 
 interface Poller {
   pollOnce(device: Device): Promise<void>  // 一次性轮询（测试/手动）
   startAll(): void                          // 对 config 中所有 active 主站设备循环轮询
   stopAll(): void                           // 停止所有循环 + 断开连接
+  write(objectId, address, value, method?, slaveId?): Promise<void>  // FC06/FC16 写寄存器
 }
 ```
 
@@ -34,9 +35,12 @@ interface Poller {
   连接**持久复用**（`Map<objectId, driver>`），失败时丢弃 driver 下次重连；
   用 config 的 register id（`startAddress → id` 映射，缺失时回退到地址）。
 - 每次轮询结果：`ctx.emit('poller/result', { objectId, points })` + `ctx.store.write(points)`。
+- **按组捕获故障**：连接失败对该设备所有到期组标错，单组读取异常只标该组；错误消息已归一化
+  （`Timeout` / `Illegal Data Address` / `connect ECONNREFUSED ...`）。
+- 故障/恢复事件：`poller/group-error`（`{ objectId, groupId, error }`，值变化才发）与
+  `poller/group-ok`（`{ groupId }`，读成功且之前有错才发）——供 api 转发 WS、前端显示红色徽标。
 
 ## 当前限制（TODO）
 
-- 轮询失败被静默吞掉（无日志）；建议加 warn 日志。
-- 仅 FC03 读取；写路径、暂停/重连、slave 模式未处理。
+- 仅 FC03 读取（`readInputRegisters` 驱动已具备，poller 未用）。
 - `flush()` 不再每轮调用，依赖 store 的定期 flush（`flushIntervalMs`）。

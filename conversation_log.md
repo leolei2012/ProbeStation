@@ -434,3 +434,24 @@
 ### 注意
 
 - schema 加了列，**旧 data/ 需删除重置**（测试已清理）。
+---
+
+## 2026-08-14（续）—— Modbus 故障显示（分组超时/非法地址）
+
+### 需求
+
+- 分组轮询出现读取超时、地址非法等 Modbus 故障时，要在 UI 上显示出来（不再静默吞掉）。
+
+### 完成内容
+
+- `modbus` 驱动：异常响应 `body.code` → 可读消息（`Illegal Data Address` 等，EXC_MSG 映射 + `body.message` 兜底）；
+  `err:'Timeout'`（jsmodbus 的 `UserRequestError`）归一成 `Timeout`；连接错误保留原样（`connect ECONNREFUSED ...`）。
+- `poller`：新增 `groupErrors` Map 按组跟踪错误——连接失败对该设备所有到期组标错、单组读取异常只标该组；
+  发 `poller/group-error`（值变化才发）与 `poller/group-ok`（读成功且之前有错才发）。
+- `api`：把 `poller/group-error`/`poller/group-ok` 转 WS 消息 `group-error`/`group-ok`。
+- 前端：`groupErrors` state + WS 更新；Live 页分组头部显示红色徽标 `⚠ <错误>`，恢复后自动清除；新增 `.group-error` 样式。
+- 测试 `scripts/test-group-fault.ts`：连接失败（ECONNREFUSED）→ `poller/group-error` 正确发出；好设备照常 `poller/result`。
+- 顺手修复 `scripts/test-loop.ts`（poller 依赖 config，补 `configPlugin`）+ 各测试加 `process.exit(0)` 干净退出。
+- 文档：`docs/03`（冒烟清单 + 关键事件 + WS 说明 + 踩坑 #10 + 待办）、`packages/poller/README.md` 同步更新。
+
+

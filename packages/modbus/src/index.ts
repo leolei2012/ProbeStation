@@ -15,6 +15,8 @@ export const Config: z<Config> = z.object({
   defaultUnitId: z.number().default(1),
 })
 
+const EXC_MSG: Record<number, string> = { 1: 'Illegal Function', 2: 'Illegal Data Address', 3: 'Illegal Data Value', 4: 'Slave Device Failure', 5: 'Acknowledge', 6: 'Slave Device Busy', 8: 'Memory Parity Error', 10: 'Gateway Path Unavailable', 11: 'Gateway Target Failed to Respond' }
+
 /** 传输无关的 Modbus 驱动抽象。每个 slave id（unit id）一个 TCP 连接。 */
 export interface ModbusDriver {
   connect(host: string, port: number): Promise<void>
@@ -63,29 +65,45 @@ class JsmodbusDriver implements ModbusDriver {
   }
 
   private static toValues(body: any): number[] {
-    if (body.isException) throw new Error('modbus exception code=' + (body.exceptionCode ?? body.code))
+    if (body.isException) {
+      const code = body.code ?? body.exceptionCode
+      throw new Error(EXC_MSG[code] ?? body.message ?? ('Modbus exception ' + code))
+    }
     const arr = body.valuesAsArray as number[] | undefined
     return arr ? Array.from(arr) : []
   }
 
+  private static normalize(e: any): Error {
+    if (e && e.err === 'Timeout') return new Error('Timeout')
+    return e instanceof Error ? e : new Error(String(e))
+  }
+
   async readHoldingRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
-    const res = await (await this.getClient(slaveId)).readHoldingRegisters(address, count)
-    return JsmodbusDriver.toValues(res.response.body)
+    try {
+      const res = await (await this.getClient(slaveId)).readHoldingRegisters(address, count)
+      return JsmodbusDriver.toValues(res.response.body)
+    } catch (e) { throw JsmodbusDriver.normalize(e) }
   }
 
   async readInputRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
-    const res = await (await this.getClient(slaveId)).readInputRegisters(address, count)
-    return JsmodbusDriver.toValues(res.response.body)
+    try {
+      const res = await (await this.getClient(slaveId)).readInputRegisters(address, count)
+      return JsmodbusDriver.toValues(res.response.body)
+    } catch (e) { throw JsmodbusDriver.normalize(e) }
   }
 
   async writeRegister(address: number, value: number, slaveId = 1): Promise<void> {
-    const res = await (await this.getClient(slaveId)).writeSingleRegister(address, value)
-    JsmodbusDriver.toValues(res.response.body)
+    try {
+      const res = await (await this.getClient(slaveId)).writeSingleRegister(address, value)
+      JsmodbusDriver.toValues(res.response.body)
+    } catch (e) { throw JsmodbusDriver.normalize(e) }
   }
 
   async writeRegisters(address: number, values: number[], slaveId = 1): Promise<void> {
-    const res = await (await this.getClient(slaveId)).writeMultipleRegisters(address, values)
-    JsmodbusDriver.toValues(res.response.body)
+    try {
+      const res = await (await this.getClient(slaveId)).writeMultipleRegisters(address, values)
+      JsmodbusDriver.toValues(res.response.body)
+    } catch (e) { throw JsmodbusDriver.normalize(e) }
   }
 }
 

@@ -160,3 +160,4 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .group-block { margin-bottom: 22px; }
 .group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .group-name { font-size: 13px; font-weight: 600; }
+.group-error { color: #ec1313; font-size: 12px; font-weight: 600; background: rgba(236, 19, 19, 0.08); border: 1px solid rgba(236, 19, 19, 0.3); border-radius: 6px; padding: 2px 8px; white-space: nowrap; max-width: 380px; overflow: hidden; text-overflow: ellipsis; }

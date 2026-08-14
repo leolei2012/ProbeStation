@@ -140,6 +140,14 @@ export function apply(ctx: Context, config: Config): void {
     const msg = JSON.stringify({ type: 'rule/trigger', ...payload })
     for (const s of sockets) s.send(msg)
   })
+  ctx.on('poller/group-error', (payload: any) => {
+    const msg = JSON.stringify({ type: 'group-error', ...payload })
+    for (const s of sockets) s.send(msg)
+  })
+  ctx.on('poller/group-ok', (payload: any) => {
+    const msg = JSON.stringify({ type: 'group-ok', ...payload })
+    for (const s of sockets) s.send(msg)
+  })
 
   // ── 前端静态托管 ────────────────────────────────────────
   if (config.staticDir && existsSync(config.staticDir)) {

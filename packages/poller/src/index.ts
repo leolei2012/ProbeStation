@@ -15,6 +15,7 @@ class PollingEngine {
   private drivers = new Map<number, any>()
   private timers: NodeJS.Timeout[] = []
   private lastPoll = new Map<number, number>()
+  private groupErrors = new Map<number, string>()
 
   constructor(private readonly ctx: any, private readonly config: Config) {}
 
@@ -69,22 +70,54 @@ class PollingEngine {
     for (const r of registers) addrToId.set(r.startAddress, r.id)
 
     const now = Date.now()
-    const points: Array<Record<string, unknown>> = []
-    for (const g of groups) {
-      const last = this.lastPoll.get(g.id) ?? 0
-      if (now - last < (g.pollIntervalMs ?? this.config.pollIntervalMs)) continue
-      this.lastPoll.set(g.id, now)
+    const due = groups.filter((g: any) => now - (this.lastPoll.get(g.id) ?? 0) >= (g.pollIntervalMs ?? this.config.pollIntervalMs))
+    if (due.length === 0) return
+    for (const g of due) this.lastPoll.set(g.id, now)
 
-      const driver = await this.getDriver(obj)
-      const values: number[] = await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
-      for (let i = 0; i < values.length; i++) {
-        const addr = g.startAddress + i
-        points.push({ objectId: obj.id, registerId: addrToId.get(addr) ?? addr, timestamp: new Date().toISOString(), rawValue: values[i], quality: 'good' })
+    // 连接失败：该设备所有到期分组都标错
+    let driver: any
+    try {
+      driver = await this.getDriver(obj)
+    } catch (e) {
+      const msg = this.errMsg(e)
+      for (const g of due) this.setGroupError(obj.id, g.id, msg)
+      return
+    }
+
+    const points: Array<Record<string, unknown>> = []
+    for (const g of due) {
+      try {
+        const values: number[] = await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
+        this.clearGroupError(g.id)
+        for (let i = 0; i < values.length; i++) {
+          const addr = g.startAddress + i
+          points.push({ objectId: obj.id, registerId: addrToId.get(addr) ?? addr, timestamp: new Date().toISOString(), rawValue: values[i], quality: 'good' })
+        }
+      } catch (e) {
+        this.setGroupError(obj.id, g.id, this.errMsg(e))
       }
     }
     if (points.length > 0) {
       this.ctx.emit('poller/result', { objectId: obj.id, points })
       this.ctx.store.write(points)
+    }
+  }
+
+  private errMsg(e: any): string {
+    return e && e.message ? e.message : String(e)
+  }
+
+  private setGroupError(objectId: number, groupId: number, msg: string): void {
+    if (this.groupErrors.get(groupId) !== msg) {
+      this.groupErrors.set(groupId, msg)
+      this.ctx.emit('poller/group-error', { objectId, groupId, error: msg })
+    }
+  }
+
+  private clearGroupError(groupId: number): void {
+    if (this.groupErrors.has(groupId)) {
+      this.groupErrors.delete(groupId)
+      this.ctx.emit('poller/group-ok', { groupId })
     }
   }
 

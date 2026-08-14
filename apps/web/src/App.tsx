@@ -89,6 +89,7 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('ps-collapsed') === '1')
   const [groups, setGroups] = useState<DeviceGroup[]>([])
   const [latest, setLatest] = useState<Record<number, LatestValue>>({})
+  const [groupErrors, setGroupErrors] = useState<Record<number, string>>({})
   const [showAdd, setShowAdd] = useState(false)
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
@@ -129,6 +130,8 @@ export default function App() {
       else if (msg.type === 'poller/result') {
         setLatest((prev) => { const next = { ...prev }; for (const p of msg.points) next[p.registerId] = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp }; return next })
       }
+      else if (msg.type === 'group-error') setGroupErrors((prev) => ({ ...prev, [msg.groupId]: msg.error }))
+      else if (msg.type === 'group-ok') setGroupErrors((prev) => { const next = { ...prev }; delete next[msg.groupId]; return next })
     }
     return () => ws.close()
   }, [])
@@ -186,7 +189,7 @@ export default function App() {
 
       <main className="main">
         {selected
-          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} groupErrors={groupErrors} onToggle={toggleDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
           : <EmptyState t={t} />}
       </main>
 
@@ -200,8 +203,8 @@ function EmptyState({ t }: { t: T }) {
   return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div></div>
 }
 
-function DeviceView({ t, device, groups, latest, onToggle, onDelete, onRefresh }: {
-  t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>
+function DeviceView({ t, device, groups, latest, groupErrors, onToggle, onDelete, onRefresh }: {
+  t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>; groupErrors: Record<number, string>
   onToggle: (id: number) => void; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
@@ -217,7 +220,7 @@ function DeviceView({ t, device, groups, latest, onToggle, onDelete, onRefresh }
       </div>
       <div className="main-sub">{device.ip}:{device.port} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
       <TabBar tabs={[t('tabLive'), t('tabHistory'), t('tabCurve'), t('tabFirmware')]} active={tab} onChange={setTab} />
-      {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} onRefresh={() => onRefresh(device.id)} />}
+      {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} onRefresh={() => onRefresh(device.id)} />}
       {tab === 1 && <HistoryTable t={t} device={device} registers={registers} />}
       {tab === 2 && <CurveChart t={t} device={device} registers={registers} />}
       {tab === 3 && <FirmwareView t={t} />}
@@ -235,8 +238,8 @@ function TabBar({ tabs, active, onChange }: { tabs: string[]; active: number; on
   )
 }
 
-function LiveTable({ t, device, groups, latest, onRefresh }: {
-  t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>; onRefresh: () => void
+function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
+  t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>; groupErrors: Record<number, string>; onRefresh: () => void
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const toggleGroup = async (id: number) => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() }
@@ -251,6 +254,7 @@ function LiveTable({ t, device, groups, latest, onRefresh }: {
           <div className="group-head">
             <span className="group-name">{g.name}</span>
             <span className="kv">FC{g.functionCode} · 从站 {g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个 · {g.pollIntervalMs}ms</span>
+            {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
             <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>
             <button className="btn" onClick={() => toggleGroup(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
