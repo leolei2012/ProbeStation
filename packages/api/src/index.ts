@@ -79,13 +79,12 @@ export function apply(ctx: Context, config: Config): void {
     if (!reg) return { code: 404, error: 'register not found' }
     const b = req.body as any
     const value = Number(b.value)
-    const words = encodeRegister(reg.dataType ?? 'int16', value)
-    const requested = b.method === 'single' ? 'single' : 'multiple'
-    const method = words.length > 1 ? 'multiple' : requested
+    const word = encodeRegister(reg.dataType ?? 'int16', value)
+    const method = b.method === 'single' ? 'single' : 'multiple'
     const grp = cfg.getGroup(reg.groupId)
-    await poller.write(reg.objectId, reg.startAddress, words, method, grp?.slaveId ?? 1)
-    cfg.log('INFO', 'api', 'write register ' + id + ' = ' + value + ' (' + reg.dataType + ', ' + words.length + ' word(s))')
-    return { register_id: id, value, dataType: reg.dataType, method, words }
+    await poller.write(reg.objectId, reg.startAddress, word, method, grp?.slaveId ?? 1)
+    cfg.log('INFO', 'api', 'write register ' + id + ' = ' + value + ' (' + reg.dataType + ')')
+    return { register_id: id, value, dataType: reg.dataType, method, word }
   })
 
   // ── Import ─────────────────────────────────────────────

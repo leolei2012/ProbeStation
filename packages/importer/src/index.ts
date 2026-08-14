@@ -8,7 +8,8 @@ export interface ParsedGroup { name: string; slaveId: number; functionCode: numb
 export interface ParsedRegister { alias: string; functionCode: number; startAddress: number; quantity: number; dataType: string }
 export interface ParsedResult { groups: ParsedGroup[]; registers: ParsedRegister[]; warnings: string[] }
 
-const FORMAT_HINT: Record<string, string> = { '0': 'int16', '1': 'uint16', '2': 'int32', '3': 'uint32', '4': 'float32' }
+// 仅 16 位类型；MBP 的 int32/uint32/float32（码 2/3/4）按原始 16 位 int16 处理
+const FORMAT_HINT: Record<string, string> = { '0': 'int16', '1': 'uint16', '2': 'int16', '3': 'int16', '4': 'int16' }
 const FN_MAP: Record<string, number> = { '01': 1, '02': 2, '03': 3, '04': 4, '05': 5, '06': 6, '15': 15, '16': 16 }
 
 function parseMbpXml(text: string): ParsedResult {
@@ -71,7 +72,8 @@ function parseMbpIni(text: string): ParsedResult {
     const start = addrStr.startsWith('4') ? a - 40001 : addrStr.startsWith('3') ? a - 30001 : Math.max(0, a - 1)
     const qty = Number(cfg['Quantity'] ?? '1')
     const alias = cfg['Alias'] ?? 'Addr' + start
-    const dataType = cfg['Data Type'] ?? 'int16'
+    const rawType = cfg['Data Type'] ?? 'int16'
+    const dataType = ['int16', 'uint16', 'float16'].includes(rawType) ? rawType : 'int16'
     groups.push({ name, slaveId: 1, functionCode: fn, startAddress: start, quantity: qty, mode: 'read' })
     registers.push({ alias, functionCode: fn, startAddress: start, quantity: qty, dataType })
   }

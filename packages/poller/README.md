@@ -24,7 +24,7 @@ interface Poller {
   pollOnce(device: Device): Promise<void>  // 一次性轮询（测试/手动）
   startAll(): void                          // 对 config 中所有 active 主站设备循环轮询
   stopAll(): void                           // 停止所有循环 + 断开连接
-  write(objectId, address, values: number[], method?, slaveId?): Promise<void>  // FC06 单写 / FC16 多写（values 为已按类型编码的 16 位字）
+  write(objectId, address, value, method?, slaveId?): Promise<void>  // FC06 单写 / FC16 多写（value 为已按类型编码的 16 位字）
 }
 ```
 

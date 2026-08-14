@@ -56,13 +56,13 @@ class PollingEngine {
     this.drivers.clear()
   }
 
-  /** 写寄存器（FC06 单写 / FC16 多写），复用持久连接，按 slave id 路由。 */
-  async write(objectId: number, address: number, values: number[], method: 'single' | 'multiple' = 'multiple', slaveId = 1): Promise<void> {
+  /** 写寄存器（FC06 单写 / FC16 多写），16 位字，复用持久连接，按 slave id 路由。 */
+  async write(objectId: number, address: number, value: number, method: 'single' | 'multiple' = 'multiple', slaveId = 1): Promise<void> {
     const obj = this.ctx.config.getObject(objectId)
     if (!obj) throw new Error('object ' + objectId + ' not found')
     const driver = await this.getDriver(obj)
-    if (method === 'single') await driver.writeRegister(address, values[0] ?? 0, slaveId)
-    else await driver.writeRegisters(address, values, slaveId)
+    if (method === 'single') await driver.writeRegister(address, value, slaveId)
+    else await driver.writeRegisters(address, [value], slaveId)
   }
 
   private async pollObject(obj: any): Promise<void> {

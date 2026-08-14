@@ -22,10 +22,9 @@
 
 纯函数、无依赖，供 web 前端（显示/写值）+ api/mcp 后端（写值编码）共用：
 
-- `DATA_TYPES`：`int16 / uint16 / float16 / int32 / uint32 / float32`。
-- `registerWidth(type)`：16 位类型返回 1，32 位类型返回 2。
-- `decodeRegister(type, words)`：把大端序 16 位字数组解码成 JS number（32 位合并两个字；float16 半精度、float32 IEEE754）。
-- `encodeRegister(type, value)`：把 JS number 编码成大端序 16 位字数组（32 位产生两个字）。
+- `DATA_TYPES`：`int16 / uint16 / float16`（仅 16 位）。
+- `decodeRegister(type, word)`：把 16 位字解码成 JS number（int16 符号扩展、uint16 无符号、float16 半精度）。
+- `encodeRegister(type, value)`：把 JS number 编码成单个 16 位字。
 - `toHex(word)`：16 位字 → `0x` 十六进制。
 
-词序为大端（高字在前）；float16 编码用截断（非最近舍入）。
+float16 编码用截断（非最近舍入）。32 位类型（int32/uint32/float32）已移除。

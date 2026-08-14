@@ -513,6 +513,7 @@
 - Live 表格：列名「实时值」→「值」，去掉「写值」列；改为**双击值**弹「写寄存器」窗口（输入值 + 选功能码 FC06 单写 / FC16 多写）。
 - 分组可折叠：分组头部加 ▾/▸ 折叠箭头（点箭头或组名收起/展开表格）。
 - **类型系统（修复 dataType 从不生效的 bug）**：新增 `packages/core/src/codec.ts`（int16/uint16/float16/int32/uint32/float32 编解码 + 大端字序 + hex）；前端按类型解码显示（32 位合并相邻两地址）、HEX 开关、类型下拉加 float16；写值按类型编码（32 位写 2 个寄存器，弹窗里 32 位锁定 FC16）。`poller.write` 改收 `values[]`。测试 test-codec / test-codec-write 通过。
+- **拍板只做 16 位**：移除 int32/uint32/float32（编解码、32 位合并显示、写 2 寄存器逻辑全删），只保留 int16/uint16/float16；词序问题随之消失（单 16 位寄存器协议层即大端）。`decode/encodeRegister` 改单字、`poller.write` 回收单值、导入器 32 位码收敛为 int16；删除 test-codec-write。
 - `resolveInitialWorkspace` 读最近一条记录 path，重启记住上次工作区（不变）。
 
 
