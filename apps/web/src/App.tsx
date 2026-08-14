@@ -46,7 +46,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     resume: '启用', enable: '使能',
     exportCsv: '导出 CSV',
     exportXlsx: '导出 XLSX',
-    deleteDevice: '删除设备',
+    deleteDevice: '删除设备', deleteGroup: '删除分组',
     regCount: '{n} 个寄存器',
     colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入', valueCovered: '被上一个多字寄存器占用', valueShort: '数据不足（分组读取范围不够）', grp16BE: '16位 大端', grp16LE: '16位 小端', grp32BE: '32位 大端', grp32LE: '32位 小端', grp64BE: '64位 大端', grp64LE: '64位 小端',
     write: '写', valuePh: '值',
@@ -86,7 +86,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     resume: 'Resume', enable: 'Enable',
     exportCsv: 'Export CSV',
     exportXlsx: 'Export XLSX',
-    deleteDevice: 'Delete',
+    deleteDevice: 'Delete', deleteGroup: 'Delete group',
     regCount: '{n} registers',
     colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write', valueCovered: 'Covered by previous register', valueShort: 'Not enough polled data', grp16BE: '16-bit BE', grp16LE: '16-bit LE', grp32BE: '32-bit BE', grp32LE: '32-bit LE', grp64BE: '64-bit BE', grp64LE: '64-bit LE',
     write: 'Write', valuePh: 'value',
@@ -419,7 +419,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
             <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>
-            <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteDevice')}</button>
+            <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>
           </div>
           {!collapsed.has(g.id) && (<table className="reg">
             <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th></tr></thead>
