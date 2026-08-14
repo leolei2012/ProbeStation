@@ -110,6 +110,15 @@ class PollingEngine {
     }
   }
 
+  /** 写一个寄存器（FC06 单写 / FC16 多写），复用持久连接。 */
+  async write(objectId: number, address: number, value: number, method: 'single' | 'multiple' = 'multiple'): Promise<void> {
+    const obj = this.ctx.config.getObject(objectId)
+    if (!obj) throw new Error(`object ${objectId} not found`)
+    const driver = await this.getDriver(obj)
+    if (method === 'multiple') await driver.writeRegisters(address, [value])
+    else await driver.writeRegister(address, value)
+  }
+
   private async getDriver(obj: any): Promise<any> {
     let driver = this.drivers.get(obj.id)
     if (!driver || !driver.isConnected()) {

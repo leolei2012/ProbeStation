@@ -197,3 +197,23 @@
 - 写寄存器 API（FC06/FC16 写路径暴露到 REST）。
 - config CRUD（update/delete/toggle）+ 前端设备管理。
 - importer（MBS/MBP 导入）、sink（CSV/XLSX 导出）、rule（告警）。
+
+---
+
+## 2026-08-14（续）—— Phase 4.3：写寄存器 + config CRUD（后端）
+
+### 完成内容
+
+- `config` 补齐 CRUD：get/update/delete/toggle（object/group/register），camelCase→snake_case 字段映射，参数化 SQL。
+- `poller` 新增 `write(objectId, address, value, method)`（FC06/FC16，复用持久连接）。
+- `api` 新增：设备/组/寄存器增删改查 + toggle + `POST /api/registers/:id/write`。
+- 冒烟测试 `scripts/test-crud.ts`：写 FC16=42 / FC06=7 往返 + CRUD 全通过。
+
+### 关键点
+
+- 写寄存器默认 `multiple`（FC16），适配固件只开 FC03+FC16（原 Monitor 默认 FC06 是差距 3 的 bug）。
+
+### 下一步
+
+- 前端设备管理 UI（设备/寄存器 CRUD + 写值界面）。
+- importer（MBS/MBP）、sink（CSV/XLSX）、rule（告警）。
