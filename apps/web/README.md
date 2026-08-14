@@ -1,10 +1,10 @@
 # @probebench/web
 
-React 18 + Vite 前端仪表盘（设备管理 + 实时值 + 写寄存器）。
+React 18 + Vite 前端，DSH 风格 app 壳：**左侧栏（设备/工作区选择 + 新建设备 + 设置），右侧工作页**。
 
 ## 技术栈
 
-React 18、Vite 6、@vitejs/plugin-react、TypeScript。
+React 18、Vite 6、@vitejs/plugin-react、TypeScript、纯 CSS（`styles.css`）。
 
 ## 运行
 
@@ -13,19 +13,20 @@ npm run dev --workspace @probebench/web    # vite dev（代理 /api + /ws 到 80
 npm run build --workspace @probebench/web  # 产物 apps/web/dist
 ```
 
-## 功能
+## 布局
 
-- **设备管理**：列表、添加、启用/停用（toggle）、删除。
-- **寄存器实时值**：选中设备后展示其寄存器（别名/地址/类型/值/质量），WS 实时刷新。
-- **写寄存器**：每行「写」按钮，走 `POST /api/registers/:id/write`（FC16）。
+- **左侧栏**：品牌 + 「新建设备」按钮 + 设备列表（状态点/名称/IP、点击选中、悬停删除）+ 底部「设置」。
+- **右侧主区**：选中设备的工作页（表头状态徽章 + 工具栏「暂停/导出 CSV/XLSX/删除」+ 寄存器实时值表 + 行内写值），或「设置」页。
+- **设置页**：应用信息 + 数据管理（清空日志）。
 
 ## 结构
 
+- `src/App.tsx` — 壳 + 子组件（Sidebar/DeviceView/WriteCell/SettingsView/AddDeviceModal/EmptyState）
+- `src/styles.css` — 设计令牌（CSS 变量）+ 全部样式
 - `src/main.tsx` — 挂载入口
-- `src/App.tsx` — 单文件组件（设备列表 + 寄存器表 + WS 联动 + 增删改写）
 
 ## 当前限制（TODO）
 
-- 无图表/历史曲线、无告警面板。
-- 写值用 `prompt()`，未做输入校验/确认。
-- 无路由、无状态管理库（pinia 时代遗留，当前 useState 够用）。
+- 无历史曲线图（导出走 CSV/XLSX）。
+- 写值未做范围校验/确认。
+- 设置页较简单（后续加主题/告警配置）。
