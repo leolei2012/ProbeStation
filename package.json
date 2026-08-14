@@ -11,7 +11,9 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace @probebench/cli"
+    "dev": "npm run dev --workspace @probebench/cli",
+    "build:web": "npm run build --workspace @probebench/web",
+    "start": "npm run build:web && tsx apps/cli/src/main.ts"
   },
   "devDependencies": {
     "typescript": "^5.5.0",

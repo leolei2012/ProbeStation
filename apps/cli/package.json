@@ -7,9 +7,13 @@
     "dev": "tsx src/main.ts"
   },
   "dependencies": {
-    "@probebench/core": "*",
     "@cordisjs/plugin-logger-console": "^1.0.0",
-    "cordis": "^4.0.0-rc.8"
+    "cordis": "^4.0.0-rc.8",
+    "@probebench/config": "*",
+    "@probebench/store": "*",
+    "@probebench/modbus": "*",
+    "@probebench/poller": "*",
+    "@probebench/api": "*"
   },
   "devDependencies": {
     "tsx": "^4.19.0"

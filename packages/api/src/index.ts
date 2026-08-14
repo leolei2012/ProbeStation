@@ -2,6 +2,9 @@ import type { Context } from 'cordis'
 import z from 'schemastery'
 import Fastify, { type FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
+import fastifyStatic from '@fastify/static'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 export const name = 'api'
 export const inject = ['config', 'store']
@@ -9,11 +12,13 @@ export const inject = ['config', 'store']
 export interface Config {
   host: string
   port: number
+  staticDir?: string
 }
 
 export const Config: z<Config> = z.object({
   host: z.string().default('0.0.0.0'),
   port: z.number().default(8080),
+  staticDir: z.string(),
 })
 
 /** REST + WebSocket API over Fastify, mirroring the legacy Monitor endpoints. */
@@ -51,16 +56,21 @@ export function apply(ctx: Context, config: Config): void {
     fastify.get('/ws', { websocket: true }, (socket: any) => {
       sockets.add(socket)
       socket.on('close', () => sockets.delete(socket))
-      // 连接即推送最新快照
       socket.send(JSON.stringify({ type: 'latest', data: store.getLatest() }))
     })
   })
 
-  // 轮询结果实时广播到所有 ws 客户端（Cordis 事件全局分发）
+  // 轮询结果实时广播到所有 ws 客户端
   ctx.on('poller/result', ({ objectId, points }: any) => {
     const msg = JSON.stringify({ type: 'poller/result', objectId, points })
     for (const s of sockets) s.send(msg)
   })
+
+  // ── 前端静态托管（若 dist 存在）─────────────────────────
+  if (config.staticDir && existsSync(config.staticDir)) {
+    void app.register(fastifyStatic, { root: resolve(config.staticDir) })
+    ctx.logger('api').info(`serving frontend from ${config.staticDir}`)
+  }
 
   ctx.provide('api', app)
   ctx.logger('api').info(`REST+WS API registered (host=${config.host}, port=${config.port})`)

@@ -36,10 +36,14 @@ export class DuckDBStore {
   private readonly ready: Promise<DuckDBConnection>
   private buffer: PollPoint[] = []
   private readonly latest = new Map<number, { rawValue: number; quality: string; timestamp: string }>()
+  private flushTimer: NodeJS.Timeout | null = null
 
   constructor(private readonly config: Config) {
     this.ready = this.init()
     this.ready.catch(() => {})
+    if (this.config.flushIntervalMs > 0) {
+      this.flushTimer = setInterval(() => { void this.flush() }, this.config.flushIntervalMs)
+    }
   }
 
   private async init(): Promise<DuckDBConnection> {

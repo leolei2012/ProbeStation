@@ -1,53 +1,42 @@
 # @probebench/poller
 
-Modbus 轮询引擎。注入 `modbus` + `store`，提供 `ctx.poller`。
+Modbus 轮询引擎。注入 `config` + `modbus` + `store`，提供 `ctx.poller`。
 
 ## 依赖
 
 ```ts
-export const inject = ['modbus', 'store']
+export const inject = ['config', 'modbus', 'store']
 ```
 
 ## 配置（schemastery）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `pollIntervalMs` | number | 1000 | 轮询间隔（预留，当前 pollOnce 手动触发） |
+| `pollIntervalMs` | number | 1000 | 循环轮询间隔（毫秒） |
 
 ## 服务 `ctx.poller`
 
 ```ts
-interface RegisterGroup {
-  id: number
-  functionCode: number
-  startAddress: number
-  quantity: number
-}
-
-interface Device {
-  id: number
-  host: string
-  port: number
-  groups: RegisterGroup[]
-}
+interface RegisterGroup { id; functionCode; startAddress; quantity }
+interface Device { id; host; port; groups: RegisterGroup[] }
 
 interface Poller {
-  pollOnce(device: Device): Promise<void>  // 连一次、读所有组、写 store、断开
+  pollOnce(device: Device): Promise<void>  // 一次性轮询（测试/手动）
+  startAll(): void                          // 对 config 中所有 active 主站设备循环轮询
+  stopAll(): void                           // 停止所有循环 + 断开连接
 }
 ```
 
 ## 行为
 
-`pollOnce(device)`：
-
-1. `ctx.modbus.createDriver()` → `connect(host, port)`；
-2. 遍历 `device.groups`，逐个 `readHoldingRegisters(startAddress, quantity)`；
-3. 每个寄存器生成一条 `PollPoint`（`registerId` 暂用 `startAddress + i` 占位）；
-4. `ctx.store.write(points)` + `ctx.store.flush()`；
-5. `finally` 中 `disconnect()`。
+- `pollOnce`：连一次 → 读所有组 → 写 store → flush → 断开（`registerId` 用 `startAddress` 占位）。
+- `startAll`：从 `ctx.config` 读 active 主站设备，每台起一个 `setInterval` 循环轮询；
+  连接**持久复用**（`Map<objectId, driver>`），失败时丢弃 driver 下次重连；
+  用 config 的 register id（`startAddress → id` 映射，缺失时回退到地址）。
+- 每次轮询结果：`ctx.emit('poller/result', { objectId, points })` + `ctx.store.write(points)`。
 
 ## 当前限制（TODO）
 
-- `registerId` 用 `startAddress` 占位，Phase 3-4 接入真实寄存器配置后改为 DB 里的 register id。
-- 仅支持 FC03（holding registers）读取；写路径、循环轮询、暂停/重连未实现。
-- 无事件发射（`poller/result` 等），Phase 3 加 ws 时补。
+- 轮询失败被静默吞掉（无日志）；建议加 warn 日志。
+- 仅 FC03 读取；写路径、暂停/重连、slave 模式未处理。
+- `flush()` 不再每轮调用，依赖 store 的定期 flush（`flushIntervalMs`）。

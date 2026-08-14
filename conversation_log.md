@@ -159,3 +159,25 @@
 - slave 模拟器、ota、importer（MBS/MBP 导入）、sink 导出、rule 告警。
 - poller ↔ config 对齐（真实 register id、循环轮询、暂停/重连）。
 - 生产接线：CLI 启动全插件 + serve 前端 dist。
+
+---
+
+## 2026-08-14（续）—— Phase 4.1：生产接线（一键启动）
+
+### 完成内容
+
+- `poller` 重构：注入 `config`，新增 `startAll()/stopAll()` 循环轮询、连接持久复用、真实 register id 映射。
+- `store` 增加定期 flush 定时器（`flushIntervalMs`）。
+- `api` 增加前端静态托管（`@fastify/static`，`staticDir` 配置）。
+- `apps/cli` 重写：装配 5 插件 + 播种演示设备 + 循环轮询 + listen 8080 + 托管前端。
+- `npm run start` 一键启动完整应用，验证 `/health`、前端首页、设备列表、组全 200。
+
+### 关键技术点（踩坑）
+
+- schemastery 字段**默认可选**（`required` 默认 false），无 `.optional()`；必填用 `.required()`。
+- `@fastify/static` 的 `root` 必须**绝对路径**（用 `resolve()`）。
+
+### 下一步（Phase 4 剩余）
+
+- slave 模拟器插件、importer（MBS/MBP）、sink 导出、rule 告警。
+- poller 轮询失败加日志；补 `update/delete` 等 config CRUD。
