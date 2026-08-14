@@ -72,3 +72,30 @@
 ### 下一步
 
 - **Phase 2**：`modbus` 驱动 + `poller` + `store`（热缓冲 + DuckDB 批量写）——先跑通「轮询真机 → 落库 → 可查询」最小闭环。
+
+---
+
+## 2026-08-14（晚）—— Phase 2：modbus 驱动 + poller + store 最小闭环
+
+### 完成内容
+
+- `packages/modbus`：`ModbusDriver` 抽象 + jsmodbus provider（读/写 holding/input registers），提供 `ctx.modbus`。
+- `packages/store`：`DuckDBStore`（热内存缓冲 + DuckDB 列存 `poll_data` 表 + 批量写 + query），提供 `ctx.store`。
+- `packages/poller`：`PollingEngine`（inject modbus+store，按组轮询 → 生成 PollPoint → 写 store），提供 `ctx.poller`。
+- 集成测试 `scripts/test-loop.ts`：本地 jsmodbus 从站 → 轮询 → 落库 → 查询，全链路验证通过。
+
+### 关键技术点（踩坑记录）
+
+- Cordis 4 服务范式：Service 类 + `ready` Promise 异步初始化 + `ctx.provide(name, val)`；消费者 `inject` + `ctx.<name>` 访问。
+- `ctx.plugin()` 异步激活，须 `await`；顶层 `ctx.get(name)` 默认 strict，只读活跃 fiber 提供的服务。
+- jsmodbus 响应用 `body.valuesAsArray`；从站需**预填 holding 缓冲**（`readHoldingRegisters` 事件仅在 holding 为 falsy 时触发）。
+
+### 待办（后续 Phase）
+
+- store 定期 flush 定时器 + 参数化 SQL + 降采样/保留（Phase 5）。
+- poller 的 registerId 现用 startAddress 占位，需接真实配置（Phase 3-4）。
+- 正式 vitest 测试框架（当前是 scripts/ 下 smoke 脚本）。
+
+### 下一步
+
+- **Phase 3**：`api` + `ws` + `client` React shell（可视化 + 实时推送 + 历史查询）。

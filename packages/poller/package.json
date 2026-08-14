@@ -1,0 +1,12 @@
+{
+  "name": "@probebench/poller",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "cordis": "^4.0.0-rc.8",
+    "@probebench/modbus": "*",
+    "@probebench/store": "*"
+  }
+}
