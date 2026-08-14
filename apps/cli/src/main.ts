@@ -6,6 +6,7 @@ import * as modbusPlugin from '@probebench/modbus'
 import * as pollerPlugin from '@probebench/poller'
 import * as apiPlugin from '@probebench/api'
 import * as sinkPlugin from '@probebench/sink'
+import * as rulePlugin from '@probebench/rule'
 import * as slavePlugin from '@probebench/slave'
 
 const ctx = new Context()
@@ -15,6 +16,7 @@ await ctx.plugin(storePlugin, { dbPath: 'data/poll.duckdb', flushIntervalMs: 200
 await ctx.plugin(modbusPlugin, { defaultTimeoutMs: 3000, defaultUnitId: 1 })
 await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080, staticDir: 'apps/web/dist' })
 await ctx.plugin(sinkPlugin)
+await ctx.plugin(rulePlugin)
 await ctx.plugin(slavePlugin, { port: 8502, holdingSize: 5000 })
 await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
 

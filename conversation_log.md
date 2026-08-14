@@ -250,3 +250,19 @@
 ### 下一步（Phase 4 剩余）
 
 - importer（MBS/MBP 导入）、rule（告警）、logs。
+
+---
+
+## 2026-08-14（续）—— Phase 4.5：rule 告警引擎
+
+### 完成内容
+
+- `config` 新增 `alarm_rules` 表 + `listRules/createRule/deleteRule`。
+- `packages/rule`：订阅 `poller/result`，逐点比较（6 种操作符），命中发 `rule/trigger` 事件。
+- `api` 新增 `GET/POST /api/rules`、`DELETE /api/rules/:id`，并把 `rule/trigger` 转发到 WS。
+- CLI 接入 rule。冒烟测试：超阈值触发 / 低于不触发 / API CRUD 全通过。
+
+### 下一步（Phase 4 剩余）
+
+- logs（日志查询）、importer（MBS/MBP 导入）。
+- Phase 5：降采样/保留、AI 测试层。

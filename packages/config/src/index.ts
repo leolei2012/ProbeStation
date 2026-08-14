@@ -17,6 +17,7 @@ export const Config: z<Config> = z.object({
 export interface DeviceRecord { id: number; name: string; ip: string; port: number; mode: string; isActive: number }
 export interface GroupRecord { id: number; objectId: number; name: string; functionCode: number; startAddress: number; quantity: number; mode: string; isActive: number }
 export interface RegisterRecord { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; quantity: number; dataType: string }
+export interface RuleRecord { id: number; registerId: number; operator: string; threshold: number; message: string | null }
 
 const OBJECT_SELECT = 'SELECT id, name, ip, port, mode, is_active AS isActive FROM monitor_objects'
 const GROUP_SELECT = 'SELECT id, object_id AS objectId, name, function_code AS functionCode, start_address AS startAddress, quantity, mode, is_active AS isActive FROM register_groups'
@@ -50,6 +51,13 @@ export class ConfigStore {
         group_id INTEGER NOT NULL, object_id INTEGER NOT NULL, alias TEXT,
         function_code INTEGER NOT NULL, start_address INTEGER NOT NULL,
         quantity INTEGER DEFAULT 1, data_type TEXT DEFAULT 'int16'
+      );
+      CREATE TABLE IF NOT EXISTS alarm_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        register_id INTEGER NOT NULL,
+        operator TEXT NOT NULL DEFAULT '>',
+        threshold REAL NOT NULL DEFAULT 0,
+        message TEXT
       );
     `)
   }
@@ -108,6 +116,14 @@ export class ConfigStore {
     return this.getRegister(id)
   }
   deleteRegister(id: number): void { this.db.prepare('DELETE FROM registers WHERE id = ?').run(id) }
+
+  // ── Alarm rules ─────────────────────────────────────────
+  listRules(): RuleRecord[] { return this.db.prepare('SELECT id, register_id AS registerId, operator, threshold, message FROM alarm_rules ORDER BY id').all() as unknown as RuleRecord[] }
+  createRule(registerId: number, operator: string, threshold: number, message: string | null): RuleRecord {
+    const res = this.db.prepare('INSERT INTO alarm_rules (register_id, operator, threshold, message) VALUES (?, ?, ?, ?)').run(registerId, operator, threshold, message)
+    return this.db.prepare('SELECT id, register_id AS registerId, operator, threshold, message FROM alarm_rules WHERE id = ?').get(Number(res.lastInsertRowid)) as unknown as RuleRecord
+  }
+  deleteRule(id: number): void { this.db.prepare('DELETE FROM alarm_rules WHERE id = ?').run(id) }
 
   // 通用 update：按 camelCase → snake_case 映射，参数化
   private update(table: string, id: number, fields: Record<string, unknown>, mapping: Record<string, string>): void {

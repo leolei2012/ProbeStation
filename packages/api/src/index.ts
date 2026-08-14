@@ -72,6 +72,14 @@ export function apply(ctx: Context, config: Config): void {
     return { register_id: id, value, method }
   })
 
+  // ── Alarm rules ────────────────────────────────────────
+  app.get('/api/rules', async () => cfg.listRules())
+  app.post('/api/rules', async (req) => {
+    const b = req.body as any
+    return cfg.createRule(b.registerId, b.operator ?? '>', b.threshold ?? 0, b.message ?? null)
+  })
+  app.delete('/api/rules/:id', async (req) => { cfg.deleteRule(Number((req.params as any).id)); return { ok: true } })
+
   // ── Export ─────────────────────────────────────────────
   app.get('/api/export/csv', async (req, reply) => {
     const q = req.query as any
@@ -107,6 +115,10 @@ export function apply(ctx: Context, config: Config): void {
   })
   ctx.on('poller/result', ({ objectId, points }: any) => {
     const msg = JSON.stringify({ type: 'poller/result', objectId, points })
+    for (const s of sockets) s.send(msg)
+  })
+  ctx.on('rule/trigger', (payload: any) => {
+    const msg = JSON.stringify({ type: 'rule/trigger', ...payload })
     for (const s of sockets) s.send(msg)
   })
 
