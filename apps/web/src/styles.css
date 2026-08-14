@@ -162,6 +162,8 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .group-block { margin-bottom: 22px; }
 .group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .group-name { font-size: 13px; font-weight: 600; }
+.group-collapse { border: none; background: none; cursor: pointer; color: var(--text-2); font-size: 12px; padding: 2px 4px; width: 18px; flex-shrink: 0; }
+.group-collapse:hover { color: var(--text-1); }
 .group-error { color: #ec1313; font-size: 12px; font-weight: 600; background: rgba(236, 19, 19, 0.08); border: 1px solid rgba(236, 19, 19, 0.3); border-radius: 6px; padding: 2px 8px; white-space: nowrap; max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
 .cell-input { width: 100%; border: none; background: transparent; font: inherit; color: var(--text-1); padding: 3px 6px; border-radius: 4px; }
 .cell-input:focus { background: var(--surface); outline: 1px solid var(--accent); }

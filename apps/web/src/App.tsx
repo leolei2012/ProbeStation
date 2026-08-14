@@ -289,6 +289,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
+  const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const toggleGroup = async (id: number) => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() }
   const deleteGroup = async (id: number) => { await api.del('/api/groups/' + id); onRefresh() }
   return (
@@ -299,7 +301,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
       {groups.map((g) => (
         <div key={g.id} className="group-block">
           <div className="group-head">
-            <span className="group-name">{g.name}</span>
+            <button className="group-collapse" onClick={() => toggleCollapse(g.id)}>{collapsed.has(g.id) ? '▸' : '▾'}</button>
+            <span className="group-name" style={{ cursor: 'pointer' }} onClick={() => toggleCollapse(g.id)}>{g.name}</span>
             <span className="kv">FC{g.functionCode} · 从站 {g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个 · {g.pollIntervalMs}ms</span>
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
@@ -307,7 +310,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             <button className="btn" onClick={() => toggleGroup(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
             <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteDevice')}</button>
           </div>
-          <table className="reg">
+          {!collapsed.has(g.id) && (<table className="reg">
             <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th></tr></thead>
             <tbody>
               {g.registers.map((r) => {
@@ -323,7 +326,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
               })}
               {g.registers.length === 0 && <tr><td colSpan={4} className="kv">{t('noRegisters')}</td></tr>}
             </tbody>
-          </table>
+          </table>)}
         </div>
       ))}
       {groups.length === 0 && <div className="kv">{t('noRegisters')}</div>}
