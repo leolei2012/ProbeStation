@@ -119,3 +119,22 @@
 ### 下一步
 
 - Phase 3b：`ws` 实时推送（@fastify/websocket）+ `client` React 前端（Vite）。
+
+---
+
+## 2026-08-14（续）—— Phase 3b：WebSocket 实时推送
+
+### 完成内容
+
+- `packages/api` 增加 WebSocket：`@fastify/websocket` + `/ws` 端点。
+- 连接即推 `latest` 快照；订阅 `poller/result` 事件，实时广播轮询结果。
+- 冒烟测试 `scripts/test-ws.ts`：连接 → 收 latest → emit 收广播，全通过。
+
+### 关键技术点（踩坑）
+
+- `@fastify/websocket` 必须 `await register()` 后才注册 `/ws`，否则升级失败；用 Fastify async 插件封装解决（apply 是同步的）。
+- **Cordis 4 事件是全局分发**（兄弟插件 emit/on 互达），无需 `ctx.root`。
+
+### 下一步
+
+- Phase 3c：`apps/web` React + Vite 前端 shell（设备列表 + 实时值表 + WS 联动）。
