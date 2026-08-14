@@ -189,6 +189,9 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .ws-chevron { color: var(--text-2); font-size: 10px; width: 12px; flex-shrink: 0; }
 .ws-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
 .ws-count { color: var(--text-2); font-size: 11px; flex-shrink: 0; }
+.sidebar-section-row { display: flex; align-items: center; justify-content: space-between; }
+.ws-header-add { border: none; background: none; cursor: pointer; color: var(--text-2); font-size: 14px; padding: 0 6px; border-radius: 4px; line-height: 1; }
+.ws-header-add:hover { color: var(--text-1); background: var(--surface-hover); }
 .ws-children { padding-left: 12px; }
 .ws-add { display: flex; align-items: center; gap: 6px; margin: 4px 8px 0; padding: 6px 8px; border: 1px dashed var(--border-2); border-radius: 6px; background: none; cursor: pointer; color: var(--text-2); font-size: 12px; }
 .ws-add:hover { color: var(--text-1); border-color: var(--text-2); }

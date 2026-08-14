@@ -271,7 +271,10 @@ export default function App() {
         </div>
         {!collapsed && (
           <>
-            <div className="sidebar-section">{t('workspace')}</div>
+            <div className="sidebar-section-row">
+              <span className="sidebar-section">{t('workspace')}</span>
+              <button className="ws-header-add" onClick={() => setShowWorkspace(true)} title={t('addWorkspace')} aria-label={t('addWorkspace')}>＋</button>
+            </div>
             <div className="ws-list">
               {(workspace?.recent ?? []).map((w) => {
                 const isCurrent = w.path === workspace?.current
@@ -305,7 +308,6 @@ export default function App() {
                   </div>
                 )
               })}
-              <button className="ws-add" onClick={() => setShowWorkspace(true)}>＋ {t('addWorkspace')}</button>
             </div>
           </>
         )}
