@@ -47,6 +47,7 @@ class PollingEngine {
           })
         }
       }
+      this.ctx.emit('poller/result', { objectId: device.id, points })
       this.ctx.store.write(points)
       await this.ctx.store.flush()
     } finally {

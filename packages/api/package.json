@@ -1,0 +1,14 @@
+{
+  "name": "@probebench/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "cordis": "^4.0.0-rc.8",
+    "schemastery": "^3.18.0",
+    "fastify": "^5.12.0",
+    "@probebench/config": "*",
+    "@probebench/store": "*"
+  }
+}

@@ -99,3 +99,23 @@
 ### 下一步
 
 - **Phase 3**：`api` + `ws` + `client` React shell（可视化 + 实时推送 + 历史查询）。
+
+---
+
+## 2026-08-14（续）—— Phase 3a：config 元数据 + api REST
+
+### 完成内容
+
+- `packages/config`：`ConfigStore`（node:sqlite 同步元数据存储），表 `monitor_objects/register_groups/registers`，提供 `ctx.config`（list/create）。
+- `packages/api`：Fastify REST，镜像原 Monitor 端点（objects/groups/registers/latest/data/query/health），提供 `ctx.api`（不自动 listen，用 inject() 测试）。
+- poller 增加 `poller/result` 事件发射（为 ws 实时推送预留）。
+- 冒烟测试 `scripts/test-api.ts`：6 个端点全 200。
+
+### 关键决策
+
+- 元数据存储用 **node:sqlite**（Node 24 内置同步 API，零额外依赖）。
+- api 提供 `FastifyInstance` 但不自动 listen，便于 `inject()` 无端口测试。
+
+### 下一步
+
+- Phase 3b：`ws` 实时推送（@fastify/websocket）+ `client` React 前端（Vite）。
