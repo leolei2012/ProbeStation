@@ -1,0 +1,17 @@
+{
+  "name": "@probebench/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@probebench/core": "*",
+    "@cordisjs/plugin-logger-console": "^1.0.0",
+    "cordis": "^4.0.0-rc.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

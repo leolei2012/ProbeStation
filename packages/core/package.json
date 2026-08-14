@@ -1,0 +1,12 @@
+{
+  "name": "@probebench/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "cordis": "^4.0.0-rc.8",
+    "schemastery": "^3.18.0"
+  }
+}
