@@ -11,7 +11,8 @@ await new Promise<void>((resolve, reject) => {
 console.log('connected to 192.168.90.176:8899')
 
 const res = await client.readHoldingRegisters(0, 10)
-const body = res.response.body
-console.log('read 10 registers (FC03):', Array.from(body.valuesAsArray))
+console.log('read 0x0000 x10 (FC03):', Array.from(res.response.body.valuesAsArray))
+const res2 = await client.readHoldingRegisters(0x1000, 10)
+console.log('read 0x1000 x10 (FC03):', Array.from(res2.response.body.valuesAsArray))
 socket.destroy()
 console.log('DEVICE TEST OK')

@@ -49,6 +49,9 @@ function seedDemo(ctx: any, cfg: any): void {
   const obj = cfg.createObject('测试从站', '192.168.90.176', 8899)
   const g = cfg.createGroup(obj.id, 'Holding Registers', 3, 0, 10)
   for (let i = 0; i < 10; i++) cfg.createRegister(g.id, obj.id, '寄存器' + i, 3, i)
+  // 第二段：0x1000 起 10 个数据（斜坡下降）
+  const g2 = cfg.createGroup(obj.id, '第二段 0x1000', 3, 4096, 10)
+  for (let i = 0; i < 10; i++) cfg.createRegister(g2.id, obj.id, '段2寄存器' + i, 3, 4096 + i)
 
   // 本地模拟器（127.0.0.1:8502，由 slave 插件服务）
   const sim = cfg.createObject('本地模拟器', '127.0.0.1', 8502)
