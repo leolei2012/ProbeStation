@@ -1,20 +1,6 @@
-import { Context } from 'cordis'
-import * as configPlugin from '../packages/config/src/index.ts'
-import * as storePlugin from '../packages/store/src/index.ts'
-import * as modbusPlugin from '../packages/modbus/src/index.ts'
-import * as pollerPlugin from '../packages/poller/src/index.ts'
-import * as sinkPlugin from '../packages/sink/src/index.ts'
-import * as importerPlugin from '../packages/importer/src/index.ts'
-import * as apiPlugin from '../packages/api/src/index.ts'
+import { boot } from './_bootstrap.ts'
 
-const ctx = new Context()
-await ctx.plugin(configPlugin, { dbPath: ':memory:' })
-await ctx.plugin(storePlugin, { dbPath: ':memory:', flushIntervalMs: 5000, flushBatchSize: 100 })
-await ctx.plugin(modbusPlugin, { defaultTimeoutMs: 2000, defaultUnitId: 1 })
-await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
-await ctx.plugin(sinkPlugin)
-await ctx.plugin(importerPlugin)
-await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080 })
+const { ctx } = await boot({ api: {} })
 
 // seed metadata
 const cfg = ctx.get('config', false)

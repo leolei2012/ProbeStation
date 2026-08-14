@@ -1,18 +1,6 @@
-import { Context } from 'cordis'
-import * as configPlugin from '../packages/config/src/index.ts'
-import * as storePlugin from '../packages/store/src/index.ts'
-import * as modbusPlugin from '../packages/modbus/src/index.ts'
-import * as pollerPlugin from '../packages/poller/src/index.ts'
-import * as sinkPlugin from '../packages/sink/src/index.ts'
-import * as apiPlugin from '../packages/api/src/index.ts'
+import { boot } from './_bootstrap.ts'
 
-const ctx = new Context()
-await ctx.plugin(configPlugin, { dbPath: ':memory:' })
-await ctx.plugin(storePlugin, { dbPath: ':memory:' })
-await ctx.plugin(modbusPlugin, {})
-await ctx.plugin(pollerPlugin, {})
-await ctx.plugin(sinkPlugin)
-await ctx.plugin(apiPlugin, { host: '127.0.0.1', port: 8080 })
+const { ctx } = await boot({ api: {} })
 
 const cfg = ctx.get('config', false)
 const obj = cfg.createObject('模拟器', '127.0.0.1', 8502)
@@ -39,3 +27,4 @@ const resX = await app.inject({ method: 'GET', url: `/api/export/xlsx?object_id=
 console.log('XLSX', resX.statusCode, 'bytes:', (resX.rawPayload as Buffer).length)
 
 console.log('SINK TEST OK')
+process.exit(0)

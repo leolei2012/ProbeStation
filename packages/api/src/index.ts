@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 export const name = 'api'
-export const inject = ['config', 'store', 'poller', 'sink', 'importer']
+export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'workspace']
 
 export interface Config { host: string; port: number; staticDir?: string }
 export const Config: z<Config> = z.object({
@@ -24,8 +24,18 @@ export function apply(ctx: Context, config: Config): void {
   const poller = (ctx as any).poller
   const sink = (ctx as any).sink
   const importer = (ctx as any).importer
+  const workspace = (ctx as any).workspace
 
   app.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
+
+  // ── Workspace ───────────────────────────────────────────
+  app.get('/api/workspace', async () => workspace.list())
+  app.get('/api/workspace/browse', async (req) => workspace.browse(String((req.query as any).path ?? '')))
+  app.post('/api/workspace/switch', async (req) => {
+    const b = req.body as any
+    await workspace.switchTo(b.path)
+    return workspace.list()
+  })
 
   // ── Objects ─────────────────────────────────────────────
   app.get('/api/monitor_objects', async () => cfg.listObjects())
@@ -146,6 +156,10 @@ export function apply(ctx: Context, config: Config): void {
   })
   ctx.on('poller/group-ok', (payload: any) => {
     const msg = JSON.stringify({ type: 'group-ok', ...payload })
+    for (const s of sockets) s.send(msg)
+  })
+  ctx.on('workspace/changed', (payload: any) => {
+    const msg = JSON.stringify({ type: 'workspace/changed', ...payload })
     for (const s of sockets) s.send(msg)
   })
 

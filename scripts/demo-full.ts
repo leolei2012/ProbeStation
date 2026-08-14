@@ -1,11 +1,6 @@
 import net from 'node:net'
 import { ModbusTCPServer } from 'jsmodbus'
-import { Context } from 'cordis'
-import * as configPlugin from '../packages/config/src/index.ts'
-import * as storePlugin from '../packages/store/src/index.ts'
-import * as modbusPlugin from '../packages/modbus/src/index.ts'
-import * as pollerPlugin from '../packages/poller/src/index.ts'
-import * as apiPlugin from '../packages/api/src/index.ts'
+import { boot } from './_bootstrap.ts'
 
 // 1. local jsmodbus slave (holding = 100, 101, 102, ...)
 const netServer = new net.Server()
@@ -15,12 +10,7 @@ const slave = new ModbusTCPServer(netServer, { holding, coils: Buffer.alloc(1024
 await new Promise<void>((r) => netServer.listen(8502, '127.0.0.1', r))
 
 // 2. boot full cordis app
-const ctx = new Context()
-await ctx.plugin(configPlugin, { dbPath: ':memory:' })
-await ctx.plugin(storePlugin, { dbPath: ':memory:' })
-await ctx.plugin(modbusPlugin, { defaultTimeoutMs: 2000, defaultUnitId: 1 })
-await ctx.plugin(apiPlugin, { host: '127.0.0.1', port: 8080 })
-await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
+const { ctx } = await boot({ api: {} })
 
 // 3. seed metadata
 const cfg = ctx.get('config', false)
@@ -48,3 +38,4 @@ for (const url of [
 }
 console.log('DEMO FULL STACK OK')
 netServer.close()
+process.exit(0)

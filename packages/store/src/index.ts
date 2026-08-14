@@ -33,12 +33,15 @@ export interface PollPoint {
  * flushes batches into a single `poll_data` table.
  */
 export class DuckDBStore {
-  private readonly ready: Promise<DuckDBConnection>
+  private ready: Promise<DuckDBConnection>
+  private instance: DuckDBInstance | null = null
   private buffer: PollPoint[] = []
   private readonly latest = new Map<number, { rawValue: number; quality: string; timestamp: string }>()
   private flushTimer: NodeJS.Timeout | null = null
+  private dbPath: string
 
   constructor(private readonly config: Config) {
+    this.dbPath = config.dbPath
     this.ready = this.init()
     this.ready.catch(() => {})
     if (this.config.flushIntervalMs > 0) {
@@ -47,7 +50,8 @@ export class DuckDBStore {
   }
 
   private async init(): Promise<DuckDBConnection> {
-    const instance = await DuckDBInstance.create(this.config.dbPath)
+    const instance = await DuckDBInstance.create(this.dbPath)
+    this.instance = instance
     const conn = await instance.connect()
     await conn.run(`CREATE TABLE IF NOT EXISTS poll_data (
       object_id INTEGER,
@@ -57,6 +61,20 @@ export class DuckDBStore {
       quality VARCHAR
     )`)
     return conn
+  }
+
+  /** 切换工作区：冲刷旧缓冲、关闭旧连接，重开新库并清空热层。 */
+  async reopen(dbPath: string): Promise<void> {
+    await this.flush()
+    const old = await this.ready.catch(() => null)
+    if (old) old.closeSync()
+    if (this.instance) { try { this.instance.closeSync() } catch { /* already closed */ } }
+    this.instance = null
+    this.buffer = []
+    this.latest.clear()
+    this.dbPath = dbPath
+    this.ready = this.init()
+    this.ready.catch(() => {})
   }
 
   /** Enqueue points into the hot buffer; auto-flush when the batch is full. */

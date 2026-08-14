@@ -472,6 +472,30 @@
 - 分组编辑弹窗功能码改下拉：`FC03 读保持寄存器` / `FC04 读输入寄存器`；poller 按 `g.functionCode===4` 走 `readInputRegisters`（原只 FC03）。
 - 种子：`测试从站` 加第二分组「第二段 0x1000」（0x1000 起 10 个）；`test-device.ts` 直连读两段（0x0000 上升 + 0x1000 下降）验证通过。
 - 测试 `test-crud.ts` 补寄存器别名/类型更新断言；文档（REST 表补 `PUT/DELETE /api/registers/:id`、poller README 补 FC04）同步。
+---
+
+## 2026-08-14（续）—— 工作区（对齐 DSH：一个文件夹 = 一个工作区）
+
+### 需求
+
+- 软件本地运行，能不能像 DeepSeek Harness 一样选一个文件夹当工作区，再在工作区里新建设备？逻辑向 DSH 看齐。
+
+### 设计
+
+- 一个工作区 = 一个文件夹，内含 `config.db`（元数据）+ `poll.duckdb`（时序），自包含。
+- 运行时切换：停轮询 → `store.reopen` → `config.reopen` → 广播 `workspace/changed` → 重启轮询。
+- 注册表 `~/.probestation/workspaces.json` 记住最近 20 个工作区。
+
+### 完成内容
+
+- `config`：`ConfigStore` 加 `reopen(dbPath)`（抽 `schema()`，node:sqlite `close()` 后重开）。
+- `store`：`DuckDBStore` 加 `reopen(dbPath)`（保留 instance，`flush` 后 `closeSync()` 关连接+实例，清空热层）。
+- 新增 `packages/workspace` 插件：`getCurrent/list/browse/switchTo` + 最近工作区注册表。
+- `api`：注入 workspace，加 `GET /api/workspace`、`GET /api/workspace/browse`、`POST /api/workspace/switch`，WS 广播 `workspace/changed`。
+- 前端：侧边栏顶部工作区栏（📁 + 路径，点击弹「切换工作区」），弹窗支持路径输入 + 子目录浏览 + 最近使用；切换后重载设备列表。
+- 测试：新增 `scripts/_bootstrap.ts`（临时目录装配全栈）+ `scripts/test-workspace.ts`（A/B 工作区数据隔离验证）；9 个装配 api 的测试脚本统一改用 `boot()`，顺带修复了 test-ws/test-sink/test-rule/test-logs/demo-full 原本缺 sink/importer 依赖的问题。
+
+
 
 
 

@@ -1,20 +1,6 @@
-import { Context } from 'cordis'
-import * as configPlugin from '../packages/config/src/index.ts'
-import * as storePlugin from '../packages/store/src/index.ts'
-import * as modbusPlugin from '../packages/modbus/src/index.ts'
-import * as pollerPlugin from '../packages/poller/src/index.ts'
-import * as sinkPlugin from '../packages/sink/src/index.ts'
-import * as importerPlugin from '../packages/importer/src/index.ts'
-import * as apiPlugin from '../packages/api/src/index.ts'
+import { boot } from './_bootstrap.ts'
 
-const ctx = new Context()
-await ctx.plugin(configPlugin, { dbPath: ':memory:' })
-await ctx.plugin(storePlugin, { dbPath: ':memory:' })
-await ctx.plugin(modbusPlugin, {})
-await ctx.plugin(pollerPlugin, {})
-await ctx.plugin(sinkPlugin)
-await ctx.plugin(importerPlugin)
-await ctx.plugin(apiPlugin, { host: '127.0.0.1', port: 8080 })
+const { ctx } = await boot({ api: {} })
 
 const app = ctx.get('api', false)
 let res = await app.inject({ method: 'POST', url: '/api/monitor_objects', payload: { name: '测试', ip: '1.2.3.4', port: 502 } })
@@ -34,3 +20,4 @@ res = await app.inject({ method: 'POST', url: '/api/groups/' + g.id + '/toggle-p
 console.log('toggle group:', res.statusCode, res.body)
 
 console.log('GROUPS TEST OK')
+process.exit(0)

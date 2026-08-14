@@ -24,12 +24,31 @@ const GROUP_MAP: Record<string, string> = { name: 'name', slaveId: 'slave_id', f
 const REGISTER_MAP: Record<string, string> = { alias: 'alias', functionCode: 'function_code', startAddress: 'start_address', dataType: 'data_type' }
 
 export class ConfigStore {
-  private readonly db: DatabaseSync
+  private db: DatabaseSync
+  private dbPath: string
 
   constructor(config: Config) {
-    if (config.dbPath !== ':memory:') mkdirSync(dirname(config.dbPath), { recursive: true })
-    this.db = new DatabaseSync(config.dbPath)
-    this.db.exec(`
+    this.dbPath = config.dbPath
+    this.db = this.open(config.dbPath)
+  }
+
+  /** 打开（或重开）一个库文件并确保 schema 存在。 */
+  private open(dbPath: string): DatabaseSync {
+    if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true })
+    const db = new DatabaseSync(dbPath)
+    db.exec(this.schema())
+    return db
+  }
+
+  /** 切换工作区：关闭旧库、打开新库（幂等，CREATE TABLE IF NOT EXISTS）。 */
+  reopen(dbPath: string): void {
+    this.db.close()
+    this.dbPath = dbPath
+    this.db = this.open(dbPath)
+  }
+
+  private schema(): string {
+    return `
       CREATE TABLE IF NOT EXISTS monitor_objects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL, ip TEXT NOT NULL, port INTEGER DEFAULT 502,
@@ -56,7 +75,7 @@ export class ConfigStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, level TEXT DEFAULT 'INFO',
         source TEXT, message TEXT
       );
-    `)
+    `
   }
 
   listObjects(): DeviceRecord[] { return this.db.prepare(OBJECT_SELECT + ' ORDER BY id').all() as unknown as DeviceRecord[] }

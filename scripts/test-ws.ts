@@ -1,12 +1,6 @@
-import { Context } from 'cordis'
-import * as configPlugin from '../packages/config/src/index.ts'
-import * as storePlugin from '../packages/store/src/index.ts'
-import * as apiPlugin from '../packages/api/src/index.ts'
+import { boot } from './_bootstrap.ts'
 
-const ctx = new Context()
-await ctx.plugin(configPlugin, { dbPath: ':memory:' })
-await ctx.plugin(storePlugin, { dbPath: ':memory:' })
-await ctx.plugin(apiPlugin, { host: '127.0.0.1', port: 18080 })
+const { ctx } = await boot({ api: { port: 18080 } })
 
 // write a sample so latest is non-empty
 const store = ctx.get('store', false)
@@ -40,3 +34,4 @@ console.log('after emit, received[1] =', received[1])
 ws.close()
 await app.close()
 console.log('WS TEST OK')
+process.exit(0)

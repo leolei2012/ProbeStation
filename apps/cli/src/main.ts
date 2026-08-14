@@ -10,6 +10,7 @@ import * as rulePlugin from '@probebench/rule'
 import * as importerPlugin from '@probebench/importer'
 import * as mcpPlugin from '@probebench/mcp'
 import * as slavePlugin from '@probebench/slave'
+import * as workspacePlugin from '@probebench/workspace'
 
 const ctx = new Context()
 await ctx.plugin(ConsoleExporter)
@@ -23,6 +24,7 @@ await ctx.plugin(importerPlugin)
 await ctx.plugin(mcpPlugin)
 await ctx.plugin(slavePlugin, { port: 8502, holdingSize: 5000 })
 await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
+await ctx.plugin(workspacePlugin, { defaultWorkspace: 'data' })
 
 // seed demo devices if config empty
 const cfg = ctx.get('config', false)

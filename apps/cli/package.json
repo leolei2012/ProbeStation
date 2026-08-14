@@ -18,7 +18,7 @@
     "@probebench/rule": "*",
     "@probebench/importer": "*",
     "@probebench/slave": "*",
-    "@probebench/mcp": "*"
+    "@probebench/mcp": "*", "@probebench/workspace": "*"
   },
   "devDependencies": {
     "tsx": "^4.19.0"

@@ -17,6 +17,12 @@ const I18N: Record<Lang, Record<string, string>> = {
     newDevice: '＋ 新建设备',
     devices: '设备',
     noDevices: '暂无设备，点上方新建',
+    workspace: '工作区',
+    switchWorkspace: '切换工作区',
+    wsPath: '工作区路径',
+    selectFolder: '选择此文件夹',
+    upFolder: '上一级',
+    recentWs: '最近使用',
     settings: '设置',
     emptyHint: '选择左侧设备，或新建设备开始观测',
     polling: '轮询中',
@@ -51,6 +57,12 @@ const I18N: Record<Lang, Record<string, string>> = {
     newDevice: '＋ New Device',
     devices: 'Devices',
     noDevices: 'No devices, create one above',
+    workspace: 'Workspace',
+    switchWorkspace: 'Switch workspace',
+    wsPath: 'Workspace path',
+    selectFolder: 'Select this folder',
+    upFolder: 'Parent',
+    recentWs: 'Recent',
     settings: 'Settings',
     emptyHint: 'Select a device or create one to start',
     polling: 'Polling',
@@ -98,6 +110,8 @@ export default function App() {
   const [groups, setGroups] = useState<DeviceGroup[]>([])
   const [latest, setLatest] = useState<Record<number, LatestValue>>({})
   const [groupErrors, setGroupErrors] = useState<Record<number, string>>({})
+  const [workspace, setWorkspace] = useState<{ current: string; recent: string[] } | null>(null)
+  const [showWorkspace, setShowWorkspace] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
@@ -117,6 +131,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem('ps-collapsed', collapsed ? '1' : '0') }, [collapsed])
 
   const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices) }, [])
+  const refreshWorkspace = useCallback(() => { api.get('/api/workspace').then(setWorkspace) }, [])
   const refreshRegisters = useCallback((id: number) => {
     api.get('/api/monitor_objects/' + id + '/groups').then(async (gs: Array<{ id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number }>) => {
       const out: DeviceGroup[] = []
@@ -128,7 +143,7 @@ export default function App() {
     })
   }, [])
 
-  useEffect(() => { refreshDevices() }, [refreshDevices])
+  useEffect(() => { refreshDevices(); refreshWorkspace() }, [refreshDevices, refreshWorkspace])
   useEffect(() => { if (selectedId != null) refreshRegisters(selectedId) }, [selectedId, refreshRegisters])
   useEffect(() => {
     const ws = new WebSocket('ws://' + location.host + '/ws')
@@ -140,6 +155,7 @@ export default function App() {
       }
       else if (msg.type === 'group-error') setGroupErrors((prev) => ({ ...prev, [msg.groupId]: msg.error }))
       else if (msg.type === 'group-ok') setGroupErrors((prev) => { const next = { ...prev }; delete next[msg.groupId]; return next })
+      else if (msg.type === 'workspace/changed') { setSelectedId(null); setLatest({}); setGroupErrors({}); refreshDevices(); refreshWorkspace() }
     }
     return () => ws.close()
   }, [])
@@ -155,6 +171,16 @@ export default function App() {
     if (selectedId === id) setSelectedId(null)
     refreshDevices()
   }, [selectedId, refreshDevices])
+
+  const switchWorkspace = useCallback(async (path: string) => {
+    await api.post('/api/workspace/switch', { path })
+    setShowWorkspace(false)
+    setSelectedId(null)
+    setLatest({})
+    setGroupErrors({})
+    refreshDevices()
+    refreshWorkspace()
+  }, [refreshDevices, refreshWorkspace])
 
   const selected = devices.find((d) => d.id === selectedId) ?? null
 
@@ -173,6 +199,16 @@ export default function App() {
           </div>
           {!collapsed && <button className="new-btn" onClick={() => setShowAdd(true)}>{t('newDevice')}</button>}
         </div>
+        {!collapsed && (
+          <div className="workspace-bar" onClick={() => setShowWorkspace(true)} title={workspace?.current ?? ''}>
+            <span className="ico">📁</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="ws-label">{t('workspace')}</div>
+              <div className="ws-name">{workspace?.current ?? '—'}</div>
+            </div>
+            <span className="ws-arrow">›</span>
+          </div>
+        )}
         {!collapsed && <div className="sidebar-section">{t('devices')}</div>}
         {!collapsed && <div className="device-list">
           {devices.map((d) => (
@@ -202,6 +238,7 @@ export default function App() {
       </main>
 
       {showAdd && <AddDeviceModal t={t} onClose={() => setShowAdd(false)} onAdd={addDevice} />}
+      {showWorkspace && <WorkspaceModal t={t} workspace={workspace} onClose={() => setShowWorkspace(false)} onSwitch={switchWorkspace} />}
       {showSettings && <SettingsModal t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} onClose={() => setShowSettings(false)} />}
     </div>
   )
@@ -523,6 +560,49 @@ function AddDeviceModal({ t, onClose, onAdd }: { t: T; onClose: () => void; onAd
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
           <button className="btn primary" onClick={() => onAdd(name, ip, Number(port))}>{t('add')}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function WorkspaceModal({ t, workspace, onClose, onSwitch }: {
+  t: T; workspace: { current: string; recent: string[] } | null; onClose: () => void; onSwitch: (path: string) => void
+}) {
+  const [path, setPath] = useState(workspace?.current ?? '')
+  const [browse, setBrowse] = useState<{ path: string; parent: string | null; dirs: string[] } | null>(null)
+  const browseTo = async (p: string) => {
+    const b = await api.get('/api/workspace/browse?path=' + encodeURIComponent(p))
+    setBrowse(b)
+    setPath(b.path)
+  }
+  useEffect(() => { if (workspace?.current) void browseTo(workspace.current) }, [])
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal ws-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span>{t('switchWorkspace')}</span>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <label>{t('wsPath')}</label>
+        <input value={path} onChange={(e) => setPath(e.target.value)} />
+        <div className="ws-browse">
+          {browse?.parent != null && <button className="btn ws-dir" onClick={() => void browseTo(browse.parent!)}>↑ {t('upFolder')}</button>}
+          {browse?.dirs.map((d) => (
+            <button key={d} className="btn ws-dir" onClick={() => void browseTo(browse.path + '/' + d)}>📁 {d}</button>
+          ))}
+        </div>
+        {workspace && workspace.recent.length > 0 && (
+          <>
+            <div className="sidebar-section">{t('recentWs')}</div>
+            {workspace.recent.map((p) => (
+              <div key={p} className="ws-recent" onClick={() => { setPath(p); void browseTo(p) }}>{p}</div>
+            ))}
+          </>
+        )}
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>{t('cancel')}</button>
+          <button className="btn primary" onClick={() => onSwitch(path)}>{t('selectFolder')}</button>
         </div>
       </div>
     </div>
