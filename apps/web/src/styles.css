@@ -106,7 +106,8 @@ table.reg { width: 100%; border-collapse: collapse; }
 table.reg th { text-align: left; font-size: 12px; color: var(--text-3); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--border-1); }
 table.reg td { padding: 10px; border-bottom: 1px solid var(--border-1); font-size: 13px; }
 table.reg tr:hover td { background: var(--surface-hover); }
-.value { font-family: var(--font-code); font-weight: 600; }
+.value { font-family: var(--font-code); font-weight: 600; cursor: pointer; }
+.value:hover { background: var(--accent-soft); }
 .write-input { width: 64px; padding: 4px 6px; border: 1px solid var(--border-2); border-radius: 6px; font-size: 12px; background: var(--surface); color: var(--text-1); font-family: var(--font); }
 
 /* ── Modal ── */

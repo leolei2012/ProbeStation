@@ -510,6 +510,7 @@
 - 注册表从 `string[]` 升级为记录 `{ path, title, lastUsedAt }`（title=basename），按规范化路径去重，兼容旧 string[] 迁移。
 - 注册表原子写（tmp + rename，失败回退直写）。
 - 前端工作区栏/最近列表显示 basename 标题（含完整路径副文本）。
+- Live 表格：列名「实时值」→「值」，去掉「写值」列；改为**双击值**弹「写寄存器」窗口（输入值 + 选功能码 FC06 单写 / FC16 多写）。
 - `resolveInitialWorkspace` 读最近一条记录 path，重启记住上次工作区（不变）。
 
 

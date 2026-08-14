@@ -38,7 +38,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: '导出 XLSX',
     deleteDevice: '删除设备',
     regCount: '{n} 个寄存器',
-    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '实时值', colQuality: '质量', colWrite: '写值',
+    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入',
     write: '写', valuePh: '值',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
@@ -78,7 +78,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: 'Export XLSX',
     deleteDevice: 'Delete',
     regCount: '{n} registers',
-    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write',
+    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write',
     write: 'Write', valuePh: 'value',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
@@ -288,6 +288,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
   t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>; groupErrors: Record<number, string>; onRefresh: () => void
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
+  const [writeReg, setWriteReg] = useState<Register | null>(null)
   const toggleGroup = async (id: number) => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() }
   const deleteGroup = async (id: number) => { await api.del('/api/groups/' + id); onRefresh() }
   return (
@@ -307,7 +308,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteDevice')}</button>
           </div>
           <table className="reg">
-            <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th><th>{t('colWrite')}</th></tr></thead>
+            <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th></tr></thead>
             <tbody>
               {g.registers.map((r) => {
                 const v = latest[r.id]
@@ -316,18 +317,18 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
                     <td className="kv">{r.startAddress}</td>
                     <td><AliasCell t={t} reg={r} onRefresh={onRefresh} /></td>
                     <td><TypeCell reg={r} onRefresh={onRefresh} /></td>
-                    <td className="value">{v ? v.rawValue : '—'}</td>
-                    <td><WriteCell t={t} reg={r} /></td>
+                    <td className="value" title={t('valueHint')} onDoubleClick={() => setWriteReg(r)}>{v ? v.rawValue : '—'}</td>
                   </tr>
                 )
               })}
-              {g.registers.length === 0 && <tr><td colSpan={5} className="kv">{t('noRegisters')}</td></tr>}
+              {g.registers.length === 0 && <tr><td colSpan={4} className="kv">{t('noRegisters')}</td></tr>}
             </tbody>
           </table>
         </div>
       ))}
       {groups.length === 0 && <div className="kv">{t('noRegisters')}</div>}
       {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh() }} />}
+      {writeReg && <WriteModal t={t} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => setWriteReg(null)} />}
     </div>
   )
 }
@@ -375,17 +376,35 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
   )
 }
 
-function WriteCell({ t, reg }: { t: T; reg: Register }) {
-  const [val, setVal] = useState('')
+function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose: () => void; onSaved: () => void }) {
+  const [value, setValue] = useState('')
+  const [method, setMethod] = useState<'single' | 'multiple'>('multiple')
+  const [busy, setBusy] = useState(false)
   const write = async () => {
-    if (val === '') return
-    await api.post('/api/registers/' + reg.id + '/write', { value: Number(val), method: 'multiple' })
-    setVal('')
+    if (value === '') return
+    setBusy(true)
+    try {
+      await api.post('/api/registers/' + reg.id + '/write', { value: Number(value), method })
+      onSaved()
+    } finally { setBusy(false) }
   }
   return (
-    <div style={{ display: 'flex', gap: 4 }}>
-      <input className="write-input" value={val} onChange={(e) => setVal(e.target.value)} placeholder={t('valuePh')} />
-      <button className="btn" onClick={write}>{t('write')}</button>
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{t('writeReg')}</h3>
+        <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress}</div>
+        <label>{t('valuePh')}</label>
+        <input value={value} onChange={(e) => setValue(e.target.value)} autoFocus placeholder={t('valuePh')} />
+        <label>{t('functionCode')}</label>
+        <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')}>
+          <option value="multiple">{t('fc16')}</option>
+          <option value="single">{t('fc06')}</option>
+        </select>
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>{t('cancel')}</button>
+          <button className="btn primary" onClick={write} disabled={busy}>{t('write')}</button>
+        </div>
+      </div>
     </div>
   )
 }
