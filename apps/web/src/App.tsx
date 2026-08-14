@@ -11,8 +11,8 @@ type T = (key: string) => string
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
-    brand: '砺台',
-    brandSub: 'ProbeStation · 设备观测与测试',
+    brand: 'ProbeStation',
+    brandSub: '设备观测与测试',
     newDevice: '＋ 新建设备',
     devices: '设备',
     noDevices: '暂无设备，点上方新建',
