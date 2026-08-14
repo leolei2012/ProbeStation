@@ -13,7 +13,8 @@
     "@probebench/store": "*",
     "@probebench/modbus": "*",
     "@probebench/poller": "*",
-    "@probebench/api": "*"
+    "@probebench/api": "*",
+    "@probebench/slave": "*"
   },
   "devDependencies": {
     "tsx": "^4.19.0"

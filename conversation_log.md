@@ -181,3 +181,19 @@
 
 - slave 模拟器插件、importer（MBS/MBP）、sink 导出、rule 告警。
 - poller 轮询失败加日志；补 `update/delete` 等 config CRUD。
+
+---
+
+## 2026-08-14（续）—— Phase 4.2：slave 模拟器插件
+
+### 完成内容
+
+- `packages/slave`：Modbus TCP 从站模拟器（jsmodbus），FC03 读 / FC06 单写 / FC16 多写，提供 `ctx.slave`。
+- 冒烟测试 `scripts/test-slave.ts`：读/写往返全通过。
+- CLI 接线：启动 slave(8502) + 播种「本地模拟器」设备 + 每秒递增计数器，`npm run start` 本地即见实时数据。
+
+### 下一步（Phase 4 剩余）
+
+- 写寄存器 API（FC06/FC16 写路径暴露到 REST）。
+- config CRUD（update/delete/toggle）+ 前端设备管理。
+- importer（MBS/MBP 导入）、sink（CSV/XLSX 导出）、rule（告警）。
