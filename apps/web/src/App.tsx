@@ -29,7 +29,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     devices: '设备',
     noDevices: '暂无设备，点上方新建',
     workspace: '工作区',
-    switchWorkspace: '切换工作区', addWorkspace: '添加工作区',
+    switchWorkspace: '切换工作区', addWorkspace: '添加工作区', newWorkspace: '新工作区',
     wsPath: '工作区路径',
     selectFolder: '选择此文件夹',
     upFolder: '上一级',
@@ -69,7 +69,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     devices: 'Devices',
     noDevices: 'No devices, create one above',
     workspace: 'Workspace',
-    switchWorkspace: 'Switch workspace', addWorkspace: 'Add workspace',
+    switchWorkspace: 'Switch workspace', addWorkspace: 'Add workspace', newWorkspace: 'New workspace',
     wsPath: 'Workspace path',
     selectFolder: 'Select this folder',
     upFolder: 'Parent',
@@ -271,10 +271,11 @@ export default function App() {
         </div>
         {!collapsed && (
           <>
-            <div className="sidebar-section-row">
-              <span className="sidebar-section">{t('workspace')}</span>
-              <button className="ws-header-add" onClick={() => setShowWorkspace(true)} title={t('addWorkspace')} aria-label={t('addWorkspace')}>＋</button>
-            </div>
+            <button className="new-workspace-btn" onClick={() => setShowWorkspace(true)}>
+              <span className="ico">＋</span>
+              <span>{t('newWorkspace')}</span>
+            </button>
+            <div className="sidebar-section">{t('workspace')}</div>
             <div className="ws-list">
               {(workspace?.recent ?? []).map((w) => {
                 const isCurrent = w.path === workspace?.current
@@ -286,6 +287,7 @@ export default function App() {
                       <span className="ws-chevron">{isExpanded ? '▾' : '▸'}</span>
                       <span className="ws-title">{w.title}</span>
                       {isCurrent && <span className="ws-count">{devices.length}</span>}
+                      {isCurrent && <button className="ws-row-add" onClick={(e) => { e.stopPropagation(); setShowAdd(true) }} title={t('newDevice')} aria-label={t('newDevice')}>＋</button>}
                     </div>
                     {isExpanded && (
                       <div className="ws-children">
@@ -302,7 +304,6 @@ export default function App() {
                           ))}
                           {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
                         </div>
-                        <button className="ws-new-device" onClick={() => setShowAdd(true)}>＋ {t('newDevice')}</button>
                       </div>
                     )}
                   </div>
