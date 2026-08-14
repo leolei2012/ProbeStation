@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './styles.css'
 import { applyEndianness, baseType, decodeRegister, isBinType, isHexType, registerWidth, toBin, toHex } from '../../../packages/core/src/codec.ts'
 
@@ -133,6 +133,50 @@ function formatDateTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+}
+
+function WorkspaceRow({ w, isCurrent, isExpanded, deviceCount, onToggle, onSwitch, onAdd, t }: {
+  w: { path: string; title: string; createdAt: string }
+  isCurrent: boolean
+  isExpanded: boolean
+  deviceCount: number
+  onToggle: () => void
+  onSwitch: () => void
+  onAdd: () => void
+  t: T
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const show = () => {
+    const el = ref.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    setPos({ x: r.right + 10, y: r.top + r.height / 2 })
+  }
+  return (
+    <>
+      <div
+        ref={ref}
+        className={'ws-row' + (isCurrent ? ' current' : '')}
+        onClick={isCurrent ? onToggle : onSwitch}
+        onMouseEnter={show}
+        onMouseLeave={() => setPos(null)}
+      >
+        <FolderIcon open={isExpanded} />
+        <span className="ws-chevron">{isExpanded ? '▾' : '▸'}</span>
+        <span className="ws-title">{w.title}</span>
+        {isCurrent && <span className="ws-count">{deviceCount}</span>}
+        {isCurrent && <button className="ws-row-add" onClick={(e) => { e.stopPropagation(); onAdd() }} title={t('newDevice')} aria-label={t('newDevice')}>＋</button>}
+      </div>
+      {pos && (
+        <div className="ws-hover-card" style={{ left: pos.x, top: pos.y }}>
+          <div className="ws-hover-title">{w.title}</div>
+          <div className="ws-hover-path">{w.path}</div>
+          {w.createdAt && <div className="ws-hover-time">{t('createdAt')} {formatDateTime(w.createdAt)}</div>}
+        </div>
+      )}
+    </>
+  )
 }
 
 interface RegView { value: string; covered: boolean; invalid: boolean; writable: boolean }
@@ -299,20 +343,16 @@ export default function App() {
                 const isExpanded = isCurrent && wsExpanded
                 return (
                   <div key={w.path} className="ws-group">
-                    <div className="ws-row-wrap">
-                      <div className={'ws-row' + (isCurrent ? ' current' : '')} onClick={() => { if (isCurrent) setWsExpanded(!wsExpanded); else switchWorkspace(w.path) }}>
-                        <FolderIcon open={isExpanded} />
-                        <span className="ws-chevron">{isExpanded ? '▾' : '▸'}</span>
-                        <span className="ws-title">{w.title}</span>
-                        {isCurrent && <span className="ws-count">{devices.length}</span>}
-                        {isCurrent && <button className="ws-row-add" onClick={(e) => { e.stopPropagation(); setShowAdd(true) }} title={t('newDevice')} aria-label={t('newDevice')}>＋</button>}
-                      </div>
-                      <div className="ws-hover-card">
-                        <div className="ws-hover-title">{w.title}</div>
-                        <div className="ws-hover-path">{w.path}</div>
-                        {w.createdAt && <div className="ws-hover-time">{t('createdAt')} {formatDateTime(w.createdAt)}</div>}
-                      </div>
-                    </div>
+                    <WorkspaceRow
+                      w={w}
+                      isCurrent={isCurrent}
+                      isExpanded={isExpanded}
+                      deviceCount={devices.length}
+                      onToggle={() => setWsExpanded(!wsExpanded)}
+                      onSwitch={() => switchWorkspace(w.path)}
+                      onAdd={() => setShowAdd(true)}
+                      t={t}
+                    />
                     {isExpanded && (
                       <div className="ws-children">
                         <div className="device-list">
