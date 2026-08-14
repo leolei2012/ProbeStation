@@ -3,6 +3,7 @@ import './styles.css'
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
+interface DeviceGroup { id: number; name: string; functionCode: number; startAddress: number; quantity: number; registers: Register[] }
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
 
 type Lang = 'zh' | 'en'
@@ -31,6 +32,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
     tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件',
+    groupCount: '{n} 组',
     histHint: '最近 1 小时数据', curveHint: '最近 1 小时曲线', firmwareHint: '固件升级功能规划中（OTA）',
     appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
@@ -59,6 +61,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
     tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware',
+    groupCount: '{n} groups',
     histHint: 'Last 1 hour', curveHint: 'Last 1 hour', firmwareHint: 'Firmware upgrade (OTA) is planned',
     appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
@@ -81,7 +84,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('ps-collapsed') === '1')
-  const [registers, setRegisters] = useState<Register[]>([])
+  const [groups, setGroups] = useState<DeviceGroup[]>([])
   const [latest, setLatest] = useState<Record<number, LatestValue>>({})
   const [showAdd, setShowAdd] = useState(false)
 
@@ -103,13 +106,13 @@ export default function App() {
 
   const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices) }, [])
   const refreshRegisters = useCallback((id: number) => {
-    api.get('/api/monitor_objects/' + id + '/groups').then(async (groups: Array<{ id: number }>) => {
-      const all: Register[] = []
-      for (const g of groups) {
+    api.get('/api/monitor_objects/' + id + '/groups').then(async (gs: Array<{ id: number; name: string; functionCode: number; startAddress: number; quantity: number }>) => {
+      const out: DeviceGroup[] = []
+      for (const g of gs) {
         const regs: Register[] = await api.get('/api/groups/' + g.id + '/registers')
-        all.push(...regs)
+        out.push({ id: g.id, name: g.name, functionCode: g.functionCode, startAddress: g.startAddress, quantity: g.quantity, registers: regs })
       }
-      setRegisters(all)
+      setGroups(out)
     })
   }, [])
 
@@ -180,7 +183,7 @@ export default function App() {
 
       <main className="main">
         {selected
-          ? <DeviceView key={selected.id} t={t} device={selected} registers={registers} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} />
+          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} />
           : <EmptyState t={t} />}
       </main>
 
@@ -194,11 +197,12 @@ function EmptyState({ t }: { t: T }) {
   return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div></div>
 }
 
-function DeviceView({ t, device, registers, latest, onToggle, onDelete }: {
-  t: T; device: Device; registers: Register[]; latest: Record<number, LatestValue>
+function DeviceView({ t, device, groups, latest, onToggle, onDelete }: {
+  t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>
   onToggle: (id: number) => void; onDelete: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
+  const registers = groups.flatMap((g) => g.registers)
   return (
     <div>
       <div className="device-head">
@@ -208,9 +212,9 @@ function DeviceView({ t, device, registers, latest, onToggle, onDelete }: {
         <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? t('pause') : t('resume')}</button>
         <button className="btn danger" onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
       </div>
-      <div className="main-sub">{device.ip}:{device.port} · {t('regCount').replace('{n}', String(registers.length))}</div>
+      <div className="main-sub">{device.ip}:{device.port} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
       <TabBar tabs={[t('tabLive'), t('tabHistory'), t('tabCurve'), t('tabFirmware')]} active={tab} onChange={setTab} />
-      {tab === 0 && <LiveTable t={t} registers={registers} latest={latest} />}
+      {tab === 0 && <LiveTable t={t} groups={groups} latest={latest} />}
       {tab === 1 && <HistoryTable t={t} device={device} registers={registers} />}
       {tab === 2 && <CurveChart t={t} device={device} registers={registers} />}
       {tab === 3 && <FirmwareView t={t} />}
@@ -228,27 +232,38 @@ function TabBar({ tabs, active, onChange }: { tabs: string[]; active: number; on
   )
 }
 
-function LiveTable({ t, registers, latest }: { t: T; registers: Register[]; latest: Record<number, LatestValue> }) {
+function LiveTable({ t, groups, latest }: { t: T; groups: DeviceGroup[]; latest: Record<number, LatestValue> }) {
   return (
-    <table className="reg">
-      <thead><tr><th>{t('colAlias')}</th><th>{t('colAddr')}</th><th>{t('colType')}</th><th>{t('colValue')}</th><th>{t('colQuality')}</th><th>{t('colWrite')}</th></tr></thead>
-      <tbody>
-        {registers.map((r) => {
-          const v = latest[r.id]
-          return (
-            <tr key={r.id}>
-              <td>{r.alias ?? '—'}</td>
-              <td className="kv">{r.startAddress}</td>
-              <td className="kv">{r.dataType}</td>
-              <td className="value">{v ? v.rawValue : '—'}</td>
-              <td className="kv">{v ? v.quality : '—'}</td>
-              <td><WriteCell t={t} reg={r} /></td>
-            </tr>
-          )
-        })}
-        {registers.length === 0 && <tr><td colSpan={6} className="kv">{t('noRegisters')}</td></tr>}
-      </tbody>
-    </table>
+    <div>
+      {groups.map((g) => (
+        <div key={g.id} className="group-block">
+          <div className="group-head">
+            <span className="group-name">{g.name}</span>
+            <span className="kv">FC{g.functionCode} · 起始 {g.startAddress} · {g.quantity} 个</span>
+          </div>
+          <table className="reg">
+            <thead><tr><th>{t('colAlias')}</th><th>{t('colAddr')}</th><th>{t('colType')}</th><th>{t('colValue')}</th><th>{t('colQuality')}</th><th>{t('colWrite')}</th></tr></thead>
+            <tbody>
+              {g.registers.map((r) => {
+                const v = latest[r.id]
+                return (
+                  <tr key={r.id}>
+                    <td>{r.alias ?? '—'}</td>
+                    <td className="kv">{r.startAddress}</td>
+                    <td className="kv">{r.dataType}</td>
+                    <td className="value">{v ? v.rawValue : '—'}</td>
+                    <td className="kv">{v ? v.quality : '—'}</td>
+                    <td><WriteCell t={t} reg={r} /></td>
+                  </tr>
+                )
+              })}
+              {g.registers.length === 0 && <tr><td colSpan={6} className="kv">{t('noRegisters')}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      ))}
+      {groups.length === 0 && <div className="kv">{t('noRegisters')}</div>}
+    </div>
   )
 }
 

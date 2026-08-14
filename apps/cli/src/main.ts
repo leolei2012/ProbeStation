@@ -32,6 +32,9 @@ if (cfg.listObjects().length === 0) seedDemo(ctx, cfg)
 const slave = ctx.get('slave', false)
 slave.setRegister(1, 250) // 温度
 slave.setRegister(2, 800) // 转速
+slave.setRegister(4096, 220) // 电压（0x1000）
+slave.setRegister(4097, 5) // 电流
+slave.setRegister(4098, 1100) // 功率
 let counter = 0
 setInterval(() => slave.setRegister(0, (counter++) % 1000), 1000)
 
@@ -49,9 +52,14 @@ function seedDemo(ctx: any, cfg: any): void {
 
   // 本地模拟器（127.0.0.1:8502，由 slave 插件服务）
   const sim = cfg.createObject('本地模拟器', '127.0.0.1', 8502)
-  const sg = cfg.createGroup(sim.id, 'Holding Registers', 3, 0, 3)
+  const sg = cfg.createGroup(sim.id, '运行状态', 3, 0, 3)
   for (const [alias, addr] of [['计数器', 0], ['温度', 1], ['转速', 2]] as Array<[string, number]>) {
     cfg.createRegister(sg.id, sim.id, alias, 3, addr)
+  }
+  // 第二个非连续分组（0x1000）
+  const sg2 = cfg.createGroup(sim.id, '电气参数', 3, 4096, 3)
+  for (const [alias, addr] of [['电压', 0], ['电流', 1], ['功率', 2]] as Array<[string, number]>) {
+    cfg.createRegister(sg2.id, sim.id, alias, 3, 4096 + addr)
   }
 
   ctx.logger('cli').info('seeded demo devices (测试从站 + 本地模拟器)')
