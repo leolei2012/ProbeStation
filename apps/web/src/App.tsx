@@ -26,7 +26,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     devices: '设备',
     noDevices: '暂无设备，点上方新建',
     workspace: '工作区',
-    switchWorkspace: '切换工作区',
+    switchWorkspace: '切换工作区', addWorkspace: '添加工作区',
     wsPath: '工作区路径',
     selectFolder: '选择此文件夹',
     upFolder: '上一级',
@@ -66,7 +66,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     devices: 'Devices',
     noDevices: 'No devices, create one above',
     workspace: 'Workspace',
-    switchWorkspace: 'Switch workspace',
+    switchWorkspace: 'Switch workspace', addWorkspace: 'Add workspace',
     wsPath: 'Workspace path',
     selectFolder: 'Select this folder',
     upFolder: 'Parent',
@@ -177,6 +177,7 @@ export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null)
   const [showWorkspace, setShowWorkspace] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  const [wsExpanded, setWsExpanded] = useState(true)
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
 
@@ -239,6 +240,7 @@ export default function App() {
   const switchWorkspace = useCallback(async (path: string) => {
     await api.post('/api/workspace/switch', { path })
     setShowWorkspace(false)
+    setWsExpanded(true)
     setSelectedId(null)
     setLatest({})
     setGroupErrors({})
@@ -261,32 +263,47 @@ export default function App() {
             )}
             <button className="collapse-btn" onClick={() => setCollapsed(!collapsed)}>{collapsed ? '»' : '«'}</button>
           </div>
-          {!collapsed && <button className="new-btn" onClick={() => setShowAdd(true)}>{t('newDevice')}</button>}
         </div>
         {!collapsed && (
-          <div className="workspace-bar" onClick={() => setShowWorkspace(true)} title={workspace?.current ?? ''}>
-            <span className="ico">📁</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="ws-label">{t('workspace')}</div>
-              <div className="ws-name">{workspace?.currentTitle ?? '—'}</div>
+          <>
+            <div className="sidebar-section">{t('workspace')}</div>
+            <div className="ws-list">
+              {(workspace?.recent ?? []).map((w) => {
+                const isCurrent = w.path === workspace?.current
+                const isExpanded = isCurrent && wsExpanded
+                return (
+                  <div key={w.path} className="ws-group">
+                    <div className={'ws-row' + (isCurrent ? ' current' : '')} onClick={() => { if (isCurrent) setWsExpanded(!wsExpanded); else switchWorkspace(w.path) }}>
+                      <span className="ws-folder">{isExpanded ? '📂' : '📁'}</span>
+                      <span className="ws-chevron">{isExpanded ? '▾' : '▸'}</span>
+                      <span className="ws-title">{w.title}</span>
+                      {isCurrent && <span className="ws-count">{devices.length}</span>}
+                    </div>
+                    {isExpanded && (
+                      <div className="ws-children">
+                        <div className="device-list">
+                          {devices.map((d) => (
+                            <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => setSelectedId(d.id)}>
+                              <span className={'device-dot' + (d.isActive ? ' on' : '')} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div className="device-name">{d.name}</div>
+                                <div className="device-sub">{d.ip}:{d.port}</div>
+                              </div>
+                              <button className="device-del" onClick={(e) => { e.stopPropagation(); deleteDevice(d.id) }}>×</button>
+                            </div>
+                          ))}
+                          {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
+                        </div>
+                        <button className="ws-new-device" onClick={() => setShowAdd(true)}>＋ {t('newDevice')}</button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              <button className="ws-add" onClick={() => setShowWorkspace(true)}>＋ {t('addWorkspace')}</button>
             </div>
-            <span className="ws-arrow">›</span>
-          </div>
+          </>
         )}
-        {!collapsed && <div className="sidebar-section">{t('devices')}</div>}
-        {!collapsed && <div className="device-list">
-          {devices.map((d) => (
-            <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => setSelectedId(d.id)}>
-              <span className={'device-dot' + (d.isActive ? ' on' : '')} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="device-name">{d.name}</div>
-                <div className="device-sub">{d.ip}:{d.port}</div>
-              </div>
-              <button className="device-del" onClick={(e) => { e.stopPropagation(); deleteDevice(d.id) }}>×</button>
-            </div>
-          ))}
-          {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
-        </div>}
         <div className="sidebar-footer">
           <button className="settings-btn" onClick={() => setShowSettings(true)}>
             <span className="ico">⚙</span>
