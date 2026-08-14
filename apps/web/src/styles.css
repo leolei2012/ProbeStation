@@ -131,3 +131,15 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .seg { display: flex; border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
 .seg button { padding: 5px 14px; border: none; background: var(--surface); cursor: pointer; font-size: 12px; color: var(--text-1); font-family: var(--font); }
 .seg button.selected { background: var(--brand); color: var(--brand-text); }
+
+/* ── Collapsible sidebar ── */
+.sidebar { transition: width 0.18s ease; }
+.sidebar.collapsed { width: 52px; min-width: 52px; }
+.sidebar-head-row { display: flex; justify-content: space-between; align-items: flex-start; }
+.collapse-btn { border: none; background: none; cursor: pointer; color: var(--text-3); font-size: 15px; padding: 2px 6px; border-radius: 6px; line-height: 1; }
+.collapse-btn:hover { background: var(--surface-hover); color: var(--text-1); }
+.sidebar.collapsed .sidebar-head-row { justify-content: center; }
+.sidebar.collapsed .sidebar-header { padding: 12px 8px; }
+.sidebar.collapsed .sidebar-footer { padding: 6px; }
+.sidebar.collapsed .settings-btn { justify-content: center; }
+.ico { font-size: 14px; }

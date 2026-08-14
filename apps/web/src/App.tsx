@@ -16,7 +16,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     newDevice: '＋ 新建设备',
     devices: '设备',
     noDevices: '暂无设备，点上方新建',
-    settings: '⚙ 设置',
+    settings: '设置',
     emptyHint: '选择左侧设备，或新建设备开始观测',
     polling: '轮询中',
     stopped: '已停用',
@@ -42,7 +42,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     newDevice: '＋ New Device',
     devices: 'Devices',
     noDevices: 'No devices, create one above',
-    settings: '⚙ Settings',
+    settings: 'Settings',
     emptyHint: 'Select a device or create one to start',
     polling: 'Polling',
     stopped: 'Stopped',
@@ -76,6 +76,7 @@ export default function App() {
   const [devices, setDevices] = useState<Device[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('ps-collapsed') === '1')
   const [registers, setRegisters] = useState<Register[]>([])
   const [latest, setLatest] = useState<Record<number, LatestValue>>({})
   const [showAdd, setShowAdd] = useState(false)
@@ -94,6 +95,7 @@ export default function App() {
     return () => mq.removeEventListener('change', apply)
   }, [theme])
   useEffect(() => { localStorage.setItem('ps-lang', lang) }, [lang])
+  useEffect(() => { localStorage.setItem('ps-collapsed', collapsed ? '1' : '0') }, [collapsed])
 
   const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices) }, [])
   const refreshRegisters = useCallback((id: number) => {
@@ -137,14 +139,21 @@ export default function App() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <aside className={'sidebar' + (collapsed ? ' collapsed' : '')}>
         <div className="sidebar-header">
-          <div className="brand">{t('brand')}</div>
-          <div className="brand-sub">{t('brandSub')}</div>
-          <button className="new-btn" onClick={() => setShowAdd(true)}>{t('newDevice')}</button>
+          <div className="sidebar-head-row">
+            {!collapsed && (
+              <div>
+                <div className="brand">{t('brand')}</div>
+                <div className="brand-sub">{t('brandSub')}</div>
+              </div>
+            )}
+            <button className="collapse-btn" onClick={() => setCollapsed(!collapsed)}>{collapsed ? '»' : '«'}</button>
+          </div>
+          {!collapsed && <button className="new-btn" onClick={() => setShowAdd(true)}>{t('newDevice')}</button>}
         </div>
-        <div className="sidebar-section">{t('devices')}</div>
-        <div className="device-list">
+        {!collapsed && <div className="sidebar-section">{t('devices')}</div>}
+        {!collapsed && <div className="device-list">
           {devices.map((d) => (
             <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => setSelectedId(d.id)}>
               <span className={'device-dot' + (d.isActive ? ' on' : '')} />
@@ -156,9 +165,12 @@ export default function App() {
             </div>
           ))}
           {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
-        </div>
+        </div>}
         <div className="sidebar-footer">
-          <button className="settings-btn" onClick={() => setShowSettings(true)}>{t('settings')}</button>
+          <button className="settings-btn" onClick={() => setShowSettings(true)}>
+            <span className="ico">⚙</span>
+            {!collapsed && <span>{t('settings')}</span>}
+          </button>
         </div>
       </aside>
 
