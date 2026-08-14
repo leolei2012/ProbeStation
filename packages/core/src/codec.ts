@@ -146,3 +146,8 @@ export function encodeRegister(type: string, value: number | bigint): number[] {
 export function toHex(word: number): string {
   return '0x' + (word & 0xffff).toString(16).toUpperCase().padStart(4, '0')
 }
+
+/** 16 位字 → 16 位二进制字符串（补零）。 */
+export function toBin(word: number): string {
+  return (word & 0xffff).toString(2).padStart(16, '0')
+}

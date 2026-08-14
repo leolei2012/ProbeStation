@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import './styles.css'
-import { DATA_TYPES, baseType, decodeRegister, registerWidth, toHex } from '../../../packages/core/src/codec.ts'
+import { DATA_TYPES, baseType, decodeRegister, registerWidth, toBin, toHex } from '../../../packages/core/src/codec.ts'
 
 const TYPE_GROUPS = [
   { key: 'grp16', types: DATA_TYPES.filter((t) => registerWidth(t) === 1) },
@@ -118,7 +118,7 @@ function formatNumber(d: number | bigint): string {
 interface RegView { value: string; covered: boolean; invalid: boolean; writable: boolean }
 
 /** 按地址顺序合并多字：首字显示合并值、被覆盖字显示 —、数据不足显示 —（不可写）。 */
-function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue>, hex: boolean): Map<number, RegView> {
+function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue>, mode: 'value' | 'hex' | 'bin'): Map<number, RegView> {
   const rawByAddr: Record<number, number> = {}
   const regIds = new Set<number>()
   for (const g of groups) for (const r of g.registers) {
@@ -157,7 +157,7 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue
         continue
       }
       const decoded = decodeRegister(r.dataType, words)
-      views.set(r.id, { value: hex ? words.map(toHex).join(' ') : formatNumber(decoded), covered: false, invalid: false, writable: true })
+      views.set(r.id, { value: mode === 'hex' ? words.map(toHex).join(' ') : mode === 'bin' ? words.map(toBin).join(' ') : formatNumber(decoded), covered: false, invalid: false, writable: true })
       consumedUpTo = end
     }
   }
@@ -353,16 +353,20 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
-  const [hex, setHex] = useState(false)
+  const [mode, setMode] = useState<'value' | 'hex' | 'bin'>('value')
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const toggleGroup = async (id: number) => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() }
   const deleteGroup = async (id: number) => { await api.del('/api/groups/' + id); onRefresh() }
-  const views = buildRegViews(groups, latest, hex)
+  const views = buildRegViews(groups, latest, mode)
   return (
     <div>
       <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
-        <button className={'btn' + (hex ? ' active' : '')} onClick={() => setHex(!hex)}>{hex ? 'HEX ✓' : 'HEX'}</button>
+        <div className="seg seg-small">
+          <button className={mode === 'value' ? 'selected' : ''} onClick={() => setMode('value')}>{t('colValue')}</button>
+          <button className={mode === 'hex' ? 'selected' : ''} onClick={() => setMode('hex')}>HEX</button>
+          <button className={mode === 'bin' ? 'selected' : ''} onClick={() => setMode('bin')}>BIN</button>
+        </div>
       </div>
       {groups.map((g) => (
         <div key={g.id} className="group-block">

@@ -1,4 +1,4 @@
-import { DATA_TYPES, decodeRegister, encodeRegister, registerWidth, toHex } from '../packages/core/src/codec.ts'
+import { DATA_TYPES, decodeRegister, encodeRegister, registerWidth, toBin, toHex } from '../packages/core/src/codec.ts'
 
 let fail = 0
 function roundTrip(type: string, value: number | bigint, tol = 1e-3) {
@@ -27,6 +27,7 @@ roundTrip('float64-LE', 3.14159265358979)
 console.log('widths 16/32/64 =', registerWidth('int16'), registerWidth('int32'), registerWidth('float64'))
 console.log('DATA_TYPES =', DATA_TYPES.join(','))
 console.log('toHex(0x12ab) =', toHex(0x12ab))
+console.log('toBin(0x12ab) =', toBin(0x12ab), '(expect 0001001010101011)')
 console.log('decode int32 [0x1234,0x5678] =', decodeRegister('int32', [0x1234, 0x5678]), '(expect 305419896)')
 console.log('decode uint64 [0,0,1,0] =', decodeRegister('uint64', [0, 0, 1, 0]), '(expect 65536)')
 console.log('decode int32-LE [0x5678,0x1234] =', decodeRegister('int32-LE', [0x5678, 0x1234]), '(expect 305419896)')
