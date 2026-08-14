@@ -77,6 +77,7 @@ export function apply(ctx: Context, config: Config): void {
   }, async (args) => {
     if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
     const g = cfg.createGroup(args.device_id, args.name, args.function_code ?? 3, args.start_address, args.quantity, 'read', args.slave_id ?? 1, args.poll_interval_ms ?? 1000)
+    for (let i = 0; i < g.quantity; i++) cfg.createRegister(g.id, g.objectId, null, g.functionCode, g.startAddress + i, 'int16')
     cfg.log('INFO', 'mcp', 'create group ' + g.id + ' "' + g.name + '"')
     return { content: [{ type: 'text', text: JSON.stringify(g) }] }
   })

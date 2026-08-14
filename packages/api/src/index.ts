@@ -55,7 +55,10 @@ export function apply(ctx: Context, config: Config): void {
   app.post('/api/monitor_objects/:id/groups', async (req) => {
     const oid = Number((req.params as any).id)
     const b = req.body as any
-    return cfg.createGroup(oid, b.name, b.functionCode ?? 3, b.startAddress ?? 0, b.quantity ?? 1, b.mode ?? 'read', b.slaveId ?? 1, b.pollIntervalMs ?? 1000)
+    const g = cfg.createGroup(oid, b.name, b.functionCode ?? 3, b.startAddress ?? 0, b.quantity ?? 1, b.mode ?? 'read', b.slaveId ?? 1, b.pollIntervalMs ?? 1000)
+    // 按数量自动生成寄存器（每地址一个，默认 int16、无别名）
+    for (let i = 0; i < g.quantity; i++) cfg.createRegister(g.id, g.objectId, null, g.functionCode, g.startAddress + i, 'int16')
+    return g
   })
   app.put('/api/groups/:id', async (req) => cfg.updateGroup(Number((req.params as any).id), req.body as any))
   app.delete('/api/groups/:id', async (req) => { cfg.deleteGroup(Number((req.params as any).id)); return { ok: true } })

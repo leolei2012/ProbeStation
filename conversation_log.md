@@ -517,6 +517,7 @@
 - MCP 补 6 个 CRUD 工具（create_group/update_group/create_register/update_register/delete_register/delete_group），供 agent 开发时动态增删改分组与寄存器；顺带修了 mcp 漏 import `encodeRegister` 的潜在 bug。
 - **修复设备级「断开」无效 bug**：poller 的轮询循环是启动时按设备建的 setInterval，pollObject 之前不重新检查设备 isActive，所以断开后仍继续读。现每轮开头重新 `getObject().isActive`，断开即停止轮询。测试 test-device-toggle。
 - 分组的「暂停/启用」按钮移入编辑弹窗，改成「使能」复选框；分组头部只留「编辑 / 删除」。
+- **修复新建分组空组 bug**：`createGroup` 只建组不建寄存器，手动新建分组出来是「暂无寄存器」。现 API/MCP 的 create_group 按 quantity 自动生成寄存器（每地址一个、int16、无别名）。测试 test-group-create。
 - 工作区文件夹行加 DSH 风格：悬停卡片（标题 + 完整路径 + 创建时间）+ 文件夹 SVG 图标（开/合），workspace 记录补 `createdAt`。
 - 侧边栏进一步对齐 DSH 侧边栏结构：logo 行 → 大按钮「＋ 新工作区」（对应 DSH 的「新会话」）→ 「工作区」区块（文件夹行右侧「＋」= 新建设备）→ 底部设置（ws-list flex:1 使设置固定在底部）。
 - 侧边栏工作区 UI 对齐 DSH：区块标题「工作区」，工作区以文件夹树展示（📁/📂 + ▸/▾ 折叠箭头 + 标题 + 当前数量），当前工作区展开显示设备、其他工作区折叠点击即切换，底部「＋ 添加工作区」。
