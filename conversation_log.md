@@ -453,5 +453,26 @@
 - 测试 `scripts/test-group-fault.ts`：连接失败（ECONNREFUSED）→ `poller/group-error` 正确发出；好设备照常 `poller/result`。
 - 顺手修复 `scripts/test-loop.ts`（poller 依赖 config，补 `configPlugin`）+ 各测试加 `process.exit(0)` 干净退出。
 - 文档：`docs/03`（冒烟清单 + 关键事件 + WS 说明 + 踩坑 #10 + 待办）、`packages/poller/README.md` 同步更新。
+---
+
+## 2026-08-14（续）—— Live 表格交互改进 + 0x1000 第二段
+
+### 需求
+
+- 质量列去掉；地址放第一列、别名第二列。
+- 设备级「启用」改为「连接」，分组级才是「启用」。
+- 别名可编辑、类型下拉可改、分组编辑里功能码改下拉。
+- 测试从站 0x1000 起有第二段 10 个数据（斜坡下降）。
+
+### 完成内容
+
+- 表格列：`地址 | 别名 | 类型 | 实时值 | 写值`（去掉质量列）。
+- 设备头部：状态徽标 `已连接/未连接`、按钮 `连接/断开`；分组头部保持 `暂停/启用`。
+- 别名单元格内联编辑（blur/Enter 提交 `PUT /api/registers/:id {alias}`）；类型下拉 `int16/uint16/int32/uint32/float32`（`PUT .../dataType`）。
+- 分组编辑弹窗功能码改下拉：`FC03 读保持寄存器` / `FC04 读输入寄存器`；poller 按 `g.functionCode===4` 走 `readInputRegisters`（原只 FC03）。
+- 种子：`测试从站` 加第二分组「第二段 0x1000」（0x1000 起 10 个）；`test-device.ts` 直连读两段（0x0000 上升 + 0x1000 下降）验证通过。
+- 测试 `test-crud.ts` 补寄存器别名/类型更新断言；文档（REST 表补 `PUT/DELETE /api/registers/:id`、poller README 补 FC04）同步。
+
+
 
 

@@ -38,6 +38,10 @@ console.log('write multiple:', res.statusCode, res.body, '| slave addr0 =', slav
 res = await app.inject({ method: 'POST', url: `/api/registers/${reg.id}/write`, payload: { value: 7, method: 'single' } })
 console.log('write single:  ', res.statusCode, res.body, '| slave addr0 =', slave.getRegister(0))
 
+// update register alias + dataType (inline editing in Live table)
+res = await app.inject({ method: 'PUT', url: `/api/registers/${reg.id}`, payload: { alias: '新别名', dataType: 'uint16' } })
+console.log('update register:', res.statusCode, res.body)
+
 // CRUD
 res = await app.inject({ method: 'POST', url: '/api/monitor_objects', payload: { name: '设备B', ip: '1.2.3.4', port: 502 } })
 const objB = JSON.parse(res.body)

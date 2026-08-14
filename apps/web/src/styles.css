@@ -115,6 +115,7 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .modal h3 { margin-bottom: 14px; font-size: 15px; }
 .modal label { display: block; font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
 .modal input { width: 100%; padding: 7px 9px; border: 1px solid var(--border-2); border-radius: 6px; margin-bottom: 10px; font-size: 13px; background: var(--surface); color: var(--text-1); font-family: var(--font); }
+.modal select { width: 100%; padding: 7px 9px; border: 1px solid var(--border-2); border-radius: 6px; margin-bottom: 10px; font-size: 13px; background: var(--surface); color: var(--text-1); font-family: var(--font); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .modal-head span { font-size: 15px; font-weight: 600; }
@@ -161,3 +162,6 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .group-name { font-size: 13px; font-weight: 600; }
 .group-error { color: #ec1313; font-size: 12px; font-weight: 600; background: rgba(236, 19, 19, 0.08); border: 1px solid rgba(236, 19, 19, 0.3); border-radius: 6px; padding: 2px 8px; white-space: nowrap; max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
+.cell-input { width: 100%; border: none; background: transparent; font: inherit; color: var(--text-1); padding: 3px 6px; border-radius: 4px; }
+.cell-input:focus { background: var(--surface); outline: 1px solid var(--accent); }
+.cell-select { border: 1px solid var(--border-2); background: var(--surface); font: inherit; color: var(--text-1); border-radius: 6px; padding: 3px 4px; font-size: 12px; }

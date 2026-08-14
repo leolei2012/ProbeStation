@@ -21,6 +21,10 @@ const I18N: Record<Lang, Record<string, string>> = {
     emptyHint: '选择左侧设备，或新建设备开始观测',
     polling: '轮询中',
     stopped: '已停用',
+    connected: '已连接',
+    disconnected: '未连接',
+    connect: '连接',
+    disconnect: '断开',
     pause: '暂停',
     resume: '启用',
     exportCsv: '导出 CSV',
@@ -33,7 +37,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
     tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件',
     groupCount: '{n} 组',
-    newGroup: '新建分组', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', scanRate: '扫描间隔(ms)', edit: '编辑', save: '保存',
+    newGroup: '新建分组', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', scanRate: '扫描间隔(ms)', edit: '编辑', save: '保存', fcReadHolding: '读保持寄存器', fcReadInput: '读输入寄存器',
     histHint: '最近 1 小时数据', curveHint: '最近 1 小时曲线', firmwareHint: '固件升级功能规划中（OTA）',
     appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
@@ -51,6 +55,10 @@ const I18N: Record<Lang, Record<string, string>> = {
     emptyHint: 'Select a device or create one to start',
     polling: 'Polling',
     stopped: 'Stopped',
+    connected: 'Connected',
+    disconnected: 'Disconnected',
+    connect: 'Connect',
+    disconnect: 'Disconnect',
     pause: 'Pause',
     resume: 'Resume',
     exportCsv: 'Export CSV',
@@ -63,7 +71,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
     tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware',
     groupCount: '{n} groups',
-    newGroup: 'New Group', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', scanRate: 'Scan rate(ms)', edit: 'Edit', save: 'Save',
+    newGroup: 'New Group', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', scanRate: 'Scan rate(ms)', edit: 'Edit', save: 'Save', fcReadHolding: 'Read Holding', fcReadInput: 'Read Input',
     histHint: 'Last 1 hour', curveHint: 'Last 1 hour', firmwareHint: 'Firmware upgrade (OTA) is planned',
     appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
@@ -213,9 +221,9 @@ function DeviceView({ t, device, groups, latest, groupErrors, onToggle, onDelete
     <div>
       <div className="device-head">
         <span className="name">{device.name}</span>
-        <span className={'status-badge' + (device.isActive ? ' on' : '')}>{device.isActive ? t('polling') : t('stopped')}</span>
+        <span className={'status-badge' + (device.isActive ? ' on' : '')}>{device.isActive ? t('connected') : t('disconnected')}</span>
         <div style={{ flex: 1 }} />
-        <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? t('pause') : t('resume')}</button>
+        <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? t('disconnect') : t('connect')}</button>
         <button className="btn danger" onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
       </div>
       <div className="main-sub">{device.ip}:{device.port} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
@@ -261,22 +269,21 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteDevice')}</button>
           </div>
           <table className="reg">
-            <thead><tr><th>{t('colAlias')}</th><th>{t('colAddr')}</th><th>{t('colType')}</th><th>{t('colValue')}</th><th>{t('colQuality')}</th><th>{t('colWrite')}</th></tr></thead>
+            <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th><th>{t('colWrite')}</th></tr></thead>
             <tbody>
               {g.registers.map((r) => {
                 const v = latest[r.id]
                 return (
                   <tr key={r.id}>
-                    <td>{r.alias ?? '—'}</td>
                     <td className="kv">{r.startAddress}</td>
-                    <td className="kv">{r.dataType}</td>
+                    <td><AliasCell t={t} reg={r} onRefresh={onRefresh} /></td>
+                    <td><TypeCell reg={r} onRefresh={onRefresh} /></td>
                     <td className="value">{v ? v.rawValue : '—'}</td>
-                    <td className="kv">{v ? v.quality : '—'}</td>
                     <td><WriteCell t={t} reg={r} /></td>
                   </tr>
                 )
               })}
-              {g.registers.length === 0 && <tr><td colSpan={6} className="kv">{t('noRegisters')}</td></tr>}
+              {g.registers.length === 0 && <tr><td colSpan={5} className="kv">{t('noRegisters')}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -311,7 +318,10 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
         <label>{t('slaveId')}</label>
         <input value={slaveId} onChange={(e) => setSlaveId(e.target.value)} />
         <label>{t('functionCode')}</label>
-        <input value={functionCode} onChange={(e) => setFunctionCode(e.target.value)} />
+        <select value={functionCode} onChange={(e) => setFunctionCode(e.target.value)}>
+          <option value="3">FC03 · {t('fcReadHolding')}</option>
+          <option value="4">FC04 · {t('fcReadInput')}</option>
+        </select>
         <label>{t('startAddress')}</label>
         <input value={startAddress} onChange={(e) => setStartAddress(e.target.value)} />
         <label>{t('quantity')}</label>
@@ -339,6 +349,35 @@ function WriteCell({ t, reg }: { t: T; reg: Register }) {
       <input className="write-input" value={val} onChange={(e) => setVal(e.target.value)} placeholder={t('valuePh')} />
       <button className="btn" onClick={write}>{t('write')}</button>
     </div>
+  )
+}
+
+const DATA_TYPES = ['int16', 'uint16', 'int32', 'uint32', 'float32']
+
+function AliasCell({ t, reg, onRefresh }: { t: T; reg: Register; onRefresh: () => void }) {
+  const [val, setVal] = useState(reg.alias ?? '')
+  const commit = async () => {
+    if (val === (reg.alias ?? '')) return
+    await api.put('/api/registers/' + reg.id, { alias: val || null })
+    onRefresh()
+  }
+  return (
+    <input className="cell-input" value={val} placeholder={t('colAlias')}
+      onChange={(e) => setVal(e.target.value)} onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
+  )
+}
+
+function TypeCell({ reg, onRefresh }: { reg: Register; onRefresh: () => void }) {
+  const change = async (v: string) => {
+    if (v === reg.dataType) return
+    await api.put('/api/registers/' + reg.id, { dataType: v })
+    onRefresh()
+  }
+  return (
+    <select className="cell-select" value={reg.dataType} onChange={(e) => change(e.target.value)}>
+      {DATA_TYPES.map((d) => <option key={d} value={d}>{d}</option>)}
+    </select>
   )
 }
 

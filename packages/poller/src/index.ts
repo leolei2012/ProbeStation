@@ -26,7 +26,9 @@ class PollingEngine {
     try {
       const points: Array<Record<string, unknown>> = []
       for (const g of device.groups) {
-        const values: number[] = await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
+        const values: number[] = g.functionCode === 4
+          ? await driver.readInputRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
+          : await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
         for (let i = 0; i < values.length; i++) {
           points.push({ objectId: device.id, registerId: g.startAddress + i, timestamp: new Date().toISOString(), rawValue: values[i], quality: 'good' })
         }
@@ -87,7 +89,9 @@ class PollingEngine {
     const points: Array<Record<string, unknown>> = []
     for (const g of due) {
       try {
-        const values: number[] = await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
+        const values: number[] = g.functionCode === 4
+          ? await driver.readInputRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
+          : await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
         this.clearGroupError(g.id)
         for (let i = 0; i < values.length; i++) {
           const addr = g.startAddress + i

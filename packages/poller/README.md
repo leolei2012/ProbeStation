@@ -42,5 +42,5 @@ interface Poller {
 
 ## 当前限制（TODO）
 
-- 仅 FC03 读取（`readInputRegisters` 驱动已具备，poller 未用）。
+- 读取支持 FC03（保持寄存器）+ FC04（输入寄存器，`g.functionCode === 4` 时走 `readInputRegisters`）；FC01/FC02（位读取）未实现。
 - `flush()` 不再每轮调用，依赖 store 的定期 flush（`flushIntervalMs`）。
