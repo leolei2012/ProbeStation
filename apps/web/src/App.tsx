@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import './styles.css'
-import { DATA_TYPES, decodeRegister, toHex } from '../../../packages/core/src/codec.ts'
+import { DATA_TYPES, baseType, decodeRegister, registerWidth, toHex } from '../../../packages/core/src/codec.ts'
+
+const TYPE_GROUPS = [
+  { key: 'grp16', types: DATA_TYPES.filter((t) => registerWidth(t) === 1) },
+  { key: 'grpBE', types: DATA_TYPES.filter((t) => registerWidth(t) > 1 && baseType(t) === t) },
+  { key: 'grpLE', types: DATA_TYPES.filter((t) => registerWidth(t) > 1 && baseType(t) !== t) },
+]
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
@@ -39,7 +45,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: '导出 XLSX',
     deleteDevice: '删除设备',
     regCount: '{n} 个寄存器',
-    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入',
+    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入', valueCovered: '被上一个多字寄存器占用', valueShort: '数据不足（分组读取范围不够）', grp16: '16 位', grpBE: '大端（高字在前）', grpLE: '小端（低字在前）',
     write: '写', valuePh: '值',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
@@ -79,7 +85,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: 'Export XLSX',
     deleteDevice: 'Delete',
     regCount: '{n} registers',
-    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write',
+    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write', valueCovered: 'Covered by previous register', valueShort: 'Not enough polled data', grp16: '16-bit', grpBE: 'Big-endian', grpLE: 'Little-endian',
     write: 'Write', valuePh: 'value',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
@@ -102,16 +108,60 @@ const api = {
   del: (url: string) => fetch(url, { method: 'DELETE' }).then((r) => r.json()),
 }
 
-function formatNumber(d: number): string {
+function formatNumber(d: number | bigint): string {
+  if (typeof d === 'bigint') return d.toString()
   if (Number.isNaN(d)) return 'NaN'
   if (!Number.isFinite(d)) return d > 0 ? 'Inf' : '-Inf'
   return Number.isInteger(d) ? String(d) : String(Number(d.toPrecision(7)))
 }
 
-function renderRegisterValue(r: Register, latest: Record<number, LatestValue>, hex: boolean): string {
-  const v = latest[r.id]
-  if (!v) return '—'
-  return hex ? toHex(v.rawValue) : formatNumber(decodeRegister(r.dataType, v.rawValue))
+interface RegView { value: string; covered: boolean; invalid: boolean; writable: boolean }
+
+/** 按地址顺序合并多字：首字显示合并值、被覆盖字显示 —、数据不足显示 —（不可写）。 */
+function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue>, hex: boolean): Map<number, RegView> {
+  const rawByAddr: Record<number, number> = {}
+  const regIds = new Set<number>()
+  for (const g of groups) for (const r of g.registers) {
+    regIds.add(r.id)
+    const v = latest[r.id]
+    if (v) rawByAddr[r.startAddress] = v.rawValue
+  }
+  for (const k of Object.keys(latest)) {
+    const n = Number(k)
+    if (regIds.has(n)) continue
+    const v = latest[n]
+    if (v && rawByAddr[n] === undefined) rawByAddr[n] = v.rawValue
+  }
+  const views = new Map<number, RegView>()
+  for (const g of groups) {
+    const regs = [...g.registers].sort((a, b) => a.startAddress - b.startAddress)
+    const groupEnd = g.startAddress + g.quantity
+    let consumedUpTo = -Infinity
+    for (const r of regs) {
+      const w = registerWidth(r.dataType)
+      const start = r.startAddress
+      const end = start + w
+      if (start < consumedUpTo) {
+        views.set(r.id, { value: '—', covered: true, invalid: false, writable: false })
+        continue
+      }
+      const words: number[] = []
+      for (let a = start; a < end; a++) {
+        const wv = rawByAddr[a]
+        if (wv === undefined) break
+        words.push(wv)
+      }
+      const enough = words.length === w && end <= groupEnd
+      if (!enough) {
+        views.set(r.id, { value: '—', covered: false, invalid: true, writable: false })
+        continue
+      }
+      const decoded = decodeRegister(r.dataType, words)
+      views.set(r.id, { value: hex ? words.map(toHex).join(' ') : formatNumber(decoded), covered: false, invalid: false, writable: true })
+      consumedUpTo = end
+    }
+  }
+  return views
 }
 
 export default function App() {
@@ -307,6 +357,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const toggleGroup = async (id: number) => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() }
   const deleteGroup = async (id: number) => { await api.del('/api/groups/' + id); onRefresh() }
+  const views = buildRegViews(groups, latest, hex)
   return (
     <div>
       <div className="toolbar">
@@ -329,12 +380,13 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th></tr></thead>
             <tbody>
               {g.registers.map((r) => {
+                const rv = views.get(r.id)
                 return (
                   <tr key={r.id}>
                     <td className="kv">{r.startAddress}</td>
                     <td><AliasCell t={t} reg={r} onRefresh={onRefresh} /></td>
-                    <td><TypeCell reg={r} onRefresh={onRefresh} /></td>
-                    <td className="value" title={t('valueHint')} onDoubleClick={() => setWriteReg(r)}>{renderRegisterValue(r, latest, hex)}</td>
+                    <td><TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} onRefresh={onRefresh} /></td>
+                    <td className="value" title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : t('valueHint')} onDoubleClick={rv?.writable ? () => setWriteReg(r) : undefined}>{rv?.value ?? '—'}</td>
                   </tr>
                 )
               })}
@@ -397,11 +449,14 @@ function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose
   const [value, setValue] = useState('')
   const [method, setMethod] = useState<'single' | 'multiple'>('multiple')
   const [busy, setBusy] = useState(false)
+  const width = registerWidth(reg.dataType)
+  const base = baseType(reg.dataType)
+  const is64 = base === 'int64' || base === 'uint64'
   const write = async () => {
     if (value === '') return
     setBusy(true)
     try {
-      await api.post('/api/registers/' + reg.id + '/write', { value: Number(value), method })
+      await api.post('/api/registers/' + reg.id + '/write', { value: is64 ? value : Number(value), method: width > 1 ? 'multiple' : method })
       onSaved()
     } finally { setBusy(false) }
   }
@@ -409,13 +464,13 @@ function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{t('writeReg')}</h3>
-        <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}</div>
+        <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}{width > 1 ? '（' + width + ' 寄存器）' : ''}</div>
         <label>{t('valuePh')}</label>
         <input value={value} onChange={(e) => setValue(e.target.value)} autoFocus placeholder={t('valuePh')} />
         <label>{t('functionCode')}</label>
-        <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')}>
+        <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')} disabled={width > 1}>
           <option value="multiple">{t('fc16')}</option>
-          <option value="single">{t('fc06')}</option>
+          {width === 1 && <option value="single">{t('fc06')}</option>}
         </select>
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
@@ -440,16 +495,25 @@ function AliasCell({ t, reg, onRefresh }: { t: T; reg: Register; onRefresh: () =
   )
 }
 
-function TypeCell({ reg, onRefresh }: { reg: Register; onRefresh: () => void }) {
+function TypeCell({ t, reg, available, onRefresh }: { t: T; reg: Register; available: number; onRefresh: () => void }) {
+  const [err, setErr] = useState(false)
   const change = async (v: string) => {
     if (v === reg.dataType) return
+    if (registerWidth(v) > available) { setErr(true); setTimeout(() => setErr(false), 1600); return }
     await api.put('/api/registers/' + reg.id, { dataType: v })
     onRefresh()
   }
   return (
-    <select className="cell-select" value={reg.dataType} onChange={(e) => change(e.target.value)}>
-      {DATA_TYPES.map((d) => <option key={d} value={d}>{d}</option>)}
-    </select>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <select className="cell-select" value={reg.dataType} onChange={(e) => change(e.target.value)}>
+        {TYPE_GROUPS.map((grp) => (
+          <optgroup key={grp.key} label={t(grp.key)}>
+            {grp.types.map((d) => <option key={d} value={d}>{d}</option>)}
+          </optgroup>
+        ))}
+      </select>
+      {err && <span className="cell-err" title={t('valueShort')}>⚠</span>}
+    </span>
   )
 }
 

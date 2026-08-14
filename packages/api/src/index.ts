@@ -5,7 +5,7 @@ import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { encodeRegister } from '@probebench/core'
+import { baseType, encodeRegister, registerWidth } from '@probebench/core'
 
 export const name = 'api'
 export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'workspace']
@@ -69,7 +69,18 @@ export function apply(ctx: Context, config: Config): void {
     const b = req.body as any
     return cfg.createRegister(gid, g.objectId, b.alias ?? null, b.functionCode ?? 3, b.startAddress, b.dataType ?? 'int16')
   })
-  app.put('/api/registers/:id', async (req) => cfg.updateRegister(Number((req.params as any).id), req.body as any))
+  app.put('/api/registers/:id', async (req) => {
+    const id = Number((req.params as any).id)
+    const b = req.body as any
+    const reg = cfg.getRegister(id)
+    if (reg && typeof b.dataType === 'string') {
+      const grp = cfg.getGroup(reg.groupId)
+      if (grp && reg.startAddress + registerWidth(b.dataType) > grp.startAddress + grp.quantity) {
+        return { code: 400, error: 'dataType spans beyond the group poll range' }
+      }
+    }
+    return cfg.updateRegister(id, b)
+  })
   app.delete('/api/registers/:id', async (req) => { cfg.deleteRegister(Number((req.params as any).id)); return { ok: true } })
 
   // ── Write ───────────────────────────────────────────────
@@ -78,13 +89,16 @@ export function apply(ctx: Context, config: Config): void {
     const reg = cfg.getRegister(id)
     if (!reg) return { code: 404, error: 'register not found' }
     const b = req.body as any
-    const value = Number(b.value)
-    const word = encodeRegister(reg.dataType ?? 'int16', value)
-    const method = b.method === 'single' ? 'single' : 'multiple'
+    const base = baseType(reg.dataType ?? 'int16')
+    const is64 = base === 'int64' || base === 'uint64'
+    const value = is64 ? BigInt(String(b.value)) : Number(b.value)
+    const words = encodeRegister(reg.dataType ?? 'int16', value)
+    const requested = b.method === 'single' ? 'single' : 'multiple'
+    const method = words.length > 1 ? 'multiple' : requested
     const grp = cfg.getGroup(reg.groupId)
-    await poller.write(reg.objectId, reg.startAddress, word, method, grp?.slaveId ?? 1)
-    cfg.log('INFO', 'api', 'write register ' + id + ' = ' + value + ' (' + reg.dataType + ')')
-    return { register_id: id, value, dataType: reg.dataType, method, word }
+    await poller.write(reg.objectId, reg.startAddress, words, method, grp?.slaveId ?? 1)
+    cfg.log('INFO', 'api', 'write register ' + id + ' = ' + String(value) + ' (' + reg.dataType + ', ' + words.length + ' word(s))')
+    return { register_id: id, value: String(value), dataType: reg.dataType, method, words }
   })
 
   // ── Import ─────────────────────────────────────────────
