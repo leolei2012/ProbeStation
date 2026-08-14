@@ -43,7 +43,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     connect: '连接',
     disconnect: '断开',
     pause: '暂停',
-    resume: '启用',
+    resume: '启用', enable: '使能',
     exportCsv: '导出 CSV',
     exportXlsx: '导出 XLSX',
     deleteDevice: '删除设备',
@@ -83,7 +83,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     connect: 'Connect',
     disconnect: 'Disconnect',
     pause: 'Pause',
-    resume: 'Resume',
+    resume: 'Resume', enable: 'Enable',
     exportCsv: 'Export CSV',
     exportXlsx: 'Export XLSX',
     deleteDevice: 'Delete',
@@ -403,7 +403,6 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
-  const toggleGroup = async (id: number) => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() }
   const deleteGroup = async (id: number) => { await api.del('/api/groups/' + id); onRefresh() }
   const views = buildRegViews(groups, latest)
   return (
@@ -420,7 +419,6 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
             <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>
-            <button className="btn" onClick={() => toggleGroup(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
             <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteDevice')}</button>
           </div>
           {!collapsed.has(g.id) && (<table className="reg">
@@ -458,8 +456,9 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
   const [startAddress, setStartAddress] = useState(String(initial?.startAddress ?? 0))
   const [quantity, setQuantity] = useState(String(initial?.quantity ?? 1))
   const [pollIntervalMs, setPollIntervalMs] = useState(String(initial?.pollIntervalMs ?? 1000))
+  const [isActive, setIsActive] = useState(initial ? initial.isActive === 1 : true)
   const save = async () => {
-    const body = { name, slaveId: Number(slaveId), functionCode: Number(functionCode), startAddress: Number(startAddress), quantity: Number(quantity), pollIntervalMs: Number(pollIntervalMs) }
+    const body = { name, slaveId: Number(slaveId), functionCode: Number(functionCode), startAddress: Number(startAddress), quantity: Number(quantity), pollIntervalMs: Number(pollIntervalMs), isActive: isActive ? 1 : 0 }
     if (initial) await api.put('/api/groups/' + initial.id, body)
     else await api.post('/api/monitor_objects/' + device.id + '/groups', body)
     onSaved()
@@ -483,6 +482,10 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
         <input value={quantity} onChange={(e) => setQuantity(e.target.value)} />
         <label>{t('scanRate')}</label>
         <input value={pollIntervalMs} onChange={(e) => setPollIntervalMs(e.target.value)} />
+        <label className="checkbox-row">
+          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+          <span>{t('enable')}</span>
+        </label>
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
           <button className="btn primary" onClick={save}>{t('save')}</button>
