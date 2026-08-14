@@ -30,6 +30,8 @@ const I18N: Record<Lang, Record<string, string>> = {
     write: '写', valuePh: '值',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
+    tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件',
+    histHint: '最近 1 小时数据', curveHint: '最近 1 小时曲线', firmwareHint: '固件升级功能规划中（OTA）',
     appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
     appInfo: '应用信息', version: '版本', arch: '架构', persistence: '持久化',
@@ -56,6 +58,8 @@ const I18N: Record<Lang, Record<string, string>> = {
     write: 'Write', valuePh: 'value',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
+    tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware',
+    histHint: 'Last 1 hour', curveHint: 'Last 1 hour', firmwareHint: 'Firmware upgrade (OTA) is planned',
     appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
     appInfo: 'App info', version: 'Version', arch: 'Architecture', persistence: 'Persistence',
@@ -176,7 +180,7 @@ export default function App() {
 
       <main className="main">
         {selected
-          ? <DeviceView t={t} device={selected} registers={registers} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} />
+          ? <DeviceView key={selected.id} t={t} device={selected} registers={registers} latest={latest} onToggle={toggleDevice} onDelete={deleteDevice} />
           : <EmptyState t={t} />}
       </main>
 
@@ -194,41 +198,57 @@ function DeviceView({ t, device, registers, latest, onToggle, onDelete }: {
   t: T; device: Device; registers: Register[]; latest: Record<number, LatestValue>
   onToggle: (id: number) => void; onDelete: (id: number) => void
 }) {
-  const exportCsv = () => { const now = new Date().toISOString(); window.open('/api/export/csv?object_id=' + device.id + '&start=2000-01-01T00:00:00Z&end=' + now) }
-  const exportXlsx = () => { const now = new Date().toISOString(); window.open('/api/export/xlsx?object_id=' + device.id + '&start=2000-01-01T00:00:00Z&end=' + now) }
+  const [tab, setTab] = useState(0)
   return (
     <div>
       <div className="device-head">
         <span className="name">{device.name}</span>
         <span className={'status-badge' + (device.isActive ? ' on' : '')}>{device.isActive ? t('polling') : t('stopped')}</span>
-      </div>
-      <div className="main-sub">{device.ip}:{device.port} · {t('regCount').replace('{n}', String(registers.length))}</div>
-      <div className="toolbar">
+        <div style={{ flex: 1 }} />
         <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? t('pause') : t('resume')}</button>
-        <button className="btn" onClick={exportCsv}>{t('exportCsv')}</button>
-        <button className="btn" onClick={exportXlsx}>{t('exportXlsx')}</button>
         <button className="btn danger" onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
       </div>
-      <table className="reg">
-        <thead><tr><th>{t('colAlias')}</th><th>{t('colAddr')}</th><th>{t('colType')}</th><th>{t('colValue')}</th><th>{t('colQuality')}</th><th>{t('colWrite')}</th></tr></thead>
-        <tbody>
-          {registers.map((r) => {
-            const v = latest[r.id]
-            return (
-              <tr key={r.id}>
-                <td>{r.alias ?? '—'}</td>
-                <td className="kv">{r.startAddress}</td>
-                <td className="kv">{r.dataType}</td>
-                <td className="value">{v ? v.rawValue : '—'}</td>
-                <td className="kv">{v ? v.quality : '—'}</td>
-                <td><WriteCell t={t} reg={r} /></td>
-              </tr>
-            )
-          })}
-          {registers.length === 0 && <tr><td colSpan={6} className="kv">{t('noRegisters')}</td></tr>}
-        </tbody>
-      </table>
+      <div className="main-sub">{device.ip}:{device.port} · {t('regCount').replace('{n}', String(registers.length))}</div>
+      <TabBar tabs={[t('tabLive'), t('tabHistory'), t('tabCurve'), t('tabFirmware')]} active={tab} onChange={setTab} />
+      {tab === 0 && <LiveTable t={t} registers={registers} latest={latest} />}
+      {tab === 1 && <HistoryTable t={t} device={device} registers={registers} />}
+      {tab === 2 && <CurveChart t={t} device={device} registers={registers} />}
+      {tab === 3 && <FirmwareView t={t} />}
     </div>
+  )
+}
+
+function TabBar({ tabs, active, onChange }: { tabs: string[]; active: number; onChange: (i: number) => void }) {
+  return (
+    <div className="tab-bar">
+      {tabs.map((name, i) => (
+        <button key={i} className={'tab' + (active === i ? ' active' : '')} onClick={() => onChange(i)}>{name}</button>
+      ))}
+    </div>
+  )
+}
+
+function LiveTable({ t, registers, latest }: { t: T; registers: Register[]; latest: Record<number, LatestValue> }) {
+  return (
+    <table className="reg">
+      <thead><tr><th>{t('colAlias')}</th><th>{t('colAddr')}</th><th>{t('colType')}</th><th>{t('colValue')}</th><th>{t('colQuality')}</th><th>{t('colWrite')}</th></tr></thead>
+      <tbody>
+        {registers.map((r) => {
+          const v = latest[r.id]
+          return (
+            <tr key={r.id}>
+              <td>{r.alias ?? '—'}</td>
+              <td className="kv">{r.startAddress}</td>
+              <td className="kv">{r.dataType}</td>
+              <td className="value">{v ? v.rawValue : '—'}</td>
+              <td className="kv">{v ? v.quality : '—'}</td>
+              <td><WriteCell t={t} reg={r} /></td>
+            </tr>
+          )
+        })}
+        {registers.length === 0 && <tr><td colSpan={6} className="kv">{t('noRegisters')}</td></tr>}
+      </tbody>
+    </table>
   )
 }
 
@@ -245,6 +265,79 @@ function WriteCell({ t, reg }: { t: T; reg: Register }) {
       <button className="btn" onClick={write}>{t('write')}</button>
     </div>
   )
+}
+
+function HistoryTable({ t, device, registers }: { t: T; device: Device; registers: Register[] }) {
+  const [rows, setRows] = useState<Array<{ ts: string; values: Record<number, number> }>>([])
+  useEffect(() => {
+    const start = new Date(Date.now() - 3600_000).toISOString()
+    const end = new Date().toISOString()
+    api.get('/api/data/object?object_id=' + device.id + '&start=' + start + '&end=' + end).then((pts: Array<{ ts: string; registerId: number; rawValue: number }>) => {
+      const map = new Map<string, Record<number, number>>()
+      for (const p of pts) { if (!map.has(p.ts)) map.set(p.ts, {}); map.get(p.ts)![p.registerId] = p.rawValue }
+      setRows([...map.entries()].map(([ts, values]) => ({ ts, values })))
+    })
+  }, [device.id])
+  const exportCsv = () => { const now = new Date().toISOString(); window.open('/api/export/csv?object_id=' + device.id + '&start=2000-01-01T00:00:00Z&end=' + now) }
+  const exportXlsx = () => { const now = new Date().toISOString(); window.open('/api/export/xlsx?object_id=' + device.id + '&start=2000-01-01T00:00:00Z&end=' + now) }
+  return (
+    <div>
+      <div className="chart-hint">{t('histHint')} · <button className="btn" onClick={exportCsv}>{t('exportCsv')}</button> <button className="btn" onClick={exportXlsx}>{t('exportXlsx')}</button></div>
+      <table className="reg">
+        <thead><tr><th>时间</th>{registers.map(r => <th key={r.id}>{r.alias ?? r.id}</th>)}</tr></thead>
+        <tbody>
+          {rows.slice(-60).map((row, i) => (
+            <tr key={i}><td className="kv">{row.ts}</td>{registers.map(r => <td key={r.id} className="value">{row.values[r.id] ?? '—'}</td>)}</tr>
+          ))}
+          {rows.length === 0 && <tr><td colSpan={registers.length + 1} className="kv">暂无历史数据</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+const CHART_COLORS = ['#4176e6', '#22c55e', '#f59e0b', '#ec1313', '#8b5cf6', '#06b6d4', '#f97316', '#ec4899', '#84cc16', '#14b8a6']
+
+function CurveChart({ t, device, registers }: { t: T; device: Device; registers: Register[] }) {
+  const [pts, setPts] = useState<Array<{ ts: string; registerId: number; rawValue: number }>>([])
+  useEffect(() => {
+    const start = new Date(Date.now() - 3600_000).toISOString()
+    const end = new Date().toISOString()
+    api.get('/api/data/object?object_id=' + device.id + '&start=' + start + '&end=' + end).then(setPts)
+  }, [device.id])
+
+  const W = 900, H = 320, P = 36
+  const byReg = new Map<number, Array<[number, number]>>()
+  for (const p of pts) {
+    const arr = byReg.get(p.registerId) ?? []
+    arr.push([new Date(p.ts).getTime(), p.rawValue])
+    byReg.set(p.registerId, arr)
+  }
+  const series = [...byReg.entries()].map(([id, arr], i) => ({ id, color: CHART_COLORS[i % CHART_COLORS.length], arr: arr.sort((a, b) => a[0] - b[0]) }))
+  const allT = pts.map(p => new Date(p.ts).getTime())
+  const allV = pts.map(p => p.rawValue)
+  if (pts.length === 0) return <div className="chart-wrap"><div className="chart-hint">{t('curveHint')} — 暂无数据</div></div>
+  const minT = Math.min(...allT), maxT = Math.max(...allT), minV = Math.min(...allV), maxV = Math.max(...allV)
+  const x = (ts: number) => P + (maxT === minT ? 0 : (ts - minT) / (maxT - minT)) * (W - 2 * P)
+  const y = (v: number) => H - P - (maxV === minV ? 0 : (v - minV) / (maxV - minV)) * (H - 2 * P)
+  const path = (arr: Array<[number, number]>) => arr.map(([ts, v], i) => (i === 0 ? 'M' : 'L') + x(ts).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ')
+  return (
+    <div className="chart-wrap">
+      <div className="chart-hint">{t('curveHint')}</div>
+      <svg viewBox={'0 0 ' + W + ' ' + H} preserveAspectRatio="none" style={{ width: '100%', height: 320 }}>
+        <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="var(--border-2)" strokeWidth="1" />
+        <line x1={P} y1={P} x2={P} y2={H - P} stroke="var(--border-2)" strokeWidth="1" />
+        {series.map(s => <path key={s.id} d={path(s.arr)} fill="none" stroke={s.color} strokeWidth="1.6" />)}
+      </svg>
+      <div className="legend">
+        {series.map(s => { const r = registers.find(rr => rr.id === s.id); return <span key={s.id} className="legend-item"><span className="legend-swatch" style={{ background: s.color }} />{r?.alias ?? s.id}</span> })}
+      </div>
+    </div>
+  )
+}
+
+function FirmwareView({ t }: { t: T }) {
+  return <div className="chart-wrap firmware-card"><div className="chart-hint">{t('firmwareHint')}</div></div>
 }
 
 function SettingsModal({ t, theme, setTheme, lang, setLang, onClose }: {

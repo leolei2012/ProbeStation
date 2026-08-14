@@ -116,6 +116,10 @@ export function apply(ctx: Context, config: Config): void {
     const q = req.query as any
     return store.query(Number(q.object_id), Number(q.register_id), String(q.start), String(q.end))
   })
+  app.get('/api/data/object', async (req) => {
+    const q = req.query as any
+    return store.queryObject(Number(q.object_id), String(q.start), String(q.end))
+  })
 
   // ── WebSocket ───────────────────────────────────────────
   const sockets = new Set<any>()

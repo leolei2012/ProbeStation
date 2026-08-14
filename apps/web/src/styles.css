@@ -143,3 +143,17 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .sidebar.collapsed .sidebar-footer { padding: 6px; }
 .sidebar.collapsed .settings-btn { justify-content: center; }
 .ico { font-size: 14px; }
+
+/* ── Tabs ── */
+.tab-bar { display: flex; gap: 2px; border-bottom: 1px solid var(--border-1); margin-bottom: 18px; }
+.tab { padding: 8px 14px; border: none; background: none; cursor: pointer; font-size: 13px; color: var(--text-2); border-bottom: 2px solid transparent; margin-bottom: -1px; font-family: var(--font); }
+.tab:hover { color: var(--text-1); }
+.tab.active { color: var(--text-1); font-weight: 500; border-bottom-color: var(--brand); }
+
+/* ── Chart ── */
+.chart-wrap { border: 1px solid var(--border-1); border-radius: 10px; padding: 12px; }
+.chart-hint { color: var(--text-3); font-size: 12px; margin-bottom: 8px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 11px; color: var(--text-2); }
+.legend-item { display: flex; align-items: center; gap: 5px; }
+.legend-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.firmware-card { max-width: 560px; }
