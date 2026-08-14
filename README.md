@@ -18,11 +18,11 @@ DSH（DeepSeek Harness）「一切皆插件」的理念组织代码。
 | 1 | monorepo 脚手架 + Cordis 运行时 + core 插件 | ✅ |
 | 2 | modbus 驱动 + poller + store（轮询→落库→查询闭环） | ✅ |
 | 3 | api + ws + client（React 前端） | ✅ |
-| 4 | slave 模拟器、ota、importer、sink 导出、rule 告警 | ⬜ |
+| 4 | slave 模拟器、importer、sink 导出、rule 告警、logs、写寄存器、config CRUD（OTA 未做） | ✅ |
 | 5 | 降采样/保留、AI 测试层对接 | ⬜ |
 
-已实现：Modbus TCP 主站轮询（jsmodbus）、时序落库（DuckDB 列存）、热内存快照、时间范围查询、REST API（Fastify）、WebSocket 实时推送、React 前端仪表盘、一键启动进程（\`npm run start\`）。
-未实现：告警规则、OTA、导入导出、从站模拟器、降采样/保留、AI 测试层。
+已实现：Modbus TCP 主站轮询、时序落库（DuckDB）、热快照、时间查询、REST API（Fastify）、WebSocket 推送、React 前端、写寄存器（FC06/16）、设备/寄存器 CRUD、从站模拟器、告警规则、MBS/MBP 导入、CSV/XLSX 导出、日志、一键启动（`npm run start`）。
+未实现：OTA 固件升级、降采样/保留、AI 测试层。
 
 ---
 
