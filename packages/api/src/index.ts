@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 export const name = 'api'
-export const inject = ['config', 'store', 'poller', 'sink']
+export const inject = ['config', 'store', 'poller', 'sink', 'importer']
 
 export interface Config { host: string; port: number; staticDir?: string }
 export const Config: z<Config> = z.object({
@@ -23,6 +23,7 @@ export function apply(ctx: Context, config: Config): void {
   const store = (ctx as any).store
   const poller = (ctx as any).poller
   const sink = (ctx as any).sink
+  const importer = (ctx as any).importer
 
   app.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
 
@@ -71,6 +72,14 @@ export function apply(ctx: Context, config: Config): void {
     await poller.write(reg.objectId, reg.startAddress, value, method)
     cfg.log('INFO', 'api', `write register ${id} = ${value}`)
     return { register_id: id, value, method }
+  })
+
+  // ── Import ─────────────────────────────────────────────
+  app.post('/api/monitor_objects/:id/import', async (req) => {
+    const id = Number((req.params as any).id)
+    const b = req.body as any
+    const content = Buffer.from(b.content ?? '', 'base64')
+    return importer.import(id, b.filename ?? 'import.mbp', content)
   })
 
   // ── Logs ───────────────────────────────────────────────

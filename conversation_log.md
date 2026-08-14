@@ -286,3 +286,23 @@
 
 - importer（MBS/MBP 导入）——需先读原 Python 的 mbs_parser.py/mbp_parser.py 理解格式。
 - Phase 5：降采样/保留、AI 测试层。
+
+---
+
+## 2026-08-14（续）—— Phase 4.7：importer 导入（MBS/MBP）—— Phase 4 完成 ✅
+
+### 完成内容
+
+- `packages/importer`：移植原 Python 的 mbs_parser/mbp_parser 到 TS。
+  - MBP XML（v12+，fast-xml-parser）+ MBP INI（< v12，手写解析）+ MBS 二进制（UTF-16LE 名称提取）。
+- `api` 新增 `POST /api/monitor_objects/:id/import`（base64 内容）。
+- CLI 接入 importer。冒烟测试：三种格式导入全通过。
+
+### Phase 4 全部完成
+
+✅ slave 模拟器 / importer / sink 导出 / rule 告警 / logs 日志 / 写寄存器 / config CRUD / 前端管理。
+
+### 下一步（Phase 5）
+
+- 降采样/保留（时序数据滚动聚合）。
+- AI 测试层（复用 DSH）。
