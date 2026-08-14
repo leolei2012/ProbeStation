@@ -90,7 +90,7 @@ export function apply(ctx: Context, config: Config): void {
     if (!reg) return { code: 404, error: 'register not found' }
     const b = req.body as any
     const base = baseType(reg.dataType ?? 'int16')
-    const is64 = base === 'int64' || base === 'uint64'
+    const is64 = base.endsWith('64') && base !== 'float64'
     const value = is64 ? BigInt(String(b.value)) : Number(b.value)
     const words = encodeRegister(reg.dataType ?? 'int16', value)
     const requested = b.method === 'single' ? 'single' : 'multiple'

@@ -22,10 +22,10 @@
 
 纯函数、无依赖，供 web 前端（显示/写值）+ api/mcp 后端（写值编码）共用：
 
-- `DATA_TYPES`：`int16/uint16/float16`（16 位，不分端）+ `int32/uint32/float32/int64/uint64/float64`（大端）+ 同名前缀 `-LE` 的小端变体（共 15 种）。
-- `baseType(type)` / `isLittleEndian(type)` / `registerWidth(type)`（16=1 字、32=2 字、64=4 字）。
-- `decodeRegister(type, words)`：按端序合并多字解码（64 位整数返回 bigint）。
-- `encodeRegister(type, value)`：按端序编码成 16 位字数组。
-- `toHex(word)`：16 位字 → `0x` 十六进制。
+- `DATA_TYPES`：位宽(16/32/64) × 端序(大端/小端 `-LE`) × 格式(int/uint/float/hex/bin)，共 30 种（如 `int16`、`int16-LE`、`hex32`、`bin64-LE`）。
+- `baseType` / `isLittleEndian` / `isHexType` / `isBinType` / `registerWidth`（16=1、32=2、64=4 字）。
+- `applyEndianness(type, words)`：16 位=字节交换、32/64 位=字序反转。
+- `decodeRegister` / `encodeRegister`：按类型解码/编码（64 位整数用 bigint）；hex/bin 为原始显示格式。
+- `toHex` / `toBin`：16 位字 → 十六进制 / 16 位二进制。
 
-词序：大端=低地址高字（默认），小端=低地址低字（`-LE` 后缀）；float16 编码用截断。
+大端=高字/高字节在前（默认），小端=`-LE` 后缀；float16 编码用截断。

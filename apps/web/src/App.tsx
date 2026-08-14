@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import './styles.css'
-import { baseType, decodeRegister, registerWidth, toBin, toHex } from '../../../packages/core/src/codec.ts'
+import { applyEndianness, baseType, decodeRegister, isBinType, isHexType, registerWidth, toBin, toHex } from '../../../packages/core/src/codec.ts'
 
 const TYPE_GROUPS = [
-  { key: 'grp16', types: ['int16', 'uint16', 'float16'] },
-  { key: 'grpBE', types: ['int32', 'uint32', 'float32', 'int64', 'uint64', 'float64'] },
-  { key: 'grpLE', types: ['int32-LE', 'uint32-LE', 'float32-LE', 'int64-LE', 'uint64-LE', 'float64-LE'] },
-  { key: 'grpDisp', types: ['hex', 'bin'] },
+  { key: 'grp16BE', types: ['int16', 'uint16', 'float16', 'hex16', 'bin16'] },
+  { key: 'grp16LE', types: ['int16-LE', 'uint16-LE', 'float16-LE', 'hex16-LE', 'bin16-LE'] },
+  { key: 'grp32BE', types: ['int32', 'uint32', 'float32', 'hex32', 'bin32'] },
+  { key: 'grp32LE', types: ['int32-LE', 'uint32-LE', 'float32-LE', 'hex32-LE', 'bin32-LE'] },
+  { key: 'grp64BE', types: ['int64', 'uint64', 'float64', 'hex64', 'bin64'] },
+  { key: 'grp64LE', types: ['int64-LE', 'uint64-LE', 'float64-LE', 'hex64-LE', 'bin64-LE'] },
 ]
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number }
@@ -46,7 +48,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: '导出 XLSX',
     deleteDevice: '删除设备',
     regCount: '{n} 个寄存器',
-    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入', valueCovered: '被上一个多字寄存器占用', valueShort: '数据不足（分组读取范围不够）', grp16: '16 位', grpBE: '大端（高字在前）', grpLE: '小端（低字在前）', grpDisp: '显示',
+    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入', valueCovered: '被上一个多字寄存器占用', valueShort: '数据不足（分组读取范围不够）', grp16BE: '16位 大端', grp16LE: '16位 小端', grp32BE: '32位 大端', grp32LE: '32位 小端', grp64BE: '64位 大端', grp64LE: '64位 小端',
     write: '写', valuePh: '值',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
@@ -86,7 +88,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: 'Export XLSX',
     deleteDevice: 'Delete',
     regCount: '{n} registers',
-    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write', valueCovered: 'Covered by previous register', valueShort: 'Not enough polled data', grp16: '16-bit', grpBE: 'Big-endian', grpLE: 'Little-endian', grpDisp: 'Display',
+    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write', valueCovered: 'Covered by previous register', valueShort: 'Not enough polled data', grp16BE: '16-bit BE', grp16LE: '16-bit LE', grp32BE: '32-bit BE', grp32LE: '32-bit LE', grp64BE: '64-bit BE', grp64LE: '64-bit LE',
     write: 'Write', valuePh: 'value',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
@@ -157,9 +159,10 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue
         views.set(r.id, { value: '—', covered: false, invalid: true, writable: false })
         continue
       }
-      const b = baseType(r.dataType)
-      const value = b === 'hex' ? words.map(toHex).join(' ') : b === 'bin' ? words.map(toBin).join(' ') : formatNumber(decodeRegister(r.dataType, words))
-      views.set(r.id, { value, covered: false, invalid: false, writable: true })
+      const raw = isHexType(r.dataType) || isBinType(r.dataType)
+      const dispWords = applyEndianness(r.dataType, words)
+      const value = isHexType(r.dataType) ? dispWords.map(toHex).join(' ') : isBinType(r.dataType) ? dispWords.map(toBin).join(' ') : formatNumber(decodeRegister(r.dataType, words))
+      views.set(r.id, { value, covered: false, invalid: false, writable: !raw })
       consumedUpTo = end
     }
   }

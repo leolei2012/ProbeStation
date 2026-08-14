@@ -1,29 +1,33 @@
-/** 纯函数 Modbus 类型编解码器（无依赖）：16/32/64 位；大端（默认）/ 小端（-LE 后缀）词序。 */
+/** 纯函数 Modbus 类型编解码器：位宽(16/32/64) × 端序(大端默认/小端 -LE)；hex/bin 为各宽度的原始显示格式。 */
 export const DATA_TYPES = [
-  'int16', 'uint16', 'float16',
-  'int32', 'uint32', 'float32', 'int64', 'uint64', 'float64',
-  'int32-LE', 'uint32-LE', 'float32-LE', 'int64-LE', 'uint64-LE', 'float64-LE',
-  'hex', 'bin',
+  'int16', 'uint16', 'float16', 'hex16', 'bin16',
+  'int32', 'uint32', 'float32', 'hex32', 'bin32',
+  'int64', 'uint64', 'float64', 'hex64', 'bin64',
+  'int16-LE', 'uint16-LE', 'float16-LE', 'hex16-LE', 'bin16-LE',
+  'int32-LE', 'uint32-LE', 'float32-LE', 'hex32-LE', 'bin32-LE',
+  'int64-LE', 'uint64-LE', 'float64-LE', 'hex64-LE', 'bin64-LE',
 ] as const
 export type DataType = (typeof DATA_TYPES)[number]
 export type RegisterValue = number | bigint
 
-/** 去掉 -LE/_LE 后缀得到基础类型。 */
-export function baseType(type: string): string {
-  return type.replace(/-LE$|_LE$/i, '')
-}
-
-/** 是否小端词序（低字在低地址）。 */
-export function isLittleEndian(type: string): boolean {
-  return baseType(type) !== type
-}
-
-/** 该类型占用的连续 16 位寄存器个数。 */
+export function baseType(type: string): string { return type.replace(/-LE$|_LE$/i, '') }
+export function isLittleEndian(type: string): boolean { return baseType(type) !== type }
 export function registerWidth(type: string): 1 | 2 | 4 {
   const b = baseType(type)
-  if (b === 'int32' || b === 'uint32' || b === 'float32') return 2
-  if (b === 'int64' || b === 'uint64' || b === 'float64') return 4
+  if (b.endsWith('32')) return 2
+  if (b.endsWith('64')) return 4
   return 1
+}
+export function isHexType(type: string): boolean { return baseType(type).startsWith('hex') }
+export function isBinType(type: string): boolean { return baseType(type).startsWith('bin') }
+
+function swap16(w: number): number { return ((w & 0xff) << 8) | ((w >> 8) & 0xff) }
+
+/** 应用端序：16 位=字节交换，32/64 位=字序反转。 */
+export function applyEndianness(type: string, words: number[]): number[] {
+  if (!isLittleEndian(type)) return words
+  if (words.length > 1) return [...words].reverse()
+  return [swap16(words[0] ?? 0)]
 }
 
 function halfToNumber(h: number): number {
@@ -58,25 +62,21 @@ function wordsToUint64(words: number[]): bigint {
   for (let i = 0; i < 4; i++) r = (r << 16n) | BigInt(words[i] ?? 0)
   return r
 }
-
 function wordsToInt64(words: number[]): bigint {
   let u = wordsToUint64(words)
   if (u >= 2n ** 63n) u -= 2n ** 64n
   return u
 }
-
 function uint64ToWords(v: bigint): number[] {
   const out: number[] = []
   for (let i = 0; i < 4; i++) { out.unshift(Number(v & 0xffffn)); v >>= 16n }
   return out
 }
-
 function int64ToWords(v: bigint): number[] {
   if (v < 0n) v += 2n ** 64n
   return uint64ToWords(v)
 }
 
-/** 大端序解码基础类型（低地址=高字）。 */
 function decodeBE(type: string, words: number[]): RegisterValue {
   const w0 = words[0] ?? 0
   if (type === 'int16') return w0 > 0x7fff ? w0 - 0x10000 : w0
@@ -104,7 +104,6 @@ function decodeBE(type: string, words: number[]): RegisterValue {
   return w0
 }
 
-/** 大端序编码基础类型为 16 位字数组。 */
 function encodeBE(type: string, value: number | bigint): number[] {
   const num = () => Number(value)
   if (type === 'int16') { const v = num() | 0; return [v & 0xffff] }
@@ -131,24 +130,36 @@ function encodeBE(type: string, value: number | bigint): number[] {
   return [Math.round(num()) & 0xffff]
 }
 
-/** 把 16 位字数组按类型（含端序）解码成 JS number/bigint。 */
+function encodeRaw(base: string, value: number | bigint): number[] {
+  const w = registerWidth(base)
+  if (w === 1) return [Number(value) & 0xffff]
+  if (w === 2) { const v = Number(value) >>> 0; return [Math.floor(v / 0x10000) & 0xffff, v & 0xffff] }
+  return uint64ToWords(BigInt(value))
+}
+
+function decodeRaw(base: string, words: number[]): RegisterValue {
+  const w = registerWidth(base)
+  if (w === 1) return words[0] ?? 0
+  if (w === 2) return ((words[0] << 16) | words[1]) >>> 0
+  return wordsToUint64(words)
+}
+
 export function decodeRegister(type: string, words: number[]): RegisterValue {
-  const ws = isLittleEndian(type) && words.length > 1 ? [...words].reverse() : words
-  return decodeBE(baseType(type), ws)
+  const base = baseType(type)
+  const norm = applyEndianness(type, words)
+  return (isHexType(type) || isBinType(type)) ? decodeRaw(base, norm) : decodeBE(base, norm)
 }
 
-/** 把 JS number/bigint 按类型（含端序）编码成 16 位字数组。 */
 export function encodeRegister(type: string, value: number | bigint): number[] {
-  const words = encodeBE(baseType(type), value)
-  return isLittleEndian(type) && words.length > 1 ? [...words].reverse() : words
+  const base = baseType(type)
+  const be = (isHexType(type) || isBinType(type)) ? encodeRaw(base, value) : encodeBE(base, value)
+  return applyEndianness(type, be)
 }
 
-/** 16 位字 → 0x 十六进制字符串（4 位大写）。 */
 export function toHex(word: number): string {
   return '0x' + (word & 0xffff).toString(16).toUpperCase().padStart(4, '0')
 }
 
-/** 16 位字 → 16 位二进制字符串（补零）。 */
 export function toBin(word: number): string {
   return (word & 0xffff).toString(2).padStart(16, '0')
 }
