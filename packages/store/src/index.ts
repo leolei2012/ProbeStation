@@ -80,6 +80,21 @@ export class DuckDBStore {
     await conn.run(`INSERT INTO poll_data VALUES ${rows}`)
   }
 
+  /** Query the cold tier for all registers of one object over a time range. */
+  async queryObject(
+    objectId: number, start: string, end: string,
+  ): Promise<Array<{ ts: string; registerId: number; rawValue: number }>> {
+    const conn = await this.ready
+    const reader = await conn.runAndReadAll(
+      `SELECT ts, register_id, raw_value FROM poll_data
+       WHERE object_id = $objectId AND ts >= $start AND ts <= $end
+       ORDER BY ts`,
+      { objectId, start, end },
+    )
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; register_id: unknown; raw_value: unknown }>
+    return rows.map(r => ({ ts: String(r.ts), registerId: Number(r.register_id), rawValue: Number(r.raw_value) }))
+  }
+
   /** Latest snapshot from the hot tier (keyed by register id). */
   getLatest(): Record<number, { rawValue: number; quality: string; timestamp: string }> {
     const out: Record<number, { rawValue: number; quality: string; timestamp: string }> = {}

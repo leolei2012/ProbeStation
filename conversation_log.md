@@ -231,3 +231,22 @@
 
 - importer（MBS/MBP 导入）、sink（CSV/XLSX 导出）、rule（告警）。
 - Phase 5：降采样/保留、AI 测试层。
+
+---
+
+## 2026-08-14（续）—— Phase 4.4：sink 数据导出（CSV/XLSX）
+
+### 完成内容
+
+- `packages/sink`：`ctx.sink` 提供 `exportCsv/exportXlsx`（宽表：时间戳 × 每寄存器一列）。
+- `store` 新增 `queryObject()`（一次查某设备全部寄存器时序）。
+- `api` 新增 `GET /api/export/csv` 和 `/api/export/xlsx`（下载）。
+- CLI 接入 sink。冒烟测试 `scripts/test-sink.ts`：CSV 宽表 + XLSX(6.5KB) 全通过。
+
+### 关键点
+
+- XLSX 用 exceljs；CSV 纯字符串 + 转义。
+
+### 下一步（Phase 4 剩余）
+
+- importer（MBS/MBP 导入）、rule（告警）、logs。

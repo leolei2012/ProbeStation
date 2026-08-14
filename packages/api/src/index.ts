@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 export const name = 'api'
-export const inject = ['config', 'store', 'poller']
+export const inject = ['config', 'store', 'poller', 'sink']
 
 export interface Config { host: string; port: number; staticDir?: string }
 export const Config: z<Config> = z.object({
@@ -22,6 +22,7 @@ export function apply(ctx: Context, config: Config): void {
   const cfg = (ctx as any).config
   const store = (ctx as any).store
   const poller = (ctx as any).poller
+  const sink = (ctx as any).sink
 
   app.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
 
@@ -69,6 +70,22 @@ export function apply(ctx: Context, config: Config): void {
     const method = b.method === 'single' ? 'single' : 'multiple'
     await poller.write(reg.objectId, reg.startAddress, value, method)
     return { register_id: id, value, method }
+  })
+
+  // ── Export ─────────────────────────────────────────────
+  app.get('/api/export/csv', async (req, reply) => {
+    const q = req.query as any
+    const csv = await sink.exportCsv(Number(q.object_id), String(q.start), String(q.end))
+    reply.header('Content-Type', 'text/csv')
+    reply.header('Content-Disposition', 'attachment; filename=export.csv')
+    return csv
+  })
+  app.get('/api/export/xlsx', async (req, reply) => {
+    const q = req.query as any
+    const buf = await sink.exportXlsx(Number(q.object_id), String(q.start), String(q.end))
+    reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    reply.header('Content-Disposition', 'attachment; filename=export.xlsx')
+    return buf
   })
 
   // ── Data ────────────────────────────────────────────────
