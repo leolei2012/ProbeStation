@@ -40,12 +40,10 @@ await app.listen({ host: '0.0.0.0', port: 8080 })
 console.log('ProbeStation running at http://localhost:8080')
 
 function seedDemo(ctx: any, cfg: any): void {
-  // 真实设备（可能不可达）
-  const obj = cfg.createObject('雪融机', '192.168.90.32', 8899)
-  const g = cfg.createGroup(obj.id, 'Holding Registers', 3, 0, 47)
-  for (const [alias, addr] of [['电源开关', 0], ['工作模式', 1], ['制冷档位', 3], ['原料当前温度', 7], ['电机电流', 8]] as Array<[string, number]>) {
-    cfg.createRegister(g.id, obj.id, alias, 3, addr)
-  }
+  // 测试从站（真实 Modbus slave，192.168.90.176:8899，unit id=1，0x0000 起 10 寄存器）
+  const obj = cfg.createObject('测试从站', '192.168.90.176', 8899)
+  const g = cfg.createGroup(obj.id, 'Holding Registers', 3, 0, 10)
+  for (let i = 0; i < 10; i++) cfg.createRegister(g.id, obj.id, '寄存器' + i, 3, i)
 
   // 本地模拟器（127.0.0.1:8502，由 slave 插件服务）
   const sim = cfg.createObject('本地模拟器', '127.0.0.1', 8502)
@@ -54,5 +52,5 @@ function seedDemo(ctx: any, cfg: any): void {
     cfg.createRegister(sg.id, sim.id, alias, 3, addr)
   }
 
-  ctx.logger('cli').info('seeded demo devices (雪融机 + 本地模拟器)')
+  ctx.logger('cli').info('seeded demo devices (测试从站 + 本地模拟器)')
 }

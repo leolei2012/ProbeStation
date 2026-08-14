@@ -1,0 +1,5 @@
+const res = await fetch('http://127.0.0.1:8080/api/monitor_objects/1/latest')
+const data = await res.json()
+console.log('device 1 latest:', JSON.stringify(data))
+const objs = await (await fetch('http://127.0.0.1:8080/api/monitor_objects')).json()
+console.log('objects:', JSON.stringify(objs))
