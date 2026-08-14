@@ -19,19 +19,22 @@ export interface BootOptions {
   slave?: number
   rule?: boolean
   mcp?: boolean
+  registryPath?: string
 }
 
-/** 在临时工作区目录里装配完整应用栈（含 workspace 插件），返回 ctx + 临时目录。 */
+/** 在临时工作区目录里装配完整应用栈（含 workspace 插件），返回 ctx + 目录。 */
 export async function boot(opts: BootOptions = {}): Promise<{ ctx: Context; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), 'probestation-'))
+  const registryPath = opts.registryPath ?? join(dir, 'registry.json')
+  const wsDir = workspacePlugin.resolveInitialWorkspace(dir, registryPath)
   const ctx = new Context()
-  await ctx.plugin(configPlugin, { dbPath: join(dir, 'config.db') })
-  await ctx.plugin(storePlugin, { dbPath: join(dir, 'poll.duckdb'), flushIntervalMs: 5000, flushBatchSize: 100 })
+  await ctx.plugin(configPlugin, { dbPath: join(wsDir, 'config.db') })
+  await ctx.plugin(storePlugin, { dbPath: join(wsDir, 'poll.duckdb'), flushIntervalMs: 5000, flushBatchSize: 100 })
   await ctx.plugin(modbusPlugin, { defaultTimeoutMs: 2000, defaultUnitId: 1 })
   await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
   await ctx.plugin(sinkPlugin)
   await ctx.plugin(importerPlugin)
-  await ctx.plugin(workspacePlugin, { defaultWorkspace: dir, registryPath: join(dir, 'registry.json') })
+  await ctx.plugin(workspacePlugin, { defaultWorkspace: dir, registryPath })
   if (opts.rule) await ctx.plugin(rulePlugin)
   if (opts.slave != null) await ctx.plugin(slavePlugin, { port: opts.slave })
   if (opts.mcp) await ctx.plugin(mcpPlugin)

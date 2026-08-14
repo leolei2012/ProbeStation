@@ -5,6 +5,7 @@ interface Device { id: number; name: string; ip: string; port: number; mode: str
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number; registers: Register[] }
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
+interface WorkspaceInfo { current: string; currentTitle: string; recent: { path: string; title: string; lastUsedAt: string }[] }
 
 type Lang = 'zh' | 'en'
 type Theme = 'light' | 'dark' | 'system'
@@ -110,7 +111,7 @@ export default function App() {
   const [groups, setGroups] = useState<DeviceGroup[]>([])
   const [latest, setLatest] = useState<Record<number, LatestValue>>({})
   const [groupErrors, setGroupErrors] = useState<Record<number, string>>({})
-  const [workspace, setWorkspace] = useState<{ current: string; recent: string[] } | null>(null)
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null)
   const [showWorkspace, setShowWorkspace] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
 
@@ -204,7 +205,7 @@ export default function App() {
             <span className="ico">📁</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="ws-label">{t('workspace')}</div>
-              <div className="ws-name">{workspace?.current ?? '—'}</div>
+              <div className="ws-name">{workspace?.currentTitle ?? '—'}</div>
             </div>
             <span className="ws-arrow">›</span>
           </div>
@@ -567,7 +568,7 @@ function AddDeviceModal({ t, onClose, onAdd }: { t: T; onClose: () => void; onAd
 }
 
 function WorkspaceModal({ t, workspace, onClose, onSwitch }: {
-  t: T; workspace: { current: string; recent: string[] } | null; onClose: () => void; onSwitch: (path: string) => void
+  t: T; workspace: WorkspaceInfo | null; onClose: () => void; onSwitch: (path: string) => void
 }) {
   const [path, setPath] = useState(workspace?.current ?? '')
   const [browse, setBrowse] = useState<{ path: string; parent: string | null; dirs: string[] } | null>(null)
@@ -595,8 +596,11 @@ function WorkspaceModal({ t, workspace, onClose, onSwitch }: {
         {workspace && workspace.recent.length > 0 && (
           <>
             <div className="sidebar-section">{t('recentWs')}</div>
-            {workspace.recent.map((p) => (
-              <div key={p} className="ws-recent" onClick={() => { setPath(p); void browseTo(p) }}>{p}</div>
+            {workspace.recent.map((r) => (
+              <div key={r.path} className="ws-recent" onClick={() => { setPath(r.path); void browseTo(r.path) }}>
+                <span className="ws-recent-title">{r.title}</span>
+                <span className="ws-recent-path">{r.path}</span>
+              </div>
             ))}
           </>
         )}

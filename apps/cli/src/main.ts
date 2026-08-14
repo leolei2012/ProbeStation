@@ -1,4 +1,5 @@
 import { Context } from 'cordis'
+import { join } from 'node:path'
 import ConsoleExporter from '@cordisjs/plugin-logger-console'
 import * as configPlugin from '@probebench/config'
 import * as storePlugin from '@probebench/store'
@@ -13,9 +14,10 @@ import * as slavePlugin from '@probebench/slave'
 import * as workspacePlugin from '@probebench/workspace'
 
 const ctx = new Context()
+const wsDir = workspacePlugin.resolveInitialWorkspace('data')
 await ctx.plugin(ConsoleExporter)
-await ctx.plugin(configPlugin, { dbPath: 'data/config.db' })
-await ctx.plugin(storePlugin, { dbPath: 'data/poll.duckdb', flushIntervalMs: 2000, flushBatchSize: 500 })
+await ctx.plugin(configPlugin, { dbPath: join(wsDir, 'config.db') })
+await ctx.plugin(storePlugin, { dbPath: join(wsDir, 'poll.duckdb'), flushIntervalMs: 2000, flushBatchSize: 500 })
 await ctx.plugin(modbusPlugin, { defaultTimeoutMs: 3000, defaultUnitId: 1 })
 await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080, staticDir: 'apps/web/dist' })
 await ctx.plugin(sinkPlugin)

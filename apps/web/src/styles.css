@@ -173,5 +173,7 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .ws-modal { max-width: 540px; }
 .ws-browse { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; border: 1px solid var(--border-2); border-radius: 6px; padding: 6px; }
 .ws-dir { text-align: left; }
-.ws-recent { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-recent { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 8px; align-items: baseline; }
+.ws-recent-title { color: var(--text-1); font-weight: 500; flex-shrink: 0; }
+.ws-recent-path { color: var(--text-2); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
 .ws-recent:hover { background: var(--surface-hover); color: var(--text-1); }

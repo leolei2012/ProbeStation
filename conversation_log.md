@@ -494,6 +494,25 @@
 - `api`：注入 workspace，加 `GET /api/workspace`、`GET /api/workspace/browse`、`POST /api/workspace/switch`，WS 广播 `workspace/changed`。
 - 前端：侧边栏顶部工作区栏（📁 + 路径，点击弹「切换工作区」），弹窗支持路径输入 + 子目录浏览 + 最近使用；切换后重载设备列表。
 - 测试：新增 `scripts/_bootstrap.ts`（临时目录装配全栈）+ `scripts/test-workspace.ts`（A/B 工作区数据隔离验证）；9 个装配 api 的测试脚本统一改用 `boot()`，顺带修复了 test-ws/test-sink/test-rule/test-logs/demo-full 原本缺 sink/importer 依赖的问题。
+- 补充「重启记住上次工作区」：`resolveInitialWorkspace()` 启动时优先读注册表最近项，cli 用它推导 config/store 的 dbPath（DB 文件就落在所选文件夹，重启不再回退到 data/）。
+---
+
+## 2026-08-14（续）—— 借鉴 DSH 的工作区持久化实现
+
+### 调研结论（DSH `@deepseek-ai/dsh-workspace`）
+
+- DSH 用「工作区注册表」（`WorkspaceRegistry`，Cordis Service）而非单个当前目录指针：持久化一张 `workspaces` KV 表 + 全局状态（顺序/归档/初始化标记），落在 `~/.dsh`（storage-domain → storage-json，原子写）。
+- 记录 `workspaceRecord = { path(realpath 规范化), title(basename), sessionIds(有序), createdAt, updatedAt }`；工作区文件夹只放会话数据，注册表全局一份。
+- 新建按规范化路径去重复用；session 通过 header.cwd 归账到工作区；首次启动一次性 bootstrap 从既有 session 反推工作区；写操作带 pendingMutation 标记可恢复。
+
+### 借鉴落地（ProbeStation）
+
+- 注册表从 `string[]` 升级为记录 `{ path, title, lastUsedAt }`（title=basename），按规范化路径去重，兼容旧 string[] 迁移。
+- 注册表原子写（tmp + rename，失败回退直写）。
+- 前端工作区栏/最近列表显示 basename 标题（含完整路径副文本）。
+- `resolveInitialWorkspace` 读最近一条记录 path，重启记住上次工作区（不变）。
+
+
 
 
 
