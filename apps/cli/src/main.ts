@@ -43,7 +43,7 @@ function seedDemo(ctx: any, cfg: any): void {
 
   // 本地模拟器（127.0.0.1:8502，由 slave 插件服务）
   const sim = cfg.createObject('本地模拟器', '127.0.0.1', 8502)
-  const sg = cfg.createGroup(sim.id, 'Holding Registers', 3, 0, 5)
+  const sg = cfg.createGroup(sim.id, 'Holding Registers', 3, 0, 3)
   for (const [alias, addr] of [['计数器', 0], ['温度', 1], ['转速', 2]] as Array<[string, number]>) {
     cfg.createRegister(sg.id, sim.id, alias, 3, addr)
   }
