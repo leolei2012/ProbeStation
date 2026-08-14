@@ -515,7 +515,7 @@
 - **类型系统（修复 dataType 从不生效的 bug）**：新增 `packages/core/src/codec.ts`（int16/uint16/float16/int32/uint32/float32 编解码 + 大端字序 + hex）；前端按类型解码显示（32 位合并相邻两地址）、HEX 开关、类型下拉加 float16；写值按类型编码（32 位写 2 个寄存器，弹窗里 32 位锁定 FC16）。`poller.write` 改收 `values[]`。测试 test-codec / test-codec-write 通过。
 - **拍板只做 16 位**：移除 int32/uint32/float32（编解码、32 位合并显示、写 2 寄存器逻辑全删），只保留 int16/uint16/float16；词序问题随之消失（单 16 位寄存器协议层即大端）。`decode/encodeRegister` 改单字、`poller.write` 回收单值、导入器 32 位码收敛为 int16；删除 test-codec-write。
 - 侧边栏工作区 UI 对齐 DSH：区块标题「工作区」，工作区以文件夹树展示（📁/📂 + ▸/▾ 折叠箭头 + 标题 + 当前数量），当前工作区展开显示设备、其他工作区折叠点击即切换，底部「＋ 添加工作区」。
-- 值显示加三态切换「值 / HEX / 二进制」（`toBin` 补 16 位二进制；HEX/BIN 对多字显示按字空格分隔）。
+- hex/二进制显示改为**类型下拉里的「显示」组**（`hex`/`bin` 两项，每寄存器独立选择），撤掉全局「值/HEX/BIN」大开关；`toBin` 补 16 位二进制。
 - **最终态：16/32/64 位 + 端序下拉**：`codec` 支持 9 基础类型 + `-LE` 小端变体（共 15 种）；`registerWidth`=1/2/4；合并显示「首字显示合并值、被覆盖字显示 —、数据不足显示 —」；类型下拉用 optgroup 分「16 位 / 大端 / 小端」三组；数据不足改类型被拒（前端 + 后端 `PUT /api/registers/:id` 校验 `startAddress+width <= 组范围`）；64 位整数用 BigInt（前端写值传字符串、后端 BigInt）。`poller.write` 回收 `values[]`。测试 test-codec（15 类型往返）/ test-codec-io（32/64 位写 + 拒绝）通过。
 - `resolveInitialWorkspace` 读最近一条记录 path，重启记住上次工作区（不变）。
 

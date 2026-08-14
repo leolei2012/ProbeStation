@@ -3,6 +3,7 @@ export const DATA_TYPES = [
   'int16', 'uint16', 'float16',
   'int32', 'uint32', 'float32', 'int64', 'uint64', 'float64',
   'int32-LE', 'uint32-LE', 'float32-LE', 'int64-LE', 'uint64-LE', 'float64-LE',
+  'hex', 'bin',
 ] as const
 export type DataType = (typeof DATA_TYPES)[number]
 export type RegisterValue = number | bigint

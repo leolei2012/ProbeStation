@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import './styles.css'
-import { DATA_TYPES, baseType, decodeRegister, registerWidth, toBin, toHex } from '../../../packages/core/src/codec.ts'
+import { baseType, decodeRegister, registerWidth, toBin, toHex } from '../../../packages/core/src/codec.ts'
 
 const TYPE_GROUPS = [
-  { key: 'grp16', types: DATA_TYPES.filter((t) => registerWidth(t) === 1) },
-  { key: 'grpBE', types: DATA_TYPES.filter((t) => registerWidth(t) > 1 && baseType(t) === t) },
-  { key: 'grpLE', types: DATA_TYPES.filter((t) => registerWidth(t) > 1 && baseType(t) !== t) },
+  { key: 'grp16', types: ['int16', 'uint16', 'float16'] },
+  { key: 'grpBE', types: ['int32', 'uint32', 'float32', 'int64', 'uint64', 'float64'] },
+  { key: 'grpLE', types: ['int32-LE', 'uint32-LE', 'float32-LE', 'int64-LE', 'uint64-LE', 'float64-LE'] },
+  { key: 'grpDisp', types: ['hex', 'bin'] },
 ]
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number }
@@ -45,7 +46,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: '导出 XLSX',
     deleteDevice: '删除设备',
     regCount: '{n} 个寄存器',
-    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入', valueCovered: '被上一个多字寄存器占用', valueShort: '数据不足（分组读取范围不够）', grp16: '16 位', grpBE: '大端（高字在前）', grpLE: '小端（低字在前）',
+    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入', valueCovered: '被上一个多字寄存器占用', valueShort: '数据不足（分组读取范围不够）', grp16: '16 位', grpBE: '大端（高字在前）', grpLE: '小端（低字在前）', grpDisp: '显示',
     write: '写', valuePh: '值',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
@@ -85,7 +86,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: 'Export XLSX',
     deleteDevice: 'Delete',
     regCount: '{n} registers',
-    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write', valueCovered: 'Covered by previous register', valueShort: 'Not enough polled data', grp16: '16-bit', grpBE: 'Big-endian', grpLE: 'Little-endian',
+    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write', valueCovered: 'Covered by previous register', valueShort: 'Not enough polled data', grp16: '16-bit', grpBE: 'Big-endian', grpLE: 'Little-endian', grpDisp: 'Display',
     write: 'Write', valuePh: 'value',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
@@ -118,7 +119,7 @@ function formatNumber(d: number | bigint): string {
 interface RegView { value: string; covered: boolean; invalid: boolean; writable: boolean }
 
 /** 按地址顺序合并多字：首字显示合并值、被覆盖字显示 —、数据不足显示 —（不可写）。 */
-function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue>, mode: 'value' | 'hex' | 'bin'): Map<number, RegView> {
+function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue>): Map<number, RegView> {
   const rawByAddr: Record<number, number> = {}
   const regIds = new Set<number>()
   for (const g of groups) for (const r of g.registers) {
@@ -156,8 +157,9 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue
         views.set(r.id, { value: '—', covered: false, invalid: true, writable: false })
         continue
       }
-      const decoded = decodeRegister(r.dataType, words)
-      views.set(r.id, { value: mode === 'hex' ? words.map(toHex).join(' ') : mode === 'bin' ? words.map(toBin).join(' ') : formatNumber(decoded), covered: false, invalid: false, writable: true })
+      const b = baseType(r.dataType)
+      const value = b === 'hex' ? words.map(toHex).join(' ') : b === 'bin' ? words.map(toBin).join(' ') : formatNumber(decodeRegister(r.dataType, words))
+      views.set(r.id, { value, covered: false, invalid: false, writable: true })
       consumedUpTo = end
     }
   }
@@ -370,20 +372,14 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
-  const [mode, setMode] = useState<'value' | 'hex' | 'bin'>('value')
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const toggleGroup = async (id: number) => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() }
   const deleteGroup = async (id: number) => { await api.del('/api/groups/' + id); onRefresh() }
-  const views = buildRegViews(groups, latest, mode)
+  const views = buildRegViews(groups, latest)
   return (
     <div>
       <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
-        <div className="seg seg-small">
-          <button className={mode === 'value' ? 'selected' : ''} onClick={() => setMode('value')}>{t('colValue')}</button>
-          <button className={mode === 'hex' ? 'selected' : ''} onClick={() => setMode('hex')}>HEX</button>
-          <button className={mode === 'bin' ? 'selected' : ''} onClick={() => setMode('bin')}>BIN</button>
-        </div>
       </div>
       {groups.map((g) => (
         <div key={g.id} className="group-block">
