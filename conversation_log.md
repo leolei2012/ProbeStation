@@ -266,3 +266,23 @@
 
 - logs（日志查询）、importer（MBS/MBP 导入）。
 - Phase 5：降采样/保留、AI 测试层。
+
+---
+
+## 2026-08-14（续）—— Phase 4.6：logs 日志
+
+### 完成内容
+
+- `config` 新增 `logs` 表 + `log/listLogs/clearLogs`。
+- `rule` 触发时写 WARN 日志；`api` 写寄存器时写 INFO 日志；`poller` 连接失败改为 console warn（不再静默吞）。
+- `api` 新增 `GET /api/logs`、`POST /api/logs/clear`。
+- 冒烟测试：规则触发日志入库 + 查询通过。
+
+### Phase 4 进度
+
+✅ slave / importer⬜ / sink / rule / logs；仅剩 **importer（MBS/MBP 导入）**。
+
+### 下一步
+
+- importer（MBS/MBP 导入）——需先读原 Python 的 mbs_parser.py/mbp_parser.py 理解格式。
+- Phase 5：降采样/保留、AI 测试层。

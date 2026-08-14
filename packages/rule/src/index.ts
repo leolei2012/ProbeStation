@@ -26,6 +26,7 @@ export function apply(ctx: Context): void {
         const fn = OPS[rule.operator]
         if (!fn) continue
         if (fn(p.rawValue, rule.threshold)) {
+          ctx.config.log('WARN', 'rule', `rule ${rule.id}: ${rule.message ?? ''} (value=${p.rawValue}, threshold=${rule.threshold})`)
           ctx.emit('rule/trigger', {
             ruleId: rule.id, objectId, registerId: p.registerId,
             value: p.rawValue, threshold: rule.threshold, message: rule.message,

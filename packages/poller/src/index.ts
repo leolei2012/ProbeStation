@@ -63,7 +63,7 @@ class PollingEngine {
   startAll(): void {
     const objects = this.ctx.config.listObjects().filter((o: any) => o.isActive && o.mode !== 'slave')
     for (const obj of objects) {
-      const loop = () => { void this.pollObject(obj).catch(() => {}) }
+      const loop = () => { void this.pollObject(obj).catch((e) => this.ctx.logger('poller').warn(`poll ${obj.name} failed: ${e?.message ?? e}`)) }
       void loop()
       this.timers.push(setInterval(loop, this.config.pollIntervalMs))
     }

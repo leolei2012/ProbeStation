@@ -69,8 +69,13 @@ export function apply(ctx: Context, config: Config): void {
     const value = Number(b.value)
     const method = b.method === 'single' ? 'single' : 'multiple'
     await poller.write(reg.objectId, reg.startAddress, value, method)
+    cfg.log('INFO', 'api', `write register ${id} = ${value}`)
     return { register_id: id, value, method }
   })
+
+  // ── Logs ───────────────────────────────────────────────
+  app.get('/api/logs', async (req) => cfg.listLogs(Number((req.query as any).limit ?? 100)))
+  app.post('/api/logs/clear', async () => { cfg.clearLogs(); return { ok: true } })
 
   // ── Alarm rules ────────────────────────────────────────
   app.get('/api/rules', async () => cfg.listRules())

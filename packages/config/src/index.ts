@@ -18,6 +18,7 @@ export interface DeviceRecord { id: number; name: string; ip: string; port: numb
 export interface GroupRecord { id: number; objectId: number; name: string; functionCode: number; startAddress: number; quantity: number; mode: string; isActive: number }
 export interface RegisterRecord { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; quantity: number; dataType: string }
 export interface RuleRecord { id: number; registerId: number; operator: string; threshold: number; message: string | null }
+export interface LogRecord { id: number; ts: string; level: string; source: string | null; message: string | null }
 
 const OBJECT_SELECT = 'SELECT id, name, ip, port, mode, is_active AS isActive FROM monitor_objects'
 const GROUP_SELECT = 'SELECT id, object_id AS objectId, name, function_code AS functionCode, start_address AS startAddress, quantity, mode, is_active AS isActive FROM register_groups'
@@ -57,6 +58,13 @@ export class ConfigStore {
         register_id INTEGER NOT NULL,
         operator TEXT NOT NULL DEFAULT '>',
         threshold REAL NOT NULL DEFAULT 0,
+        message TEXT
+      );
+      CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        level TEXT DEFAULT 'INFO',
+        source TEXT,
         message TEXT
       );
     `)
@@ -124,6 +132,15 @@ export class ConfigStore {
     return this.db.prepare('SELECT id, register_id AS registerId, operator, threshold, message FROM alarm_rules WHERE id = ?').get(Number(res.lastInsertRowid)) as unknown as RuleRecord
   }
   deleteRule(id: number): void { this.db.prepare('DELETE FROM alarm_rules WHERE id = ?').run(id) }
+
+  // ── Logs ────────────────────────────────────────────────
+  log(level: string, source: string, message: string): void {
+    this.db.prepare('INSERT INTO logs (ts, level, source, message) VALUES (?, ?, ?, ?)').run(new Date().toISOString(), level, source, message)
+  }
+  listLogs(limit = 100): LogRecord[] {
+    return this.db.prepare('SELECT id, ts, level, source, message FROM logs ORDER BY id DESC LIMIT ?').all(limit) as unknown as LogRecord[]
+  }
+  clearLogs(): void { this.db.prepare('DELETE FROM logs').run() }
 
   // 通用 update：按 camelCase → snake_case 映射，参数化
   private update(table: string, id: number, fields: Record<string, unknown>, mapping: Record<string, string>): void {

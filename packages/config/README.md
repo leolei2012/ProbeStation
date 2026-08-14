@@ -26,8 +26,16 @@ class ConfigStore {
   listRegisters(groupId) / listRegistersByObject(objectId) / getRegister(id)
   createRegister(groupId, objectId, alias, functionCode, startAddress, dataType?)
   updateRegister(id, fields) / deleteRegister(id)
+  // 告警规则 + 日志
+  listRules() / createRule(registerId, operator, threshold, message) / deleteRule(id)
+  log(level, source, message) / listLogs(limit) / clearLogs()
 }
 ```
+
+## 表
+
+`monitor_objects` / `register_groups` / `registers` / `alarm_rules` / `logs` 五张表。
+规则与日志由 `rule` / `api` 插件写入。
 
 ## 字段映射
 
