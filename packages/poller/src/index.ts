@@ -66,6 +66,9 @@ class PollingEngine {
   }
 
   private async pollObject(obj: any): Promise<void> {
+    // 每轮重新检查设备启停/模式：设备被「断开」后立即停止轮询
+    const current = this.ctx.config.getObject(obj.id)
+    if (!current || !current.isActive || current.mode === 'slave') return
     const groups = this.ctx.config.listGroups(obj.id).filter((g: any) => g.isActive)
     const registers = this.ctx.config.listRegistersByObject(obj.id)
     const addrToId = new Map<number, number>()

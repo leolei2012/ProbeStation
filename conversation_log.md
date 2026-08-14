@@ -515,6 +515,7 @@
 - **类型系统（修复 dataType 从不生效的 bug）**：新增 `packages/core/src/codec.ts`（int16/uint16/float16/int32/uint32/float32 编解码 + 大端字序 + hex）；前端按类型解码显示（32 位合并相邻两地址）、HEX 开关、类型下拉加 float16；写值按类型编码（32 位写 2 个寄存器，弹窗里 32 位锁定 FC16）。`poller.write` 改收 `values[]`。测试 test-codec / test-codec-write 通过。
 - **拍板只做 16 位**：移除 int32/uint32/float32（编解码、32 位合并显示、写 2 寄存器逻辑全删），只保留 int16/uint16/float16；词序问题随之消失（单 16 位寄存器协议层即大端）。`decode/encodeRegister` 改单字、`poller.write` 回收单值、导入器 32 位码收敛为 int16；删除 test-codec-write。
 - MCP 补 6 个 CRUD 工具（create_group/update_group/create_register/update_register/delete_register/delete_group），供 agent 开发时动态增删改分组与寄存器；顺带修了 mcp 漏 import `encodeRegister` 的潜在 bug。
+- **修复设备级「断开」无效 bug**：poller 的轮询循环是启动时按设备建的 setInterval，pollObject 之前不重新检查设备 isActive，所以断开后仍继续读。现每轮开头重新 `getObject().isActive`，断开即停止轮询。测试 test-device-toggle。
 - 侧边栏进一步对齐 DSH 侧边栏结构：logo 行 → 大按钮「＋ 新工作区」（对应 DSH 的「新会话」）→ 「工作区」区块（文件夹行右侧「＋」= 新建设备）→ 底部设置（ws-list flex:1 使设置固定在底部）。
 - 侧边栏工作区 UI 对齐 DSH：区块标题「工作区」，工作区以文件夹树展示（📁/📂 + ▸/▾ 折叠箭头 + 标题 + 当前数量），当前工作区展开显示设备、其他工作区折叠点击即切换，底部「＋ 添加工作区」。
 - hex/bin 并入类型矩阵：类型下拉改为 6 组（16/32/64 位 × 大端/小端），每组含 int/uint/float + hex/bin（`hex16`/`hex16-LE`/`hex32`/`bin64-LE`… 共 30 种）；16 位也有大小端（`-LE`=字节交换 `swap16`，32/64 位=字序反转）；hex/bin 为原始显示格式（不可写）。撤掉全局「值/HEX/BIN」开关。
