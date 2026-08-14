@@ -5,6 +5,7 @@ import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { encodeRegister } from '@probebench/core'
 
 export const name = 'api'
 export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'workspace']
@@ -78,11 +79,13 @@ export function apply(ctx: Context, config: Config): void {
     if (!reg) return { code: 404, error: 'register not found' }
     const b = req.body as any
     const value = Number(b.value)
-    const method = b.method === 'single' ? 'single' : 'multiple'
+    const words = encodeRegister(reg.dataType ?? 'int16', value)
+    const requested = b.method === 'single' ? 'single' : 'multiple'
+    const method = words.length > 1 ? 'multiple' : requested
     const grp = cfg.getGroup(reg.groupId)
-    await poller.write(reg.objectId, reg.startAddress, value, method, grp?.slaveId ?? 1)
-    cfg.log('INFO', 'api', `write register ${id} = ${value}`)
-    return { register_id: id, value, method }
+    await poller.write(reg.objectId, reg.startAddress, words, method, grp?.slaveId ?? 1)
+    cfg.log('INFO', 'api', 'write register ' + id + ' = ' + value + ' (' + reg.dataType + ', ' + words.length + ' word(s))')
+    return { register_id: id, value, dataType: reg.dataType, method, words }
   })
 
   // ── Import ─────────────────────────────────────────────

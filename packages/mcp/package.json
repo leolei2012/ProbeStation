@@ -8,6 +8,7 @@
     "cordis": "^4.0.0-rc.8",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.24.0",
+    "@probebench/core": "*",
     "@probebench/config": "*",
     "@probebench/store": "*",
     "@probebench/poller": "*",

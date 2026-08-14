@@ -21,6 +21,8 @@ export const Config: z<Config> = z.object({
   pollIntervalMs: z.number(),
 })
 
+export * from './codec.ts'
+
 export function apply(ctx: Context, config: Config): void {
   ctx.logger('core').info(
     `ProbeStation core loaded: ${config.host}:${config.port} (db=${config.dbPath}, retain=${config.dataRetainDays}d, poll=${config.pollIntervalMs}ms)`,

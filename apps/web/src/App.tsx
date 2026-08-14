@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import './styles.css'
+import { DATA_TYPES, decodeRegister, registerWidth, toHex } from '../../../packages/core/src/codec.ts'
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
@@ -99,6 +100,26 @@ const api = {
   post: (url: string, body?: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) }).then((r) => r.json()),
   put: (url: string, body: unknown) => fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()),
   del: (url: string) => fetch(url, { method: 'DELETE' }).then((r) => r.json()),
+}
+
+function formatNumber(d: number): string {
+  if (Number.isNaN(d)) return 'NaN'
+  if (!Number.isFinite(d)) return d > 0 ? 'Inf' : '-Inf'
+  return Number.isInteger(d) ? String(d) : String(Number(d.toPrecision(7)))
+}
+
+function renderRegisterValue(r: Register, latest: Record<number, LatestValue>, rawByAddr: Record<number, number>, hex: boolean): string {
+  const v = latest[r.id]
+  if (!v) return '—'
+  const width = registerWidth(r.dataType)
+  const w0 = v.rawValue
+  if (width === 1) {
+    return hex ? toHex(w0) : formatNumber(decodeRegister(r.dataType, [w0]))
+  }
+  const w1 = rawByAddr[r.startAddress + 1]
+  if (w1 === undefined) return hex ? toHex(w0) + '…' : '—'
+  if (hex) return '0x' + (((w0 << 16) | w1) >>> 0).toString(16).toUpperCase().padStart(8, '0')
+  return formatNumber(decodeRegister(r.dataType, [w0, w1]))
 }
 
 export default function App() {
@@ -290,13 +311,28 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
+  const [hex, setHex] = useState(false)
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const toggleGroup = async (id: number) => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() }
   const deleteGroup = async (id: number) => { await api.del('/api/groups/' + id); onRefresh() }
+  const rawByAddr: Record<number, number> = {}
+  const regIds = new Set<number>()
+  for (const g of groups) for (const r of g.registers) {
+    regIds.add(r.id)
+    const v = latest[r.id]
+    if (v) rawByAddr[r.startAddress] = v.rawValue
+  }
+  for (const k of Object.keys(latest)) {
+    const n = Number(k)
+    if (regIds.has(n)) continue
+    const v = latest[n]
+    if (v && rawByAddr[n] === undefined) rawByAddr[n] = v.rawValue
+  }
   return (
     <div>
       <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
+        <button className={'btn' + (hex ? ' active' : '')} onClick={() => setHex(!hex)}>{hex ? 'HEX ✓' : 'HEX'}</button>
       </div>
       {groups.map((g) => (
         <div key={g.id} className="group-block">
@@ -314,13 +350,12 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th></tr></thead>
             <tbody>
               {g.registers.map((r) => {
-                const v = latest[r.id]
                 return (
                   <tr key={r.id}>
                     <td className="kv">{r.startAddress}</td>
                     <td><AliasCell t={t} reg={r} onRefresh={onRefresh} /></td>
                     <td><TypeCell reg={r} onRefresh={onRefresh} /></td>
-                    <td className="value" title={t('valueHint')} onDoubleClick={() => setWriteReg(r)}>{v ? v.rawValue : '—'}</td>
+                    <td className="value" title={t('valueHint')} onDoubleClick={() => setWriteReg(r)}>{renderRegisterValue(r, latest, rawByAddr, hex)}</td>
                   </tr>
                 )
               })}
@@ -383,6 +418,7 @@ function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose
   const [value, setValue] = useState('')
   const [method, setMethod] = useState<'single' | 'multiple'>('multiple')
   const [busy, setBusy] = useState(false)
+  const width = registerWidth(reg.dataType)
   const write = async () => {
     if (value === '') return
     setBusy(true)
@@ -395,13 +431,13 @@ function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{t('writeReg')}</h3>
-        <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress}</div>
+        <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}</div>
         <label>{t('valuePh')}</label>
         <input value={value} onChange={(e) => setValue(e.target.value)} autoFocus placeholder={t('valuePh')} />
         <label>{t('functionCode')}</label>
-        <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')}>
+        <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')} disabled={width === 2}>
           <option value="multiple">{t('fc16')}</option>
-          <option value="single">{t('fc06')}</option>
+          {width === 1 && <option value="single">{t('fc06')}</option>}
         </select>
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
@@ -411,8 +447,6 @@ function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose
     </div>
   )
 }
-
-const DATA_TYPES = ['int16', 'uint16', 'int32', 'uint32', 'float32']
 
 function AliasCell({ t, reg, onRefresh }: { t: T; reg: Register; onRefresh: () => void }) {
   const [val, setVal] = useState(reg.alias ?? '')

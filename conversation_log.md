@@ -512,6 +512,7 @@
 - 前端工作区栏/最近列表显示 basename 标题（含完整路径副文本）。
 - Live 表格：列名「实时值」→「值」，去掉「写值」列；改为**双击值**弹「写寄存器」窗口（输入值 + 选功能码 FC06 单写 / FC16 多写）。
 - 分组可折叠：分组头部加 ▾/▸ 折叠箭头（点箭头或组名收起/展开表格）。
+- **类型系统（修复 dataType 从不生效的 bug）**：新增 `packages/core/src/codec.ts`（int16/uint16/float16/int32/uint32/float32 编解码 + 大端字序 + hex）；前端按类型解码显示（32 位合并相邻两地址）、HEX 开关、类型下拉加 float16；写值按类型编码（32 位写 2 个寄存器，弹窗里 32 位锁定 FC16）。`poller.write` 改收 `values[]`。测试 test-codec / test-codec-write 通过。
 - `resolveInitialWorkspace` 读最近一条记录 path，重启记住上次工作区（不变）。
 
 

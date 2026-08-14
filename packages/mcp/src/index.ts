@@ -64,7 +64,8 @@ export function apply(ctx: Context, config: Config): void {
   }, async (args) => {
     const reg = cfg.getRegister(args.register_id)
     if (!reg || reg.objectId !== args.device_id) return { content: [{ type: 'text', text: 'register not found' }], isError: true }
-    await poller.write(reg.objectId, reg.startAddress, args.value, 'multiple')
+    const words = encodeRegister(reg.dataType ?? 'int16', args.value)
+    await poller.write(reg.objectId, reg.startAddress, words, 'multiple')
     cfg.log('INFO', 'mcp', 'write register ' + args.register_id + ' = ' + args.value)
     return { content: [{ type: 'text', text: JSON.stringify({ register_id: args.register_id, value: args.value }) }] }
   })
