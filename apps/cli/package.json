@@ -14,7 +14,11 @@
     "@probebench/modbus": "*",
     "@probebench/poller": "*",
     "@probebench/api": "*",
-    "@probebench/slave": "*"
+    "@probebench/sink": "*",
+    "@probebench/rule": "*",
+    "@probebench/importer": "*",
+    "@probebench/slave": "*",
+    "@probebench/mcp": "*"
   },
   "devDependencies": {
     "tsx": "^4.19.0"

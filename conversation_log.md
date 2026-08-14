@@ -374,3 +374,29 @@
 ### 下一步
 
 - 继续前端（历史曲线图、分 tab），或 Phase 5。
+
+---
+
+## 2026-08-14（续）—— packages/mcp：MCP 服务器（AI 层接口）
+
+### 完成内容
+
+- `packages/mcp`：MCP 服务器（`@modelcontextprotocol/sdk@1.30`），streamable-http（有状态，randomUUID 会话），独立端口 8081。
+- 6 个工具：list_devices / list_registers / read_register / read_all / query_history / write_register。
+- 直接复用 ctx.config/store/poller（读热缓存、查历史、写 FC16），不走 REST。
+- CLI 接入 mcp。冒烟测试：SDK 客户端连接 + listTools + list_devices + read_register 全通过。
+
+### 关键点（踩坑）
+
+- stateless 模式每个请求要新建 transport（SDK 会抛「Stateless transport cannot be reused」）→ 改有状态模式。
+- 挂 Fastify 用 reply.hijack + 原始 res 会 double-close（libuv 断言崩溃）→ 改独立 node:http 服务器。
+
+### 决策（AI 层架构）
+
+- **动作层用 MCP 服务器**（标准、DSH 原生吃、可复用）；**知识层将来用 DSH skill**（Excel 语义 + 测试流程）。
+
+### 下一步
+
+- 写寄存器接审批/审计（AI 自动控制前的安全闸）。
+- 语义 Excel → DSH skill（可选）。
+- Phase 5 降采样/保留。

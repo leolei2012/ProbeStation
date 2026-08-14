@@ -8,6 +8,7 @@ import * as apiPlugin from '@probebench/api'
 import * as sinkPlugin from '@probebench/sink'
 import * as rulePlugin from '@probebench/rule'
 import * as importerPlugin from '@probebench/importer'
+import * as mcpPlugin from '@probebench/mcp'
 import * as slavePlugin from '@probebench/slave'
 
 const ctx = new Context()
@@ -19,6 +20,7 @@ await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080, staticDir: 'apps/web/
 await ctx.plugin(sinkPlugin)
 await ctx.plugin(rulePlugin)
 await ctx.plugin(importerPlugin)
+await ctx.plugin(mcpPlugin)
 await ctx.plugin(slavePlugin, { port: 8502, holdingSize: 5000 })
 await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
 
