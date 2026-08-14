@@ -470,7 +470,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
                   <tr key={r.id}>
                     <td className="kv">{r.startAddress}</td>
                     <td><AliasCell t={t} reg={r} onRefresh={onRefresh} /></td>
-                    <td><TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} onRefresh={onRefresh} /></td>
+                    <td><TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /></td>
                     <td className="value" title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : t('valueHint')} onDoubleClick={rv?.writable ? () => setWriteReg(r) : undefined}>{rv?.value ?? '—'}</td>
                   </tr>
                 )
@@ -585,7 +585,7 @@ function AliasCell({ t, reg, onRefresh }: { t: T; reg: Register; onRefresh: () =
   )
 }
 
-function TypeCell({ t, reg, available, onRefresh }: { t: T; reg: Register; available: number; onRefresh: () => void }) {
+function TypeCell({ t, reg, available, disabled, onRefresh }: { t: T; reg: Register; available: number; disabled?: boolean; onRefresh: () => void }) {
   const [err, setErr] = useState(false)
   const change = async (v: string) => {
     if (v === reg.dataType) return
@@ -595,7 +595,7 @@ function TypeCell({ t, reg, available, onRefresh }: { t: T; reg: Register; avail
   }
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <select className="cell-select" value={reg.dataType} onChange={(e) => change(e.target.value)}>
+      <select className="cell-select" value={reg.dataType} onChange={(e) => change(e.target.value)} disabled={disabled}>
         {TYPE_GROUPS.map((grp) => (
           <optgroup key={grp.key} label={t(grp.key)}>
             {grp.types.map((d) => <option key={d} value={d}>{d}</option>)}

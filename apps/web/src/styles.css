@@ -171,6 +171,7 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .cell-input { width: 100%; border: none; background: transparent; font: inherit; color: var(--text-1); padding: 3px 6px; border-radius: 4px; }
 .cell-input:focus { background: var(--surface); outline: 1px solid var(--accent); }
 .cell-select { border: 1px solid var(--border-2); background: var(--surface); font: inherit; color: var(--text-1); border-radius: 6px; padding: 3px 4px; font-size: 12px; }
+.cell-select:disabled { opacity: 0.45; cursor: not-allowed; }
 .cell-err { color: #ec1313; font-size: 12px; }
 .workspace-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin: 2px 8px 8px; border: 1px solid var(--border-2); border-radius: 8px; cursor: pointer; background: var(--surface); }
 .workspace-bar:hover { background: var(--surface-hover); }
