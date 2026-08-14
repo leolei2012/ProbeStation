@@ -15,7 +15,7 @@ interface Device { id: number; name: string; ip: string; port: number; mode: str
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number; registers: Register[] }
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
-interface WorkspaceInfo { current: string; currentTitle: string; recent: { path: string; title: string; lastUsedAt: string }[] }
+interface WorkspaceInfo { current: string; currentTitle: string; recent: { path: string; title: string; lastUsedAt: string; createdAt: string }[] }
 
 type Lang = 'zh' | 'en'
 type Theme = 'light' | 'dark' | 'system'
@@ -29,7 +29,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     devices: '设备',
     noDevices: '暂无设备，点上方新建',
     workspace: '工作区',
-    switchWorkspace: '切换工作区', addWorkspace: '添加工作区', newWorkspace: '新工作区',
+    switchWorkspace: '切换工作区', addWorkspace: '添加工作区', newWorkspace: '新工作区', createdAt: '创建于',
     wsPath: '工作区路径',
     selectFolder: '选择此文件夹',
     upFolder: '上一级',
@@ -69,7 +69,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     devices: 'Devices',
     noDevices: 'No devices, create one above',
     workspace: 'Workspace',
-    switchWorkspace: 'Switch workspace', addWorkspace: 'Add workspace', newWorkspace: 'New workspace',
+    switchWorkspace: 'Switch workspace', addWorkspace: 'Add workspace', newWorkspace: 'New workspace', createdAt: 'Created',
     wsPath: 'Workspace path',
     selectFolder: 'Select this folder',
     upFolder: 'Parent',
@@ -116,6 +116,23 @@ function formatNumber(d: number | bigint): string {
   if (Number.isNaN(d)) return 'NaN'
   if (!Number.isFinite(d)) return d > 0 ? 'Inf' : '-Inf'
   return Number.isInteger(d) ? String(d) : String(Number(d.toPrecision(7)))
+}
+
+function FolderIcon({ open }: { open: boolean }) {
+  return (
+    <svg className="ws-folder-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {open
+        ? <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+        : <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />}
+    </svg>
+  )
+}
+
+function formatDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
 }
 
 interface RegView { value: string; covered: boolean; invalid: boolean; writable: boolean }
@@ -282,12 +299,19 @@ export default function App() {
                 const isExpanded = isCurrent && wsExpanded
                 return (
                   <div key={w.path} className="ws-group">
-                    <div className={'ws-row' + (isCurrent ? ' current' : '')} onClick={() => { if (isCurrent) setWsExpanded(!wsExpanded); else switchWorkspace(w.path) }}>
-                      <span className="ws-folder">{isExpanded ? '📂' : '📁'}</span>
-                      <span className="ws-chevron">{isExpanded ? '▾' : '▸'}</span>
-                      <span className="ws-title">{w.title}</span>
-                      {isCurrent && <span className="ws-count">{devices.length}</span>}
-                      {isCurrent && <button className="ws-row-add" onClick={(e) => { e.stopPropagation(); setShowAdd(true) }} title={t('newDevice')} aria-label={t('newDevice')}>＋</button>}
+                    <div className="ws-row-wrap">
+                      <div className={'ws-row' + (isCurrent ? ' current' : '')} onClick={() => { if (isCurrent) setWsExpanded(!wsExpanded); else switchWorkspace(w.path) }}>
+                        <FolderIcon open={isExpanded} />
+                        <span className="ws-chevron">{isExpanded ? '▾' : '▸'}</span>
+                        <span className="ws-title">{w.title}</span>
+                        {isCurrent && <span className="ws-count">{devices.length}</span>}
+                        {isCurrent && <button className="ws-row-add" onClick={(e) => { e.stopPropagation(); setShowAdd(true) }} title={t('newDevice')} aria-label={t('newDevice')}>＋</button>}
+                      </div>
+                      <div className="ws-hover-card">
+                        <div className="ws-hover-title">{w.title}</div>
+                        <div className="ws-hover-path">{w.path}</div>
+                        {w.createdAt && <div className="ws-hover-time">{t('createdAt')} {formatDateTime(w.createdAt)}</div>}
+                      </div>
                     </div>
                     {isExpanded && (
                       <div className="ws-children">

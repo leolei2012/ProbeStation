@@ -186,6 +186,13 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .new-workspace-btn:hover { background: var(--surface-hover); }
 .ws-row-add { border: none; background: none; cursor: pointer; color: var(--text-2); font-size: 13px; padding: 0 2px; flex-shrink: 0; }
 .ws-row-add:hover { color: var(--text-1); }
+.ws-folder-ico { color: var(--text-2); flex-shrink: 0; }
+.ws-row-wrap { position: relative; }
+.ws-hover-card { display: none; position: absolute; left: calc(100% + 6px); top: 0; z-index: 20; min-width: 220px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14); }
+.ws-row-wrap:hover .ws-hover-card { display: block; }
+.ws-hover-title { font-weight: 600; font-size: 12px; color: var(--text-1); margin-bottom: 3px; }
+.ws-hover-path { font-size: 11px; color: var(--text-2); word-break: break-all; margin-bottom: 3px; }
+.ws-hover-time { font-size: 11px; color: var(--text-3); }
 .ws-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; cursor: pointer; color: var(--text-1); font-size: 13px; }
 .ws-row:hover { background: var(--surface-hover); }
 .ws-row.current { background: var(--accent-soft); }

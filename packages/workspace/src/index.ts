@@ -14,7 +14,7 @@ export const Config: z<Config> = z.object({
 })
 
 /** 一条工作区注册记录（对齐 DSH workspaceRecord：path 规范化、title=basename）。 */
-export interface WorkspaceRecord { path: string; title: string; lastUsedAt: string }
+export interface WorkspaceRecord { path: string; title: string; lastUsedAt: string; createdAt: string }
 export interface WorkspaceInfo { current: string; currentTitle: string; recent: WorkspaceRecord[] }
 export interface BrowseResult { path: string; parent: string | null; dirs: string[] }
 
@@ -24,10 +24,10 @@ function loadRegistry(regPath: string): WorkspaceRecord[] {
     const raw = JSON.parse(readFileSync(regPath, 'utf8')) as unknown
     if (!Array.isArray(raw)) return []
     return raw.flatMap((entry: unknown) => {
-      if (typeof entry === 'string') return [{ path: entry, title: basename(entry), lastUsedAt: '' }]
+      if (typeof entry === 'string') return [{ path: entry, title: basename(entry), lastUsedAt: '', createdAt: '' }]
       const r = entry as WorkspaceRecord
       if (typeof r?.path !== 'string') return []
-      return [{ path: r.path, title: r.title ?? basename(r.path), lastUsedAt: r.lastUsedAt ?? '' }]
+      return [{ path: r.path, title: r.title ?? basename(r.path), lastUsedAt: r.lastUsedAt ?? '', createdAt: r.createdAt ?? r.lastUsedAt ?? '' }]
     }).slice(0, 20)
   } catch { return [] }
 }
@@ -98,7 +98,8 @@ class Workspace {
 
   private addToRegistry(path: string): void {
     const canonical = resolve(path)
-    const rec: WorkspaceRecord = { path: canonical, title: basename(canonical), lastUsedAt: new Date().toISOString() }
+    const existing = this.recent.find(r => r.path === canonical)
+    const rec: WorkspaceRecord = { path: canonical, title: basename(canonical), lastUsedAt: new Date().toISOString(), createdAt: existing?.createdAt ?? new Date().toISOString() }
     this.recent = [rec, ...this.recent.filter(r => r.path !== canonical)].slice(0, 20)
     saveRegistry(this.registryPath, this.recent)
   }
