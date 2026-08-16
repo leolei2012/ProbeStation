@@ -134,7 +134,7 @@ export class OtaEngine {
       else { task.state = 'failed'; task.error = e?.message ?? String(e) }
     } finally {
       this.ctx.poller.resumeObject(deviceId)
-      try { this.ctx.poller.reconnectDevice(deviceId) } catch { /* ignore */ }
+      try { await this.ctx.poller.reconnectDevice(deviceId) } catch { /* ignore */ }
     }
   }
 }

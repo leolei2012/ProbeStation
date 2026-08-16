@@ -35,6 +35,29 @@ export function apply(ctx: Context, config: Config): void {
       inputSchema: { device_id: zz.number() },
     }, async (args) => ({ content: [{ type: 'text', text: JSON.stringify(cfg.listRegistersByObject(args.device_id)) }] }))
 
+    server.registerTool('set_device_active', {
+      title: 'Connect/disconnect device', description: '连接或断开设备（active=true 连接并打开串口/开始轮询；active=false 断开并关闭串口/停止轮询）。状态会通过 config/changed 事件同步到 Web UI',
+      inputSchema: { device_id: zz.number(), active: zz.boolean() },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      const updated = cfg.updateObject(args.device_id, { isActive: args.active ? 1 : 0 })
+      cfg.log('INFO', 'mcp', (args.active ? 'connect' : 'disconnect') + ' device ' + args.device_id)
+      return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
+    })
+
+    server.registerTool('set_poll_interval', {
+      title: 'Set poll interval', description: '设设备采样周期（毫秒，≥1 整数）。该设备所有组统一用这个周期；实际最快受 Modbus 通信往返限制，1ms 只是下限（=「尽可能快」）',
+      inputSchema: { device_id: zz.number(), poll_interval_ms: zz.number() },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      if (!Number.isInteger(args.poll_interval_ms) || args.poll_interval_ms < 1) {
+        return { content: [{ type: 'text', text: 'poll_interval_ms must be an integer >= 1' }], isError: true }
+      }
+      cfg.updateObject(args.device_id, { pollIntervalMs: args.poll_interval_ms })
+      cfg.log('INFO', 'mcp', 'set poll interval ' + args.poll_interval_ms + 'ms for device ' + args.device_id)
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, device_id: args.device_id, poll_interval_ms: args.poll_interval_ms }) }] }
+    })
+
     server.registerTool('read_register', {
       title: 'Read register', description: '读某设备单个寄存器的实时值',
       inputSchema: { device_id: zz.number(), register_id: zz.number() },
@@ -205,9 +228,41 @@ export function apply(ctx: Context, config: Config): void {
         is_active: obj.isActive,
         connected: poller.isDeviceConnected(args.device_id),
         polling: poller.isRunning(),
+        poll_interval_ms: obj.pollIntervalMs,
+        data_retain_seconds: obj.dataRetainSeconds,
         last_sample_time: ts,
         register_count: cfg.listRegistersByObject(args.device_id).length,
       }) }] }
+    })
+
+    server.registerTool('set_data_retention', {
+      title: 'Set data retention', description: '设历史数据保留时长（秒，0=永久）。缺省 device_id 设全局，否则设该设备覆盖（覆盖优先于全局）',
+      inputSchema: { retention_seconds: zz.number(), device_id: zz.number().optional() },
+    }, async (args) => {
+      if (!Number.isInteger(args.retention_seconds) || args.retention_seconds < 0) {
+        return { content: [{ type: 'text', text: 'retention_seconds must be a non-negative integer' }], isError: true }
+      }
+      if (args.device_id != null) {
+        if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+        cfg.updateObject(args.device_id, { dataRetainSeconds: args.retention_seconds })
+      } else {
+        store.setRetentionSeconds(args.retention_seconds)
+      }
+      cfg.log('INFO', 'mcp', 'set data retention ' + args.retention_seconds + 's' + (args.device_id != null ? ' for device ' + args.device_id : ' (global)'))
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] }
+    })
+
+    server.registerTool('get_data_retention', {
+      title: 'Get data retention', description: '查当前生效的保留时长（秒，0=永久）。缺省 device_id 返回全局，否则返回该设备生效值（设备覆盖优先）',
+      inputSchema: { device_id: zz.number().optional() },
+    }, async (args) => {
+      if (args.device_id != null) {
+        const obj = cfg.getObject(args.device_id)
+        if (!obj) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+        const v = obj.dataRetainSeconds != null ? obj.dataRetainSeconds : store.getRetentionSeconds()
+        return { content: [{ type: 'text', text: JSON.stringify({ retention_seconds: v }) }] }
+      }
+      return { content: [{ type: 'text', text: JSON.stringify({ retention_seconds: store.getRetentionSeconds() }) }] }
     })
 
     server.registerTool('list_alarm_rules', {

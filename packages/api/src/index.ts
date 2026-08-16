@@ -68,12 +68,13 @@ export function apply(ctx: Context, config: Config): void {
       return cfg.createObject(b.name, b.ip, b.port, b.mode ?? 'master', {
         transport: b.transport, serialPath: b.serialPath, baudRate: b.baudRate,
         parity: b.parity, stopBits: b.stopBits, dataBits: b.dataBits, flowControl: b.flowControl,
+        slaveId: b.slaveId, pollIntervalMs: b.pollIntervalMs, dataRetainSeconds: b.dataRetainSeconds,
       })
     })
     fastify.put('/api/monitor_objects/:id', async (req: any) => {
       const id = Number((req.params as any).id)
       const updated = cfg.updateObject(id, req.body as any)
-      poller.reconnectDevice(id) // 编辑 ip/port 后立即用新地址重连
+      await poller.reconnectDevice(id) // 编辑 ip/port 后立即用新地址重连
       return updated
     })
     fastify.delete('/api/monitor_objects/:id', async (req: any) => { cfg.deleteObject(Number((req.params as any).id)); return { ok: true } })
@@ -153,6 +154,15 @@ export function apply(ctx: Context, config: Config): void {
     })
     fastify.delete('/api/rules/:id', async (req: any) => { cfg.deleteRule(Number((req.params as any).id)); return { ok: true } })
 
+    // ── Retention ───────────────────────────────────────────
+    fastify.get('/api/retention', async () => ({ retention_seconds: store.getRetentionSeconds() }))
+    fastify.post('/api/retention', async (req: any) => {
+      const seconds = Number((req.body as any).retention_seconds)
+      if (!Number.isInteger(seconds) || seconds < 0) return { code: 400, error: 'retention_seconds must be a non-negative integer' }
+      store.setRetentionSeconds(seconds)
+      return { ok: true, retention_seconds: store.getRetentionSeconds() }
+    })
+
     // ── Export ─────────────────────────────────────────────
     const parseIds = (v: unknown): number[] | undefined => {
       if (v == null || v === '') return undefined
@@ -218,6 +228,10 @@ export function apply(ctx: Context, config: Config): void {
   })
   ctx.on('workspace/changed', (payload: any) => {
     const msg = JSON.stringify({ type: 'workspace/changed', ...payload })
+    for (const s of sockets) s.send(msg)
+  })
+  ctx.on('config/changed', (payload: any) => {
+    const msg = JSON.stringify({ type: 'config/changed', ...payload })
     for (const s of sockets) s.send(msg)
   })
 

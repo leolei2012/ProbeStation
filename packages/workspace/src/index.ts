@@ -87,7 +87,7 @@ class Workspace {
   async switchTo(path: string): Promise<void> {
     const dir = resolve(path)
     mkdirSync(dir, { recursive: true })
-    this.ctx.poller.stopAll()
+    await this.ctx.poller.stopAll()
     await this.ctx.store.reopen(join(dir, 'poll.duckdb'))
     this.ctx.config.reopen(join(dir, 'config.db'))
     this.current = dir

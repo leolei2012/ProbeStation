@@ -9,11 +9,13 @@ export const name = 'modbus'
 export interface Config {
   defaultTimeoutMs: number
   defaultUnitId: number
+  connectTimeoutMs: number
 }
 
 export const Config: z<Config> = z.object({
   defaultTimeoutMs: z.number().default(3000),
   defaultUnitId: z.number().default(1),
+  connectTimeoutMs: z.number().default(3000),
 })
 
 const EXC_MSG: Record<number, string> = { 1: 'Illegal Function', 2: 'Illegal Data Address', 3: 'Illegal Data Value', 4: 'Slave Device Failure', 5: 'Acknowledge', 6: 'Slave Device Busy', 8: 'Memory Parity Error', 10: 'Gateway Path Unavailable', 11: 'Gateway Target Failed to Respond' }
@@ -34,7 +36,7 @@ export interface ConnectOptions {
 /** 传输无关的 Modbus 驱动抽象。 */
 export interface ModbusDriver {
   connect(opts: ConnectOptions): Promise<void>
-  disconnect(): void
+  disconnect(): Promise<void>
   isConnected(): boolean
   readHoldingRegisters(address: number, count: number, slaveId?: number): Promise<number[]>
   readInputRegisters(address: number, count: number, slaveId?: number): Promise<number[]>
@@ -86,7 +88,7 @@ class JsmodbusDriver implements ModbusDriver {
     this.ready = true
   }
 
-  disconnect(): void {
+  async disconnect(): Promise<void> {
     for (const c of this.clients.values()) c.socket.destroy()
     this.clients.clear()
     this.ready = false
@@ -148,10 +150,14 @@ export class SerialDriver implements ModbusDriver {
   private ready = false
   private readonly clients = new Map<number, ModbusRTUClient>()
 
-  constructor(private readonly config: Config, private readonly portCtor: any = SerialPort) {}
+  constructor(
+    private readonly config: Config,
+    private readonly portCtor: any = SerialPort,
+    private readonly onWarn: (msg: string) => void = (msg) => console.warn('[modbus]', msg),
+  ) {}
 
   async connect(opts: ConnectOptions): Promise<void> {
-    this.disconnect()
+    await this.disconnect()
     const path = opts.serialPath
     if (!path) throw new Error('serialPath is required for RTU')
     const flow = (opts.flowControl ?? 'none') === 'rtscts'
@@ -159,31 +165,89 @@ export class SerialDriver implements ModbusDriver {
       : (opts.flowControl ?? 'none') === 'xonxoff'
         ? { rtscts: false, xon: true, xoff: true }
         : { rtscts: false, xon: false, xoff: false }
-    this.serialPort = await new Promise<any>((resolve, reject) => {
-      const sp = new this.portCtor({
-        path,
-        baudRate: opts.baudRate ?? 9600,
-        parity: (opts.parity ?? 'even') as any,
-        stopBits: (opts.stopBits ?? 1) as 1 | 2,
-        dataBits: (opts.dataBits ?? 8) as 8,
-        rtscts: flow.rtscts,
-        xon: flow.xon,
-        xoff: flow.xoff,
-        autoOpen: true,
-      }, (err) => { if (err) reject(err); else resolve(sp) })
-      // 打开后串口若有运行时错误（如被拔出），避免未处理 error 事件崩进程
-      sp.on('error', () => {})
-    })
+    this.serialPort = await this.openPort({
+      path,
+      baudRate: opts.baudRate ?? 9600,
+      parity: (opts.parity ?? 'even') as any,
+      stopBits: (opts.stopBits ?? 1) as 1 | 2,
+      dataBits: (opts.dataBits ?? 8) as 8,
+      rtscts: flow.rtscts,
+      xon: flow.xon,
+      xoff: flow.xoff,
+      autoOpen: true,
+    }, this.config.connectTimeoutMs ?? this.config.defaultTimeoutMs)
     this.ready = true
   }
 
-  disconnect(): void {
+  /**
+   * 打开串口并等待 open 回调，带超时兜底。
+   * 症状背景：CH340/CP2102 等 USB 转串口驱动可能出现「原生已占用串口，但 binding.open 的
+   * Promise 永不 settle」→ open 回调不来 → connect() 永久 pending → 轮询静默卡死。
+   * 这里：1) 超时 reject；2) 失败/超时时尽力关闭半开句柄；3) 不吞 error（open 阶段 reject，运行期告警）。
+   */
+  private openPort(options: Record<string, any>, timeoutMs: number): Promise<any> {
+    return new Promise<any>((resolve, reject) => {
+      let sp: any = null
+      let settled = false
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        // 超时：open 回调始终没来。此刻 sp 可能还没 open，close() 对未 open 的端口是 no-op，尽力而为；
+        // 若回调晚到会在下方二次 close。
+        if (sp) { try { sp.close() } catch { /* ignore */ } }
+        reject(new Error(`Serial port ${options.path} open timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+
+      try {
+        sp = new this.portCtor(options, (err: any) => {
+          clearTimeout(timer)
+          if (settled) {
+            // 超时之后回调才到：若此刻才打开成功，需关掉，避免句柄泄漏
+            if (!err && sp) { try { sp.close() } catch { /* ignore */ } }
+            return
+          }
+          settled = true
+          if (err) reject(err)
+          else resolve(sp)
+        })
+        // 打开成功后的运行期错误（如拔出）：不吞，告警留痕；读/写路径会各自再向上抛错
+        sp.on('error', (err: any) => {
+          if (!settled) {
+            settled = true
+            clearTimeout(timer)
+            reject(err)
+          } else {
+            const msg = err && err.message ? err.message : String(err)
+            this.onWarn('serial port runtime error: ' + msg)
+          }
+        })
+      } catch (e) {
+        if (!settled) {
+          settled = true
+          clearTimeout(timer)
+          reject(e)
+        }
+      }
+    })
+  }
+
+  async disconnect(): Promise<void> {
     this.ready = false
     this.clients.clear()
-    if (this.serialPort) {
-      try { this.serialPort.close() } catch { /* ignore */ }
-      this.serialPort = null
-    }
+    const sp = this.serialPort
+    this.serialPort = null
+    if (sp) await this.closePort(sp)
+  }
+
+  /** 等待串口真正关闭：serialport 的 close() 本身不返回 Promise（回调/事件式），这里用回调包一层并加超时兜底。 */
+  private closePort(sp: any): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let done = false
+      const finish = () => { if (!done) { done = true; resolve() } }
+      try { sp.close(finish) } catch { finish() }
+      const t = setTimeout(finish, 2000)
+      if (typeof t.unref === 'function') t.unref()
+    })
   }
 
   isConnected(): boolean { return this.ready }
@@ -233,6 +297,12 @@ export class SerialDriver implements ModbusDriver {
 
 export function apply(ctx: Context, config: Config): void {
   ctx.provide('modbus', {
-    createDriver(transport = 'tcp'): ModbusDriver { return transport === 'rtu' ? new SerialDriver(config) : new JsmodbusDriver(config) },
+    createDriver(transport = 'tcp'): ModbusDriver {
+      if (transport === 'rtu') {
+        const logger = ctx.logger('modbus')
+        return new SerialDriver(config, SerialPort, (msg) => logger.warn(msg))
+      }
+      return new JsmodbusDriver(config)
+    },
   })
 }

@@ -11,8 +11,8 @@ const TYPE_GROUPS = [
   { key: 'grp64LE', types: ['int64-LE', 'uint64-LE', 'float64-LE', 'hex64-LE', 'bin64-LE'] },
 ]
 
-interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number }
-type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number }
+interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; dataRetainSeconds: number | null }
+type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number; registers: Register[] }
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
@@ -61,8 +61,8 @@ const I18N: Record<Lang, Record<string, string>> = {
     appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
     appInfo: '应用信息', version: '版本', arch: '架构', persistence: '持久化',
-    dataMgmt: '数据管理', runLogs: '运行日志', clearLogs: '清空日志', logsCleared: '日志已清空',
-    newDeviceTitle: '新建设备', editDeviceTitle: '编辑设备', name: '名称', ip: 'IP 地址', port: '端口', transport: '连接方式', transportTcp: 'TCP 网口', transportRtu: 'RTU 串口', serialPath: '串口路径', baudRate: '波特率', parity: '校验位', stopBits: '停止位', dataBits: '数据位', flowControl: '流控', slaveIdLabel: '从站地址', cancel: '取消', add: '添加',
+    dataMgmt: '数据管理', runLogs: '运行日志', clearLogs: '清空日志', logsCleared: '日志已清空', retentionLabel: '历史保留', retentionSaved: '保留时长已保存', retentionForever: '永久',
+    newDeviceTitle: '新建设备', editDeviceTitle: '编辑设备', name: '名称', ip: 'IP 地址', port: '端口', transport: '连接方式', transportTcp: 'TCP 网口', transportRtu: 'RTU 串口', serialPath: '串口路径', baudRate: '波特率', parity: '校验位', stopBits: '停止位', dataBits: '数据位', flowControl: '流控', slaveIdLabel: '从站地址', pollIntervalLabel: '采样周期(ms)', cancel: '取消', add: '添加',
   },
   en: {
     brand: 'ProbeStation',
@@ -102,8 +102,8 @@ const I18N: Record<Lang, Record<string, string>> = {
     appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
     appInfo: 'App info', version: 'Version', arch: 'Architecture', persistence: 'Persistence',
-    dataMgmt: 'Data management', runLogs: 'Runtime logs', clearLogs: 'Clear logs', logsCleared: 'Logs cleared',
-    newDeviceTitle: 'New device', editDeviceTitle: 'Edit device', name: 'Name', ip: 'IP address', port: 'Port', transport: 'Transport', transportTcp: 'TCP', transportRtu: 'RTU serial', serialPath: 'Serial path', baudRate: 'Baud rate', parity: 'Parity', stopBits: 'Stop bits', dataBits: 'Data bits', flowControl: 'Flow control', slaveIdLabel: 'Slave ID', cancel: 'Cancel', add: 'Add',
+    dataMgmt: 'Data management', runLogs: 'Runtime logs', clearLogs: 'Clear logs', logsCleared: 'Logs cleared', retentionLabel: 'Data retention', retentionSaved: 'Retention saved', retentionForever: 'Forever',
+    newDeviceTitle: 'New device', editDeviceTitle: 'Edit device', name: 'Name', ip: 'IP address', port: 'Port', transport: 'Transport', transportTcp: 'TCP', transportRtu: 'RTU serial', serialPath: 'Serial path', baudRate: 'Baud rate', parity: 'Parity', stopBits: 'Stop bits', dataBits: 'Data bits', flowControl: 'Flow control', slaveIdLabel: 'Slave ID', pollIntervalLabel: 'Poll interval (ms)', cancel: 'Cancel', add: 'Add',
   },
 }
 
@@ -243,6 +243,8 @@ export default function App() {
   const [wsExpanded, setWsExpanded] = useState(true)
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
+  const selectedIdRef = useRef<number | null>(selectedId)
+  useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
 
   useEffect(() => {
     const apply = () => {
@@ -284,6 +286,7 @@ export default function App() {
       else if (msg.type === 'group-error') setGroupErrors((prev) => ({ ...prev, [msg.groupId]: msg.error }))
       else if (msg.type === 'group-ok') setGroupErrors((prev) => { const next = { ...prev }; delete next[msg.groupId]; return next })
       else if (msg.type === 'workspace/changed') { setSelectedId(null); setLatest({}); setGroupErrors({}); refreshDevices(); refreshWorkspace() }
+      else if (msg.type === 'config/changed') { refreshDevices(); if (selectedIdRef.current != null) refreshRegisters(selectedIdRef.current) }
     }
     return () => ws.close()
   }, [])
@@ -1109,7 +1112,22 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose }: {
   t: T; theme: Theme; setTheme: (v: Theme) => void; lang: Lang; setLang: (v: Lang) => void; onClose: () => void
 }) {
   const [msg, setMsg] = useState('')
+  const [retention, setRetention] = useState<number>(2592000)
+  const [customRetention, setCustomRetention] = useState('')
+  useEffect(() => { api.get('/api/retention').then((r: any) => setRetention(r.retention_seconds)).catch(() => {}) }, [])
   const clearLogs = async () => { await api.post('/api/logs/clear'); setMsg(t('logsCleared')) }
+  const retentionPresets: Array<[string, number]> = [
+    ['1h', 3600], ['6h', 21600], ['24h', 86400], ['7d', 604800], ['30d', 2592000], ['90d', 7776000], [t('retentionForever'), 0],
+  ]
+  const applyRetention = async (seconds: number) => {
+    setRetention(seconds)
+    try { await api.post('/api/retention', { retention_seconds: seconds }); setMsg(t('retentionSaved')) } catch { /* ignore */ }
+  }
+  const saveCustomRetention = async () => {
+    const s = Number(customRetention)
+    if (!Number.isInteger(s) || s < 0) return
+    await applyRetention(s)
+  }
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
@@ -1147,6 +1165,23 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose }: {
       <div className="settings-card">
         <h4>{t('dataMgmt')}</h4>
         <div className="setting-row">
+          <span>{t('retentionLabel')}</span>
+          <select value={retentionPresets.some(([, s]) => s === retention) ? String(retention) : 'custom'} onChange={(e) => {
+            if (e.target.value === 'custom') { setCustomRetention(String(retention)); return }
+            void applyRetention(Number(e.target.value))
+          }}>
+            {retentionPresets.map(([label, s]) => <option key={s} value={String(s)}>{label}</option>)}
+            <option value="custom">自定义 / Custom</option>
+          </select>
+        </div>
+        {!retentionPresets.some(([, s]) => s === retention) && (
+          <div className="setting-row">
+            <span>秒</span>
+            <input value={customRetention} onChange={(e) => setCustomRetention(e.target.value)} placeholder="秒数" />
+            <button className="btn" onClick={saveCustomRetention}>{t('add')}</button>
+          </div>
+        )}
+        <div className="setting-row">
           <span>{t('runLogs')}</span>
           <button className="btn" onClick={clearLogs}>{t('clearLogs')}</button>
         </div>
@@ -1168,7 +1203,8 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
   const [stopBits, setStopBits] = useState(initial ? String(initial.stopBits ?? 1) : '1')
   const [flowControl, setFlowControl] = useState(initial?.flowControl ?? 'none')
   const [slaveId, setSlaveId] = useState(initial ? String(initial.slaveId ?? 1) : '1')
-  const save = () => onSave({ name, ip, port: Number(port), transport, serialPath: transport === 'rtu' ? serialPath : '', baudRate: Number(baudRate) || 9600, parity, stopBits: Number(stopBits) || 1, dataBits: 8, flowControl, slaveId: Number(slaveId) || 1 })
+  const [pollInterval, setPollInterval] = useState(initial ? String(initial.pollIntervalMs ?? 1000) : '1000')
+  const save = () => onSave({ name, ip, port: Number(port), transport, serialPath: transport === 'rtu' ? serialPath : '', baudRate: Number(baudRate) || 9600, parity, stopBits: Number(stopBits) || 1, dataBits: 8, flowControl, slaveId: Number(slaveId) || 1, pollIntervalMs: Number(pollInterval) || 1000 })
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -1182,6 +1218,8 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
         </select>
         <label>{t('slaveIdLabel')}</label>
         <input value={slaveId} onChange={(e) => setSlaveId(e.target.value)} placeholder="1" />
+        <label>{t('pollIntervalLabel')}</label>
+        <input value={pollInterval} onChange={(e) => setPollInterval(e.target.value)} placeholder="1000" />
         {transport === 'tcp' ? (
           <>
             <label>{t('ip')}</label>

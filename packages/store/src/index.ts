@@ -4,18 +4,23 @@ import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 
 /** Cordis plugin name. */
 export const name = 'store'
+export const inject = ['config']
 
 /** Persistence plugin config, validated by schemastery. */
 export interface Config {
   dbPath: string
   flushIntervalMs: number
   flushBatchSize: number
+  retentionSeconds: number
+  retentionCheckMs: number
 }
 
 export const Config: z<Config> = z.object({
   dbPath: z.string(),
   flushIntervalMs: z.number().default(5000),
   flushBatchSize: z.number().default(1000),
+  retentionSeconds: z.number().default(2592000), // 全局默认保留 30 天；0 = 永久
+  retentionCheckMs: z.number().default(300000), // 清理间隔 5 分钟；0 = 仅启动时清理
 })
 
 /** 一个原始 16 位字采样，按 Modbus 地址键控（类型只是显示方式，解码在消费端做）。 */
@@ -38,15 +43,22 @@ export class DuckDBStore {
   private buffer: PollPoint[] = []
   private readonly latest = new Map<string, { rawValue: number; quality: string; timestamp: string }>()
   private flushTimer: NodeJS.Timeout | null = null
+  private retentionTimer: NodeJS.Timeout | null = null
   private dbPath: string
+  private retentionSeconds: number
 
-  constructor(private readonly config: Config) {
+  constructor(private readonly config: Config, private readonly cfg?: any) {
     this.dbPath = config.dbPath
+    this.retentionSeconds = config.retentionSeconds
     this.ready = this.init()
     this.ready.catch(() => {})
     if (this.config.flushIntervalMs > 0) {
       this.flushTimer = setInterval(() => { void this.flush() }, this.config.flushIntervalMs)
     }
+    if (this.config.retentionCheckMs > 0) {
+      this.retentionTimer = setInterval(() => { void this.cleanup() }, this.config.retentionCheckMs)
+    }
+    void this.ready.then(() => this.cleanup()).catch(() => {})
   }
 
   private async init(): Promise<DuckDBConnection> {
@@ -77,6 +89,7 @@ export class DuckDBStore {
     this.dbPath = dbPath
     this.ready = this.init()
     this.ready.catch(() => {})
+    void this.ready.then(() => this.cleanup()).catch(() => {})
   }
 
   /** Enqueue points into the hot buffer; auto-flush when the batch is full. */
@@ -98,6 +111,46 @@ export class DuckDBStore {
       `(${p.objectId}, ${p.address}, '${p.timestamp}', ${p.rawValue}, '${p.quality}')`,
     ).join(', ')
     await conn.run(`INSERT INTO poll_data VALUES ${rows}`)
+  }
+
+  /**
+   * 按保留策略清理过期数据：全局默认 + 设备级覆盖（data_retain_seconds）。
+   * 0 = 永久；设备字段 NULL = 跟随全局。设备覆盖优先于全局。
+   */
+  /** 全局保留时长（秒）。 */
+  getRetentionSeconds(): number { return this.retentionSeconds }
+
+  /** 运行时改全局保留时长（秒，0=永久），改完立即清理一次。 */
+  setRetentionSeconds(seconds: number): void {
+    this.retentionSeconds = Math.max(0, Math.floor(seconds))
+    void this.cleanup().catch(() => {})
+  }
+
+  async cleanup(): Promise<void> {
+    const conn = await this.ready
+    const global = this.retentionSeconds
+    const now = Date.now()
+    const overrideIds: number[] = []
+
+    if (this.cfg) {
+      for (const o of this.cfg.listObjects() as Array<{ id: number; dataRetainSeconds: number | null }>) {
+        if (o.dataRetainSeconds == null) continue
+        overrideIds.push(o.id)
+        if (o.dataRetainSeconds > 0) {
+          const cutoff = new Date(now - o.dataRetainSeconds * 1000).toISOString()
+          await conn.run(`DELETE FROM poll_data WHERE object_id = ${o.id} AND ts < '${cutoff}'`)
+        }
+      }
+    }
+
+    if (global > 0) {
+      const cutoff = new Date(now - global * 1000).toISOString()
+      if (overrideIds.length > 0) {
+        await conn.run(`DELETE FROM poll_data WHERE ts < '${cutoff}' AND object_id NOT IN (${overrideIds.join(',')})`)
+      } else {
+        await conn.run(`DELETE FROM poll_data WHERE ts < '${cutoff}'`)
+      }
+    }
   }
 
   /** Query the cold tier for all addresses of one object over a time range. */
@@ -150,5 +203,5 @@ export class DuckDBStore {
 
 /** Provide `ctx.store` to consumers (poller, api). */
 export function apply(ctx: Context, config: Config): void {
-  ctx.provide('store', new DuckDBStore(config))
+  ctx.provide('store', new DuckDBStore(config, (ctx as any).config))
 }

@@ -7,8 +7,10 @@
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `dbPath` | string | — | DuckDB 文件路径（`:memory:` 为内存库，测试用） |
-| `flushIntervalMs` | number | 5000 | 预留：定期 flush 间隔 |
+| `flushIntervalMs` | number | 5000 | 定期 flush 间隔 |
 | `flushBatchSize` | number | 1000 | 攒批到该数量自动 flush |
+| `retentionSeconds` | number | 2592000 | 全局历史保留时长（秒，30 天）；0 = 永久 |
+| `retentionCheckMs` | number | 300000 | 保留清理间隔（毫秒，5 分钟）；0 = 仅启动时清理 |
 
 ## 服务 `ctx.store`
 
@@ -46,6 +48,8 @@ interface Store {
   ```
 
 - 批量写入：`INSERT INTO poll_data VALUES (...), (...)`，达到 `flushBatchSize` 自动触发。
+- **数据保留**：`cleanup()` 按「全局 `retentionSeconds` + 设备级 `data_retain_seconds` 覆盖」删除过期数据
+  （启动时 + 每 `retentionCheckMs` 一次）；`setRetentionSeconds()/getRetentionSeconds()` 可运行时改全局并立即清理。
 
 ## 用法
 
@@ -60,6 +64,5 @@ const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T2
 ## 当前限制（TODO）
 
 - `flush()` 用字符串插值拼 SQL，需改为参数化（防注入，当前为内部数值可接受）。
-- `flushIntervalMs` 定时 flush 尚未实现（现仅满批 + 显式调用）。
-- 降采样 / 保留删除未实现（Phase 5）。
-- `getLatest()` 未按 objectId 过滤（当前 registerId 全局唯一，可接受）。
+- `flush()` 用字符串插值拼 SQL，仍需参数化。
+- 降采样（滚动聚合）未实现；保留删除已实现（见上）。

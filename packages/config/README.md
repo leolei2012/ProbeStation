@@ -45,6 +45,19 @@ update 接受 **camelCase**（`isActive`、`functionCode`、`startAddress`、`da
 
 `monitor_objects` / `register_groups` / `registers` 三张表，每台设备独立配置，无语义层字段。
 
+`monitor_objects` 关键列（PRD 08 新增）：
+
+| 列 | 说明 |
+|---|---|
+| `poll_interval_ms` | 设备级统一采样周期（毫秒，默认 1000，≥1；该设备所有组共用） |
+| `data_retain_seconds` | 设备级历史保留覆盖（秒，NULL=跟随全局，0=永久） |
+
+## 变更事件 `config/changed`
+
+- 所有元数据变更（object/group/register/rule 的增删改、toggle）都会触发 `ctx.emit('config/changed', { scope, id })`。
+- 上层（如 `api`）据此经 WebSocket 广播给前端，让 Web UI 与 MCP/任意调用方的改动保持同步。
+- 事件由构造器的 `onChange` 回调注入，独立构造 ConfigStore（测试）时不注入即为 no-op。
+
 ## 当前限制（TODO）
 
 - `isActive` 直接返回 SQLite 的 0/1，未转布尔。
