@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './styles.css'
-import { applyEndianness, baseType, decodeRegister, isBinType, isHexType, registerWidth, toBin, toHex } from '../../../packages/core/src/codec.ts'
+import { baseType, decodeRawByAddr, formatRawByAddr, formatRegisterValue, isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec.ts'
 
 const TYPE_GROUPS = [
   { key: 'grp16BE', types: ['int16', 'uint16', 'float16', 'hex16', 'bin16'] },
@@ -11,7 +11,8 @@ const TYPE_GROUPS = [
   { key: 'grp64LE', types: ['int64-LE', 'uint64-LE', 'float64-LE', 'hex64-LE', 'bin64-LE'] },
 ]
 
-interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number }
+interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number }
+type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number; registers: Register[] }
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
@@ -40,27 +41,28 @@ const I18N: Record<Lang, Record<string, string>> = {
     stopped: '已停用',
     connected: '已连接',
     disconnected: '未连接',
+    groupDisconnected: '已断开',
     connect: '连接',
     disconnect: '断开',
     pause: '暂停',
     resume: '启用', enable: '使能',
-    exportCsv: '导出 CSV',
+    export: '导出', exportTitle: '导出数据', exportCsv: '导出 CSV',
     exportXlsx: '导出 XLSX',
-    deleteDevice: '删除设备', deleteGroup: '删除分组',
+    deleteDevice: '删除设备', deleteGroup: '删除分组', confirmDeleteDevice: '确定删除设备「{name}」？其下所有分组与寄存器将一并删除。', confirmDeleteGroup: '确定删除分组「{name}」？其下所有寄存器将一并删除。',
     regCount: '{n} 个寄存器',
     colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入', valueCovered: '被上一个多字寄存器占用', valueShort: '数据不足（分组读取范围不够）', grp16BE: '16位 大端', grp16LE: '16位 小端', grp32BE: '32位 大端', grp32LE: '32位 小端', grp64BE: '64位 大端', grp64LE: '64位 小端',
-    write: '写', valuePh: '值',
+    write: '写', valuePh: '值', writeErrEmpty: '请输入值', writeErrNaN: '请输入有效数字', writeOk: '已写入',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
     tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件',
     groupCount: '{n} 组',
     newGroup: '新建分组', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', scanRate: '扫描间隔(ms)', edit: '编辑', save: '保存', fcReadHolding: '读保持寄存器', fcReadInput: '读输入寄存器',
-    histHint: '最近 1 小时数据', curveHint: '最近 1 小时曲线', firmwareHint: '固件升级功能规划中（OTA）',
+    histHint: '最近 1 小时数据', histStart: '开始时间', histEnd: '结束时间', histQuery: '查询', histLoading: '查询中…', histPrev: '上一页', histNext: '下一页', histTotal: '共 {n} 条', histPage: '第 {x}/{y} 页', noHistory: '暂无历史数据', colTime: '时间', histTruncated: '结果较多，仅显示最近 {n} 条', histIdle: '选择时间范围后点击「查询」', histEmpty: '该时间段暂无历史数据', histError: '查询失败', histRangeInvalid: '开始时间必须早于结束时间', histLast1h: '最近 1 小时', histLast6h: '最近 6 小时', histLast24h: '最近 24 小时', histToday: '今天', histQuick: '快捷', selectRegisters: '选择寄存器', selectAll: '全选', clearAll: '清空', histNoRegs: '未选择任何寄存器', curveHint: '最近 1 小时曲线', curveReset: '重置缩放', curveZoomHint: '框选放大：左上→右下拖拽；恢复：右下→左上拖拽', firmwareHint: '暂无固件，请先上传', fwUpload: '上传固件', fwAbort: '中止升级', fwState: '状态', fwUpgrade: '升级', fwUploaded: '固件已上传', fwUploadErr: '上传失败', fwStarted: '升级已发起', fwUpgradeErr: '升级发起失败',
     appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
     appInfo: '应用信息', version: '版本', arch: '架构', persistence: '持久化',
     dataMgmt: '数据管理', runLogs: '运行日志', clearLogs: '清空日志', logsCleared: '日志已清空',
-    newDeviceTitle: '新建设备', name: '名称', ip: 'IP 地址', port: '端口', cancel: '取消', add: '添加',
+    newDeviceTitle: '新建设备', editDeviceTitle: '编辑设备', name: '名称', ip: 'IP 地址', port: '端口', transport: '连接方式', transportTcp: 'TCP 网口', transportRtu: 'RTU 串口', serialPath: '串口路径', baudRate: '波特率', parity: '校验位', stopBits: '停止位', dataBits: '数据位', flowControl: '流控', slaveIdLabel: '从站地址', cancel: '取消', add: '添加',
   },
   en: {
     brand: 'ProbeStation',
@@ -80,42 +82,46 @@ const I18N: Record<Lang, Record<string, string>> = {
     stopped: 'Stopped',
     connected: 'Connected',
     disconnected: 'Disconnected',
+    groupDisconnected: 'Disconnected',
     connect: 'Connect',
     disconnect: 'Disconnect',
     pause: 'Pause',
     resume: 'Resume', enable: 'Enable',
-    exportCsv: 'Export CSV',
+    export: 'Export', exportTitle: 'Export data', exportCsv: 'Export CSV',
     exportXlsx: 'Export XLSX',
-    deleteDevice: 'Delete', deleteGroup: 'Delete group',
+    deleteDevice: 'Delete', deleteGroup: 'Delete group', confirmDeleteDevice: 'Delete device "{name}"? All its groups and registers will be removed.', confirmDeleteGroup: 'Delete group "{name}"? All its registers will be removed.',
     regCount: '{n} registers',
     colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write', valueCovered: 'Covered by previous register', valueShort: 'Not enough polled data', grp16BE: '16-bit BE', grp16LE: '16-bit LE', grp32BE: '32-bit BE', grp32LE: '32-bit LE', grp64BE: '64-bit BE', grp64LE: '64-bit LE',
-    write: 'Write', valuePh: 'value',
+    write: 'Write', valuePh: 'value', writeErrEmpty: 'Enter a value', writeErrNaN: 'Enter a valid number', writeOk: 'Written',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
     tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware',
     groupCount: '{n} groups',
     newGroup: 'New Group', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', scanRate: 'Scan rate(ms)', edit: 'Edit', save: 'Save', fcReadHolding: 'Read Holding', fcReadInput: 'Read Input',
-    histHint: 'Last 1 hour', curveHint: 'Last 1 hour', firmwareHint: 'Firmware upgrade (OTA) is planned',
+    histHint: 'Last 1 hour', histStart: 'Start', histEnd: 'End', histQuery: 'Query', histLoading: 'Loading…', histPrev: 'Prev', histNext: 'Next', histTotal: '{n} rows', histPage: 'Page {x}/{y}', noHistory: 'No history data', colTime: 'Time', histTruncated: 'Too many rows, showing latest {n}', histIdle: 'Select a time range and click Query', histEmpty: 'No history data in this range', histError: 'Query failed', histRangeInvalid: 'Start time must be before end time', histLast1h: 'Last 1h', histLast6h: 'Last 6h', histLast24h: 'Last 24h', histToday: 'Today', histQuick: 'Quick', selectRegisters: 'Select registers', selectAll: 'Select all', clearAll: 'Clear', histNoRegs: 'No registers selected', curveHint: 'Last 1 hour', curveReset: 'Reset zoom', curveZoomHint: 'Drag top-left→bottom-right to zoom in; drag back to reset', firmwareHint: 'No firmware uploaded yet', fwUpload: 'Upload firmware', fwAbort: 'Abort', fwState: 'State', fwUpgrade: 'Upgrade', fwUploaded: 'Firmware uploaded', fwUploadErr: 'Upload failed', fwStarted: 'Upgrade started', fwUpgradeErr: 'Upgrade failed',
     appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
     appInfo: 'App info', version: 'Version', arch: 'Architecture', persistence: 'Persistence',
     dataMgmt: 'Data management', runLogs: 'Runtime logs', clearLogs: 'Clear logs', logsCleared: 'Logs cleared',
-    newDeviceTitle: 'New device', name: 'Name', ip: 'IP address', port: 'Port', cancel: 'Cancel', add: 'Add',
+    newDeviceTitle: 'New device', editDeviceTitle: 'Edit device', name: 'Name', ip: 'IP address', port: 'Port', transport: 'Transport', transportTcp: 'TCP', transportRtu: 'RTU serial', serialPath: 'Serial path', baudRate: 'Baud rate', parity: 'Parity', stopBits: 'Stop bits', dataBits: 'Data bits', flowControl: 'Flow control', slaveIdLabel: 'Slave ID', cancel: 'Cancel', add: 'Add',
   },
 }
 
-const api = {
-  get: (url: string) => fetch(url).then((r) => r.json()),
-  post: (url: string, body?: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) }).then((r) => r.json()),
-  put: (url: string, body: unknown) => fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()),
-  del: (url: string) => fetch(url, { method: 'DELETE' }).then((r) => r.json()),
+async function request(url: string, options?: RequestInit): Promise<any> {
+  const r = await fetch(url, options)
+  if (!r.ok) {
+    let detail = ''
+    try { detail = await r.text() } catch { /* ignore */ }
+    throw new Error('HTTP ' + r.status + (detail ? ' ' + detail.slice(0, 200) : ''))
+  }
+  return r.json()
 }
 
-function formatNumber(d: number | bigint): string {
-  if (typeof d === 'bigint') return d.toString()
-  if (Number.isNaN(d)) return 'NaN'
-  if (!Number.isFinite(d)) return d > 0 ? 'Inf' : '-Inf'
-  return Number.isInteger(d) ? String(d) : String(Number(d.toPrecision(7)))
+const api = {
+  get: (url: string) => request(url),
+  post: (url: string, body?: unknown) => request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) }),
+  put: (url: string, body: unknown) => request(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  del: (url: string) => request(url, { method: 'DELETE' }),
 }
 
 function FolderIcon({ open }: { open: boolean }) {
@@ -182,19 +188,11 @@ function WorkspaceRow({ w, isCurrent, isExpanded, deviceCount, onToggle, onSwitc
 interface RegView { value: string; covered: boolean; invalid: boolean; writable: boolean }
 
 /** 按地址顺序合并多字：首字显示合并值、被覆盖字显示 —、数据不足显示 —（不可写）。 */
-function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue>): Map<number, RegView> {
+function buildRegViews(groups: DeviceGroup[], latest: Record<string, LatestValue>, objectId: number): Map<number, RegView> {
   const rawByAddr: Record<number, number> = {}
-  const regIds = new Set<number>()
-  for (const g of groups) for (const r of g.registers) {
-    regIds.add(r.id)
-    const v = latest[r.id]
-    if (v) rawByAddr[r.startAddress] = v.rawValue
-  }
+  const prefix = objectId + ':'
   for (const k of Object.keys(latest)) {
-    const n = Number(k)
-    if (regIds.has(n)) continue
-    const v = latest[n]
-    if (v && rawByAddr[n] === undefined) rawByAddr[n] = v.rawValue
+    if (k.startsWith(prefix)) rawByAddr[Number(k.slice(prefix.length))] = latest[k].rawValue
   }
   const views = new Map<number, RegView>()
   for (const g of groups) {
@@ -221,8 +219,7 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<number, LatestValue
         continue
       }
       const raw = isHexType(r.dataType) || isBinType(r.dataType)
-      const dispWords = applyEndianness(r.dataType, words)
-      const value = isHexType(r.dataType) ? dispWords.map(toHex).join(' ') : isBinType(r.dataType) ? dispWords.map(toBin).join(' ') : formatNumber(decodeRegister(r.dataType, words))
+      const value = formatRegisterValue(r.dataType, words)
       views.set(r.id, { value, covered: false, invalid: false, writable: !raw })
       consumedUpTo = end
     }
@@ -238,7 +235,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('ps-collapsed') === '1')
   const [groups, setGroups] = useState<DeviceGroup[]>([])
-  const [latest, setLatest] = useState<Record<number, LatestValue>>({})
+  const [latest, setLatest] = useState<Record<string, LatestValue>>({})
   const [groupErrors, setGroupErrors] = useState<Record<number, string>>({})
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null)
   const [showWorkspace, setShowWorkspace] = useState(false)
@@ -261,8 +258,8 @@ export default function App() {
   useEffect(() => { localStorage.setItem('ps-lang', lang) }, [lang])
   useEffect(() => { localStorage.setItem('ps-collapsed', collapsed ? '1' : '0') }, [collapsed])
 
-  const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices) }, [])
-  const refreshWorkspace = useCallback(() => { api.get('/api/workspace').then(setWorkspace) }, [])
+  const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices).catch(() => {}) }, [])
+  const refreshWorkspace = useCallback(() => { api.get('/api/workspace').then(setWorkspace).catch(() => {}) }, [])
   const refreshRegisters = useCallback((id: number) => {
     api.get('/api/monitor_objects/' + id + '/groups').then(async (gs: Array<{ id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number }>) => {
       const out: DeviceGroup[] = []
@@ -271,7 +268,7 @@ export default function App() {
         out.push({ id: g.id, name: g.name, slaveId: g.slaveId, functionCode: g.functionCode, startAddress: g.startAddress, quantity: g.quantity, pollIntervalMs: g.pollIntervalMs, isActive: g.isActive, registers: regs })
       }
       setGroups(out)
-    })
+    }).catch(() => {})
   }, [])
 
   useEffect(() => { refreshDevices(); refreshWorkspace() }, [refreshDevices, refreshWorkspace])
@@ -282,7 +279,7 @@ export default function App() {
       const msg = JSON.parse(e.data)
       if (msg.type === 'latest') setLatest(msg.data)
       else if (msg.type === 'poller/result') {
-        setLatest((prev) => { const next = { ...prev }; for (const p of msg.points) next[p.registerId] = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp }; return next })
+        setLatest((prev) => { const next = { ...prev }; for (const p of msg.points) next[p.objectId + ':' + p.address] = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp }; return next })
       }
       else if (msg.type === 'group-error') setGroupErrors((prev) => ({ ...prev, [msg.groupId]: msg.error }))
       else if (msg.type === 'group-ok') setGroupErrors((prev) => { const next = { ...prev }; delete next[msg.groupId]; return next })
@@ -291,17 +288,26 @@ export default function App() {
     return () => ws.close()
   }, [])
 
-  const addDevice = useCallback(async (name: string, ip: string, port: number) => {
-    if (!name || !ip) return
-    await api.post('/api/monitor_objects', { name, ip, port })
+  const addDevice = useCallback(async (f: DeviceFields) => {
+    if (!f.name || (f.transport !== 'rtu' && !f.ip)) return
+    await api.post('/api/monitor_objects', f)
     setShowAdd(false); refreshDevices()
   }, [refreshDevices])
   const toggleDevice = useCallback(async (id: number) => { await api.post('/api/monitor_objects/' + id + '/toggle'); refreshDevices() }, [refreshDevices])
-  const deleteDevice = useCallback(async (id: number) => {
-    await api.del('/api/monitor_objects/' + id)
-    if (selectedId === id) setSelectedId(null)
+  const editDevice = useCallback(async (id: number, f: DeviceFields) => {
+    if (!f.name) return
+    await api.put('/api/monitor_objects/' + id, f)
     refreshDevices()
-  }, [selectedId, refreshDevices])
+  }, [refreshDevices])
+  const deleteDevice = useCallback(async (id: number) => {
+    const device = devices.find((d) => d.id === id)
+    if (!window.confirm(t('confirmDeleteDevice').replace('{name}', device?.name ?? String(id)))) return
+    try {
+      await api.del('/api/monitor_objects/' + id)
+      if (selectedId === id) setSelectedId(null)
+      refreshDevices()
+    } catch { /* 忽略，避免未处理 rejection */ }
+  }, [selectedId, refreshDevices, devices, t])
 
   const switchWorkspace = useCallback(async (path: string) => {
     await api.post('/api/workspace/switch', { path })
@@ -356,12 +362,13 @@ export default function App() {
                     {isExpanded && (
                       <div className="ws-children">
                         <div className="device-list">
+                          <button className="btn new-device-btn" onClick={() => setShowAdd(true)}>{t('newDevice')}</button>
                           {devices.map((d) => (
                             <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => setSelectedId(d.id)}>
                               <span className={'device-dot' + (d.isActive ? ' on' : '')} />
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div className="device-name">{d.name}</div>
-                                <div className="device-sub">{d.ip}:{d.port}</div>
+                                <div className="device-sub">{d.transport === 'rtu' ? (d.serialPath || 'RTU') : (d.ip + ':' + d.port)}</div>
                               </div>
                               <button className="device-del" onClick={(e) => { e.stopPropagation(); deleteDevice(d.id) }}>×</button>
                             </div>
@@ -386,26 +393,27 @@ export default function App() {
 
       <main className="main">
         {selected
-          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} groupErrors={groupErrors} onToggle={toggleDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
-          : <EmptyState t={t} />}
+          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} groupErrors={groupErrors} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+          : <EmptyState t={t} onAdd={() => setShowAdd(true)} />}
       </main>
 
-      {showAdd && <AddDeviceModal t={t} onClose={() => setShowAdd(false)} onAdd={addDevice} />}
+      {showAdd && <DeviceModal t={t} initial={null} onClose={() => setShowAdd(false)} onSave={addDevice} />}
       {showWorkspace && <WorkspaceModal t={t} workspace={workspace} onClose={() => setShowWorkspace(false)} onSwitch={switchWorkspace} />}
       {showSettings && <SettingsModal t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} onClose={() => setShowSettings(false)} />}
     </div>
   )
 }
 
-function EmptyState({ t }: { t: T }) {
-  return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div></div>
+function EmptyState({ t, onAdd }: { t: T; onAdd: () => void }) {
+  return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div><button className="btn primary" onClick={onAdd}>{t('newDevice')}</button></div>
 }
 
-function DeviceView({ t, device, groups, latest, groupErrors, onToggle, onDelete, onRefresh }: {
-  t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>; groupErrors: Record<number, string>
-  onToggle: (id: number) => void; onDelete: (id: number) => void; onRefresh: (id: number) => void
+function DeviceView({ t, device, groups, latest, groupErrors, onToggle, onEdit, onDelete, onRefresh }: {
+  t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
+  onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => void; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
+  const [showEdit, setShowEdit] = useState(false)
   const registers = groups.flatMap((g) => g.registers)
   return (
     <div>
@@ -414,14 +422,16 @@ function DeviceView({ t, device, groups, latest, groupErrors, onToggle, onDelete
         <span className={'status-badge' + (device.isActive ? ' on' : '')}>{device.isActive ? t('connected') : t('disconnected')}</span>
         <div style={{ flex: 1 }} />
         <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? t('disconnect') : t('connect')}</button>
+        <button className="btn" onClick={() => setShowEdit(true)}>{t('edit')}</button>
         <button className="btn danger" onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
       </div>
-      <div className="main-sub">{device.ip}:{device.port} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
+      <div className="main-sub">{device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
       <TabBar tabs={[t('tabLive'), t('tabHistory'), t('tabCurve'), t('tabFirmware')]} active={tab} onChange={setTab} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} onRefresh={() => onRefresh(device.id)} />}
-      {tab === 1 && <HistoryTable t={t} device={device} registers={registers} />}
-      {tab === 2 && <CurveChart t={t} device={device} registers={registers} />}
-      {tab === 3 && <FirmwareView t={t} />}
+      {tab === 1 && <HistoryTable t={t} device={device} groups={groups} registers={registers} />}
+      {tab === 2 && <CurveChart t={t} device={device} groups={groups} registers={registers} />}
+      {tab === 3 && <FirmwareView t={t} device={device} />}
+      {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={(f) => { onEdit(device.id, f); setShowEdit(false) }} />}
     </div>
   )
 }
@@ -437,14 +447,18 @@ function TabBar({ tabs, active, onChange }: { tabs: string[]; active: number; on
 }
 
 function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
-  t: T; device: Device; groups: DeviceGroup[]; latest: Record<number, LatestValue>; groupErrors: Record<number, string>; onRefresh: () => void
+  t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; onRefresh: () => void
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
-  const deleteGroup = async (id: number) => { await api.del('/api/groups/' + id); onRefresh() }
-  const views = buildRegViews(groups, latest)
+  const deleteGroup = async (id: number) => {
+    const g = groups.find((gg) => gg.id === id)
+    if (!window.confirm(t('confirmDeleteGroup').replace('{name}', g?.name ?? String(id)))) return
+    try { await api.del('/api/groups/' + id); onRefresh() } catch { /* 忽略 */ }
+  }
+  const views = buildRegViews(groups, latest, device.id)
   return (
     <div>
       <div className="toolbar">
@@ -456,7 +470,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             <button className="group-collapse" onClick={() => toggleCollapse(g.id)}>{collapsed.has(g.id) ? '▸' : '▾'}</button>
             <span className="group-name" style={{ cursor: 'pointer' }} onClick={() => toggleCollapse(g.id)}>{g.name}</span>
             <span className="kv">FC{g.functionCode} · 从站 {g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个 · {g.pollIntervalMs}ms</span>
-            {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id]}</span>}
+            {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id] === 'Disconnected' ? t('groupDisconnected') : groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
             <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>
             <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>
@@ -539,15 +553,22 @@ function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose
   const [value, setValue] = useState('')
   const [method, setMethod] = useState<'single' | 'multiple'>('multiple')
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [ok, setOk] = useState(false)
   const width = registerWidth(reg.dataType)
   const base = baseType(reg.dataType)
   const is64 = base === 'int64' || base === 'uint64'
   const write = async () => {
-    if (value === '') return
-    setBusy(true)
+    if (value.trim() === '') { setErr(t('writeErrEmpty')); return }
+    const num = is64 ? value : Number(value)
+    if (!is64 && (Number.isNaN(num) || !Number.isFinite(num))) { setErr(t('writeErrNaN')); return }
+    setBusy(true); setErr(null)
     try {
-      await api.post('/api/registers/' + reg.id + '/write', { value: is64 ? value : Number(value), method: width > 1 ? 'multiple' : method })
-      onSaved()
+      await api.post('/api/registers/' + reg.id + '/write', { value: num, method: width > 1 ? 'multiple' : method })
+      setOk(true)
+      setTimeout(() => onSaved(), 600)
+    } catch (e) {
+      setErr((e as any)?.message ?? String(e))
     } finally { setBusy(false) }
   }
   return (
@@ -556,15 +577,17 @@ function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose
         <h3>{t('writeReg')}</h3>
         <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}{width > 1 ? '（' + width + ' 寄存器）' : ''}</div>
         <label>{t('valuePh')}</label>
-        <input value={value} onChange={(e) => setValue(e.target.value)} autoFocus placeholder={t('valuePh')} />
+        <input value={value} onChange={(e) => { setValue(e.target.value); setErr(null); setOk(false) }} autoFocus placeholder={t('valuePh')} />
         <label>{t('functionCode')}</label>
         <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')} disabled={width > 1}>
           <option value="multiple">{t('fc16')}</option>
           {width === 1 && <option value="single">{t('fc06')}</option>}
         </select>
+        {err && <div className="write-msg error">{err}</div>}
+        {ok && <div className="write-msg ok">{t('writeOk')}</div>}
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" onClick={write} disabled={busy}>{t('write')}</button>
+          <button className="btn primary" onClick={write} disabled={busy || ok}>{ok ? t('writeOk') : t('write')}</button>
         </div>
       </div>
     </div>
@@ -607,77 +630,479 @@ function TypeCell({ t, reg, available, disabled, onRefresh }: { t: T; reg: Regis
   )
 }
 
-function HistoryTable({ t, device, registers }: { t: T; device: Device; registers: Register[] }) {
-  const [rows, setRows] = useState<Array<{ ts: string; values: Record<number, number> }>>([])
-  useEffect(() => {
-    const start = new Date(Date.now() - 3600_000).toISOString()
-    const end = new Date().toISOString()
-    api.get('/api/data/object?object_id=' + device.id + '&start=' + start + '&end=' + end).then((pts: Array<{ ts: string; registerId: number; rawValue: number }>) => {
-      const map = new Map<string, Record<number, number>>()
-      for (const p of pts) { if (!map.has(p.ts)) map.set(p.ts, {}); map.get(p.ts)![p.registerId] = p.rawValue }
-      setRows([...map.entries()].map(([ts, values]) => ({ ts, values })))
-    })
-  }, [device.id])
-  const exportCsv = () => { const now = new Date().toISOString(); window.open('/api/export/csv?object_id=' + device.id + '&start=2000-01-01T00:00:00Z&end=' + now) }
-  const exportXlsx = () => { const now = new Date().toISOString(); window.open('/api/export/xlsx?object_id=' + device.id + '&start=2000-01-01T00:00:00Z&end=' + now) }
-  return (
-    <div>
-      <div className="chart-hint">{t('histHint')} · <button className="btn" onClick={exportCsv}>{t('exportCsv')}</button> <button className="btn" onClick={exportXlsx}>{t('exportXlsx')}</button></div>
-      <table className="reg">
-        <thead><tr><th>时间</th>{registers.map(r => <th key={r.id}>{r.alias ?? r.id}</th>)}</tr></thead>
-        <tbody>
-          {rows.slice(-60).map((row, i) => (
-            <tr key={i}><td className="kv">{row.ts}</td>{registers.map(r => <td key={r.id} className="value">{row.values[r.id] ?? '—'}</td>)}</tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={registers.length + 1} className="kv">暂无历史数据</td></tr>}
-        </tbody>
-      </table>
-    </div>
-  )
+function useRegisterSelection(deviceId: number, registers: Register[]): [Set<number>, (s: Set<number>) => void] {
+  const key = 'ps-regs-' + deviceId
+  const [selected, setSelected] = useState<Set<number>>(() => {
+    try {
+      const raw = localStorage.getItem(key)
+      if (raw == null) return new Set(registers.map(r => r.id))
+      const ids = JSON.parse(raw) as number[]
+      const valid = new Set(registers.map(r => r.id))
+      return new Set(ids.filter(id => valid.has(id)))
+    } catch { return new Set(registers.map(r => r.id)) }
+  })
+  const update = useCallback((s: Set<number>) => {
+    setSelected(s)
+    localStorage.setItem(key, JSON.stringify([...s]))
+  }, [key])
+  return [selected, update]
 }
 
-const CHART_COLORS = ['#4176e6', '#22c55e', '#f59e0b', '#ec1313', '#8b5cf6', '#06b6d4', '#f97316', '#ec4899', '#84cc16', '#14b8a6']
-
-function CurveChart({ t, device, registers }: { t: T; device: Device; registers: Register[] }) {
-  const [pts, setPts] = useState<Array<{ ts: string; registerId: number; rawValue: number }>>([])
-  useEffect(() => {
-    const start = new Date(Date.now() - 3600_000).toISOString()
-    const end = new Date().toISOString()
-    api.get('/api/data/object?object_id=' + device.id + '&start=' + start + '&end=' + end).then(setPts)
-  }, [device.id])
-
-  const W = 900, H = 320, P = 36
-  const byReg = new Map<number, Array<[number, number]>>()
-  for (const p of pts) {
-    const arr = byReg.get(p.registerId) ?? []
-    arr.push([new Date(p.ts).getTime(), p.rawValue])
-    byReg.set(p.registerId, arr)
-  }
-  const series = [...byReg.entries()].map(([id, arr], i) => ({ id, color: CHART_COLORS[i % CHART_COLORS.length], arr: arr.sort((a, b) => a[0] - b[0]) }))
-  const allT = pts.map(p => new Date(p.ts).getTime())
-  const allV = pts.map(p => p.rawValue)
-  if (pts.length === 0) return <div className="chart-wrap"><div className="chart-hint">{t('curveHint')} — 暂无数据</div></div>
-  const minT = Math.min(...allT), maxT = Math.max(...allT), minV = Math.min(...allV), maxV = Math.max(...allV)
-  const x = (ts: number) => P + (maxT === minT ? 0 : (ts - minT) / (maxT - minT)) * (W - 2 * P)
-  const y = (v: number) => H - P - (maxV === minV ? 0 : (v - minV) / (maxV - minV)) * (H - 2 * P)
-  const path = (arr: Array<[number, number]>) => arr.map(([ts, v], i) => (i === 0 ? 'M' : 'L') + x(ts).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ')
+function RegisterSelectModal({ t, groups, initial, onClose, onApply }: {
+  t: T; groups: DeviceGroup[]; initial: Set<number>; onClose: () => void; onApply: (s: Set<number>) => void
+}) {
+  const [draft, setDraft] = useState<Set<number>>(() => new Set(initial))
+  const toggle = (id: number) => setDraft((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  const allIds = groups.flatMap(g => g.registers).map(r => r.id)
   return (
-    <div className="chart-wrap">
-      <div className="chart-hint">{t('curveHint')}</div>
-      <svg viewBox={'0 0 ' + W + ' ' + H} preserveAspectRatio="none" style={{ width: '100%', height: 320 }}>
-        <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="var(--border-2)" strokeWidth="1" />
-        <line x1={P} y1={P} x2={P} y2={H - P} stroke="var(--border-2)" strokeWidth="1" />
-        {series.map(s => <path key={s.id} d={path(s.arr)} fill="none" stroke={s.color} strokeWidth="1.6" />)}
-      </svg>
-      <div className="legend">
-        {series.map(s => { const r = registers.find(rr => rr.id === s.id); return <span key={s.id} className="legend-item"><span className="legend-swatch" style={{ background: s.color }} />{r?.alias ?? s.id}</span> })}
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal reg-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span>{t('selectRegisters')}</span>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="reg-modal-actions">
+          <button className="btn" onClick={() => setDraft(new Set(allIds))}>{t('selectAll')}</button>
+          <button className="btn" onClick={() => setDraft(new Set())}>{t('clearAll')}</button>
+        </div>
+        <div className="reg-list">
+          {groups.map(g => (
+            <div key={g.id} className="reg-group">
+              <div className="reg-group-name">{g.name}</div>
+              {g.registers.map(r => (
+                <label key={r.id} className="reg-item">
+                  <input type="checkbox" checked={draft.has(r.id)} onChange={() => toggle(r.id)} />
+                  <span className="reg-item-alias">{r.alias ?? ('reg' + r.id)}</span>
+                  <span className="kv">{r.startAddress} · {r.dataType}</span>
+                </label>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>{t('cancel')}</button>
+          <button className="btn primary" onClick={() => onApply(draft)}>{t('save')}</button>
+        </div>
       </div>
     </div>
   )
 }
 
-function FirmwareView({ t }: { t: T }) {
-  return <div className="chart-wrap firmware-card"><div className="chart-hint">{t('firmwareHint')}</div></div>
+function RegisterSelectButton({ t, groups, selected, onApply }: {
+  t: T; groups: DeviceGroup[]; selected: Set<number>; onApply: (s: Set<number>) => void
+}) {
+  const [show, setShow] = useState(false)
+  const total = groups.reduce((n, g) => n + g.registers.length, 0)
+  return (
+    <>
+      <button className="btn" onClick={() => setShow(true)}>{t('selectRegisters')} ({selected.size}/{total})</button>
+      {show && <RegisterSelectModal t={t} groups={groups} initial={selected} onClose={() => setShow(false)} onApply={(s) => { onApply(s); setShow(false) }} />}
+    </>
+  )
+}
+
+function HistoryTable({ t, device, groups, registers }: { t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
+  const toInput = (d: Date) => {
+    const p = (n: number) => String(n).padStart(2, '0')
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes())
+  }
+  const [start, setStart] = useState(() => toInput(new Date(Date.now() - 3600_000)))
+  const [end, setEnd] = useState(() => toInput(new Date()))
+  const [rows, setRows] = useState<Array<{ ts: string; values: Record<number, string> }>>([])
+  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const [showExport, setShowExport] = useState(false)
+  const [page, setPage] = useState(1)
+  const [selected, setSelected] = useRegisterSelection(device.id, registers)
+  const selectedRegisters = registers.filter(r => selected.has(r.id))
+
+  // 设备切换时重置为默认「最近 1 小时」，但不自动查询（用户点「查询」才拉数据）
+  useEffect(() => {
+    setStart(toInput(new Date(Date.now() - 3600_000)))
+    setEnd(toInput(new Date()))
+    setRows([])
+    setPage(1)
+    setStatus('idle')
+    setError(null)
+  }, [device.id])
+
+  const rangeInvalid = Boolean(start && end) && new Date(start) >= new Date(end)
+  const canQuery = Boolean(start && end) && !rangeInvalid
+
+  const applyPreset = (kind: '1h' | '6h' | '24h' | 'today') => {
+    const now = new Date()
+    let s: Date
+    if (kind === 'today') s = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+    else { const h = kind === '1h' ? 1 : kind === '6h' ? 6 : 24; s = new Date(now.getTime() - h * 3600_000) }
+    setStart(toInput(s))
+    setEnd(toInput(now))
+  }
+
+  const query = useCallback(async () => {
+    if (!canQuery) return
+    setStatus('loading')
+    try {
+      const startIso = new Date(start).toISOString()
+      const endIso = new Date(end).toISOString()
+      const pts: Array<{ ts: string; address: number; rawValue: number }> = await api.get('/api/data/object?object_id=' + device.id + '&start=' + startIso + '&end=' + endIso)
+      const rawByTs = new Map<string, Record<number, number>>()
+      for (const p of pts) { if (!rawByTs.has(p.ts)) rawByTs.set(p.ts, {}); rawByTs.get(p.ts)![p.address] = p.rawValue }
+      const nextRows: Array<{ ts: string; values: Record<number, string> }> = []
+      for (const [ts, rawByAddr] of rawByTs) {
+        const formatted = formatRawByAddr(registers, rawByAddr)
+        const values: Record<number, string> = {}
+        for (const r of selectedRegisters) values[r.id] = formatted.get(r.id) ?? '—'
+        nextRows.push({ ts, values })
+      }
+      setRows(nextRows)
+      setPage(1)
+      setStatus('done')
+    } catch (e) {
+      setError((e as any)?.message ?? String(e))
+      setStatus('error')
+    }
+  }, [device.id, start, end, canQuery, selected])
+
+  const doExport = (fmt: 'csv' | 'xlsx') => {
+    if (!canQuery) return
+    const ids = selectedRegisters.map(r => r.id).join(',')
+    window.open('/api/export/' + fmt + '?object_id=' + device.id + '&start=' + new Date(start).toISOString() + '&end=' + new Date(end).toISOString() + (ids ? '&register_ids=' + ids : ''))
+  }
+  const PAGE_SIZE = 200
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const currentPage = Math.min(Math.max(1, page), totalPages)
+  const shown = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  return (
+    <div>
+      <div className="toolbar">
+        <label className="hist-label">{t('histStart')}</label>
+        <input className="hist-input" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
+        <label className="hist-label">{t('histEnd')}</label>
+        <input className="hist-input" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} />
+        <button className="btn primary" onClick={() => query()} disabled={status === 'loading' || !canQuery}>{status === 'loading' ? t('histLoading') : t('histQuery')}</button>
+        <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
+        <div style={{ flex: 1 }} />
+        <button className="btn" onClick={() => setShowExport(true)} disabled={!canQuery}>{t('export')}</button>
+      </div>
+      <div className="hist-quick">
+        <span className="hist-label">{t('histQuick')}</span>
+        <div className="seg">
+          <button onClick={() => applyPreset('1h')}>{t('histLast1h')}</button>
+          <button onClick={() => applyPreset('6h')}>{t('histLast6h')}</button>
+          <button onClick={() => applyPreset('24h')}>{t('histLast24h')}</button>
+          <button onClick={() => applyPreset('today')}>{t('histToday')}</button>
+        </div>
+      </div>
+      {showExport && <ExportModal t={t} onClose={() => setShowExport(false)} onPick={(fmt) => { doExport(fmt); setShowExport(false) }} />}
+      {rangeInvalid && <div className="hist-empty warn">{t('histRangeInvalid')}</div>}
+      {!rangeInvalid && status === 'idle' && <div className="hist-empty">{t('histIdle')}</div>}
+      {!rangeInvalid && status === 'done' && rows.length === 0 && <div className="hist-empty">{t('histEmpty')}</div>}
+      {!rangeInvalid && status === 'error' && <div className="hist-empty warn">{t('histError')} {error}</div>}
+      {!rangeInvalid && status === 'done' && rows.length > 0 && (
+        <>
+          {selectedRegisters.length === 0 ? (
+            <div className="hist-empty">{t('histNoRegs')}</div>
+          ) : (
+            <>
+              <table className="reg hist-table">
+                <thead><tr><th>{t('colTime')}</th>{selectedRegisters.map(r => <th key={r.id}>{r.alias ?? r.id}</th>)}</tr></thead>
+                <tbody>
+                  {shown.map((row, i) => (
+                    <tr key={i}><td className="kv">{row.ts}</td>{selectedRegisters.map(r => <td key={r.id} className="value">{row.values[r.id] ?? '—'}</td>)}</tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="pager">
+                <span className="kv">{t('histTotal').replace('{n}', String(rows.length))}</span>
+                <button className="btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>{t('histPrev')}</button>
+                <span className="kv">{t('histPage').replace('{x}', String(currentPage)).replace('{y}', String(totalPages))}</span>
+                <button className="btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>{t('histNext')}</button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function ExportModal({ t, onClose, onPick }: { t: T; onClose: () => void; onPick: (fmt: 'csv' | 'xlsx') => void }) {
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{t('exportTitle')}</h3>
+        <div className="export-options">
+          <button className="btn primary" onClick={() => onPick('csv')}>{t('exportCsv')}</button>
+          <button className="btn primary" onClick={() => onPick('xlsx')}>{t('exportXlsx')}</button>
+        </div>
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>{t('cancel')}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const CHART_COLORS = ['#4176e6', '#22c55e', '#f59e0b', '#ec1313', '#8b5cf6', '#06b6d4', '#f97316', '#ec4899', '#84cc16', '#14b8a6']
+function niceStep(range: number, target: number): number {
+  const rough = range / target
+  const pow = 10 ** Math.floor(Math.log10(rough))
+  const n = rough / pow
+  const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10
+  return nice * pow
+}
+function yTicks(min: number, max: number, count = 5): number[] {
+  if (min === max) return [min]
+  const step = niceStep(max - min, count)
+  const start = Math.ceil(min / step) * step
+  const n = Math.floor((max - start) / step) + 1
+  const out: number[] = []
+  for (let i = 0; i < n; i++) out.push(Number((start + i * step).toFixed(10)))
+  return out
+}
+function tickNum(v: number): string {
+  const r = Math.abs(v) < 1e-9 ? 0 : v
+  if (Number.isInteger(r)) return String(r)
+  const a = Math.abs(r)
+  if (a !== 0 && (a >= 100000 || a < 0.001)) return r.toExponential(1)
+  return String(Number(r.toFixed(2)))
+}
+function timeTicks(min: number, max: number, count = 6): number[] {
+  if (min === max) return [min]
+  const range = max - min
+  const steps = [1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 180000, 240000, 300000, 600000, 900000, 1200000, 1800000, 3600000, 7200000, 10800000, 21600000, 43200000, 86400000, 172800000, 604800000]
+  const step = steps.find(s => range / s <= count) ?? 86400000
+  const start = Math.ceil(min / step) * step
+  const n = Math.floor((max - start) / step) + 1
+  const out: number[] = []
+  for (let i = 0; i < n; i++) out.push(start + i * step)
+  return out
+}
+function tickTime(ts: number, span: number): string {
+  const d = new Date(ts)
+  const p = (n: number) => String(n).padStart(2, '0')
+  if (span >= 86400000) return (d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())
+}
+
+
+function CurveChart({ t, device, groups, registers }: { t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
+  const [pts, setPts] = useState<Array<{ ts: string; address: number; rawValue: number }>>([])
+  const [selected, setSelected] = useRegisterSelection(device.id, registers)
+  const [view, setView] = useState<{ t0: number; t1: number; v0: number; v1: number } | null>(null)
+  const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  const [size, setSize] = useState({ w: 900, h: 320 })
+  const svgRef = useRef<SVGSVGElement | null>(null)
+
+  const hasData = pts.length > 0
+  const showChart = hasData && selected.size > 0
+
+  useEffect(() => {
+    setView(null)
+    const start = new Date(Date.now() - 3600_000).toISOString()
+    const end = new Date().toISOString()
+    api.get('/api/data/object?object_id=' + device.id + '&start=' + start + '&end=' + end).then(setPts).catch(() => {})
+  }, [device.id])
+
+  // SVG 挂载后测量实际像素尺寸，用它当 viewBox（1:1 → 文字不拉伸）
+  useEffect(() => {
+    if (!showChart) return
+    const el = svgRef.current
+    if (!el) return
+    const measure = () => {
+      const r = el.getBoundingClientRect()
+      if (r.width > 10 && r.height > 10) setSize({ w: r.width, h: r.height })
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [showChart])
+
+  const W = size.w, H = size.h
+  const L = 60, R = 14, T = 12, B = 28 // 四周留白：左=Y 轴标签，下=X 轴标签
+  const rawByTs = new Map<number, Record<number, number>>()
+  for (const p of pts) {
+    const t = new Date(p.ts).getTime()
+    if (!rawByTs.has(t)) rawByTs.set(t, {})
+    rawByTs.get(t)![p.address] = p.rawValue
+  }
+  const byReg = new Map<number, Array<[number, number]>>()
+  for (const [t, rawByAddr] of rawByTs) {
+    const decoded = decodeRawByAddr(registers, rawByAddr)
+    for (const r of registers) {
+      if (!selected.has(r.id)) continue
+      const v = decoded.get(r.id)
+      if (v == null) continue
+      const arr = byReg.get(r.id) ?? []
+      arr.push([t, typeof v === 'bigint' ? Number(v) : v])
+      byReg.set(r.id, arr)
+    }
+  }
+  const series = [...byReg.entries()].map(([id, arr], i) => ({ id, color: CHART_COLORS[i % CHART_COLORS.length], arr: arr.sort((a, b) => a[0] - b[0]) }))
+  const allT = series.flatMap(s => s.arr.map(p => p[0]))
+  const allV = series.flatMap(s => s.arr.map(p => p[1]))
+  const hasSeries = allT.length > 0
+  const fullMinT = hasSeries ? Math.min(...allT) : 0, fullMaxT = hasSeries ? Math.max(...allT) : 1
+  const fullMinV = hasSeries ? Math.min(...allV) : 0, fullMaxV = hasSeries ? Math.max(...allV) : 1
+  const tMin = view?.t0 ?? fullMinT, tMax = view?.t1 ?? fullMaxT, vMin = view?.v0 ?? fullMinV, vMax = view?.v1 ?? fullMaxV
+  const plotW = W - L - R, plotH = H - T - B
+  const x = (ts: number) => L + (tMax === tMin ? 0 : (ts - tMin) / (tMax - tMin)) * plotW
+  const y = (v: number) => H - B - (vMax === vMin ? 0 : (v - vMin) / (vMax - vMin)) * plotH
+  const path = (arr: Array<[number, number]>) => arr.map(([ts, v], i) => (i === 0 ? 'M' : 'L') + x(ts).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ')
+
+  // 刻度密度自适应：图越高 Y 刻度越多，越宽 X 刻度越多
+  const yTickCount = Math.max(4, Math.min(16, Math.round(plotH / 36)))
+  const xTickCount = Math.max(4, Math.min(20, Math.round(plotW / 72)))
+  const yTickVals = hasSeries ? yTicks(vMin, vMax, yTickCount) : []
+  const xTickVals = hasSeries ? timeTicks(tMin, tMax, xTickCount) : []
+  const span = tMax - tMin
+
+  const toSvg = (clientX: number, clientY: number) => {
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (!rect) return { x: 0, y: 0 }
+    return { x: clientX - rect.left, y: clientY - rect.top }
+  }
+
+  return (
+    <div className="chart-wrap">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
+        <div style={{ flex: 1 }} />
+        {view && <button className="btn" onClick={() => setView(null)}>{t('curveReset')}</button>}
+      </div>
+      {!hasData && <div className="chart-hint">{t('curveHint')} — 暂无数据</div>}
+      {hasData && selected.size === 0 && <div className="chart-hint">{t('histNoRegs')}</div>}
+      {hasData && selected.size > 0 && (
+        <>
+          <div className="chart-hint">{t('curveZoomHint')}</div>
+          <svg
+            ref={svgRef}
+            viewBox={'0 0 ' + W + ' ' + H}
+            preserveAspectRatio="none"
+            style={{ width: '100%', height: 'max(200px, calc(100vh - 240px))', display: 'block', cursor: 'crosshair', userSelect: 'none', WebkitUserSelect: 'none' }}
+            onMouseDown={(e) => { if (!hasSeries) return; const p = toSvg(e.clientX, e.clientY); setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }) }}
+            onMouseMove={(e) => { if (!drag) return; const p = toSvg(e.clientX, e.clientY); setDrag({ ...drag, x1: p.x, y1: p.y }) }}
+            onMouseUp={() => {
+              if (!drag) return
+              const { x0, y0, x1, y1 } = drag
+              setDrag(null)
+              const left = Math.max(L, Math.min(x0, x1))
+              const right = Math.min(W - R, Math.max(x0, x1))
+              const top = Math.max(T, Math.min(y0, y1))
+              const bottom = Math.min(H - B, Math.max(y0, y1))
+              const dx = right - left, dy = bottom - top
+              if (x1 < x0 && y1 < y0) { setView(null); return }
+              if (x1 > x0 && y1 > y0 && dx > 10 && dy > 10) {
+                const nt0 = tMin + (left - L) / plotW * (tMax - tMin)
+                const nt1 = tMin + (right - L) / plotW * (tMax - tMin)
+                const nv1 = vMin + (H - B - top) / plotH * (vMax - vMin)
+                const nv0 = vMin + (H - B - bottom) / plotH * (vMax - vMin)
+                setView({ t0: Math.min(nt0, nt1), t1: Math.max(nt0, nt1), v0: Math.min(nv0, nv1), v1: Math.max(nv0, nv1) })
+              }
+            }}
+            onMouseLeave={() => setDrag(null)}
+          >
+            {/* Y 轴网格线 + 数值标签 */}
+            {yTickVals.map((v) => (
+              <g key={'y' + v}>
+                <line x1={L} y1={y(v)} x2={W - R} y2={y(v)} stroke="var(--border-1)" strokeWidth="1" />
+                <text x={L - 6} y={y(v) + 4} textAnchor="end" fontSize="10" fill="var(--text-3)" pointerEvents="none">{tickNum(v)}</text>
+              </g>
+            ))}
+            {/* X 轴网格线 + 时间标签 */}
+            {xTickVals.map((tv) => (
+              <g key={'x' + tv}>
+                <line x1={x(tv)} y1={T} x2={x(tv)} y2={H - B} stroke="var(--border-1)" strokeWidth="1" />
+                <text x={x(tv)} y={H - B + 16} textAnchor="middle" fontSize="10" fill="var(--text-3)" pointerEvents="none">{tickTime(tv, span)}</text>
+              </g>
+            ))}
+            {/* 坐标轴 */}
+            <line x1={L} y1={T} x2={L} y2={H - B} stroke="var(--border-2)" strokeWidth="1" />
+            <line x1={L} y1={H - B} x2={W - R} y2={H - B} stroke="var(--border-2)" strokeWidth="1" />
+            {/* 数据线 */}
+            {series.map(s => <path key={s.id} d={path(s.arr)} fill="none" stroke={s.color} strokeWidth="1.6" />)}
+            {/* 框选 */}
+            {drag && (
+              <rect x={Math.min(drag.x0, drag.x1)} y={Math.min(drag.y0, drag.y1)} width={Math.abs(drag.x1 - drag.x0)} height={Math.abs(drag.y1 - drag.y0)} className="zoom-box" />
+            )}
+          </svg>
+          <div className="legend">
+            {series.map(s => { const r = registers.find(rr => rr.id === s.id); return <span key={s.id} className="legend-item"><span className="legend-swatch" style={{ background: s.color }} />{r?.alias ?? s.id}</span> })}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function FirmwareView({ t, device }: { t: T; device: Device }) {
+  const [firmwares, setFirmwares] = useState<any[]>([])
+  const [status, setStatus] = useState<any>({ state: 'idle' })
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const refresh = useCallback(async () => { try { setFirmwares(await api.get('/api/firmwares')) } catch { /* ignore */ } }, [])
+  useEffect(() => { void refresh() }, [refresh])
+
+  useEffect(() => {
+    let alive = true
+    const poll = async () => { try { const s = await api.get('/api/ota/status?device_id=' + device.id); if (alive) setStatus(s) } catch { /* ignore */ } }
+    void poll()
+    const timer = setInterval(poll, 1000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [device.id])
+
+  const onFile = async (e: any) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBusy(true); setMsg('')
+    try {
+      const buf = await file.arrayBuffer()
+      const res = await fetch('/api/firmware/upload?name=' + encodeURIComponent(file.name), { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: buf })
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      await refresh()
+      setMsg(t('fwUploaded'))
+    } catch (err: any) { setMsg(t('fwUploadErr') + ' ' + (err?.message ?? '')) }
+    finally { setBusy(false); e.target.value = '' }
+  }
+
+  const upgrade = async (fid: number) => {
+    setBusy(true); setMsg('')
+    try { await api.post('/api/ota/upgrade', { device_id: device.id, firmware_id: fid }); setMsg(t('fwStarted')) }
+    catch (err: any) { setMsg(t('fwUpgradeErr') + ' ' + (err?.message ?? '')) }
+    finally { setBusy(false) }
+  }
+
+  const pct = status.percent ?? 0
+  const state = status.state ?? 'idle'
+  return (
+    <div className="chart-wrap firmware-card">
+      <div className="fw-toolbar">
+        <label className="btn">{t('fwUpload')}<input type="file" style={{ display: 'none' }} onChange={onFile} disabled={busy} /></label>
+        {(state === 'starting' || state === 'transferring' || state === 'verifying') && <button className="btn danger" onClick={() => { void api.post('/api/ota/abort', { device_id: device.id }) }}>{t('fwAbort')}</button>}
+      </div>
+      {state !== 'idle' && (
+        <div className="fw-progress">
+          <div className="fw-state">{t('fwState')}: {state} · {pct}% · {status.currentBlock ?? 0}/{status.totalBlocks ?? 0}</div>
+          <div className="fw-bar"><div style={{ width: pct + '%' }} /></div>
+          {status.error && <div className="fw-err">{status.error}</div>}
+        </div>
+      )}
+      {msg && <div className="write-msg">{msg}</div>}
+      <div className="fw-list">
+        {firmwares.length === 0 && <div className="chart-hint">{t('firmwareHint')}</div>}
+        {firmwares.map((f) => (
+          <div key={f.id} className="fw-item">
+            <div className="fw-name">{f.name} <span className="kv">{f.version || '—'}</span></div>
+            <div className="kv">{f.size} B · crc32=0x{(f.crc32 >>> 0).toString(16)}</div>
+            <button className="btn" disabled={busy} onClick={() => { void upgrade(f.id) }}>{t('fwUpgrade')}</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function SettingsModal({ t, theme, setTheme, lang, setLang, onClose }: {
@@ -732,23 +1157,68 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose }: {
   )
 }
 
-function AddDeviceModal({ t, onClose, onAdd }: { t: T; onClose: () => void; onAdd: (name: string, ip: string, port: number) => void }) {
-  const [name, setName] = useState('')
-  const [ip, setIp] = useState('')
-  const [port, setPort] = useState('8899')
+function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | null; onClose: () => void; onSave: (f: DeviceFields) => void }) {
+  const [name, setName] = useState(initial?.name ?? '')
+  const [transport, setTransport] = useState(initial?.transport ?? 'tcp')
+  const [ip, setIp] = useState(initial?.ip ?? '')
+  const [port, setPort] = useState(initial ? String(initial.port) : '8899')
+  const [serialPath, setSerialPath] = useState(initial?.serialPath ?? '')
+  const [baudRate, setBaudRate] = useState(initial ? String(initial.baudRate ?? 9600) : '9600')
+  const [parity, setParity] = useState(initial?.parity ?? 'even')
+  const [stopBits, setStopBits] = useState(initial ? String(initial.stopBits ?? 1) : '1')
+  const [flowControl, setFlowControl] = useState(initial?.flowControl ?? 'none')
+  const [slaveId, setSlaveId] = useState(initial ? String(initial.slaveId ?? 1) : '1')
+  const save = () => onSave({ name, ip, port: Number(port), transport, serialPath: transport === 'rtu' ? serialPath : '', baudRate: Number(baudRate) || 9600, parity, stopBits: Number(stopBits) || 1, dataBits: 8, flowControl, slaveId: Number(slaveId) || 1 })
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{t('newDeviceTitle')}</h3>
+        <h3>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3>
         <label>{t('name')}</label>
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-        <label>{t('ip')}</label>
-        <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.90.176" />
-        <label>{t('port')}</label>
-        <input value={port} onChange={(e) => setPort(e.target.value)} placeholder="8899" />
+        <label>{t('transport')}</label>
+        <select value={transport} onChange={(e) => setTransport(e.target.value)}>
+          <option value="tcp">{t('transportTcp')}</option>
+          <option value="rtu">{t('transportRtu')}</option>
+        </select>
+        <label>{t('slaveIdLabel')}</label>
+        <input value={slaveId} onChange={(e) => setSlaveId(e.target.value)} placeholder="1" />
+        {transport === 'tcp' ? (
+          <>
+            <label>{t('ip')}</label>
+            <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.90.176" />
+            <label>{t('port')}</label>
+            <input value={port} onChange={(e) => setPort(e.target.value)} placeholder="8899" />
+          </>
+        ) : (
+          <>
+            <label>{t('serialPath')}</label>
+            <input value={serialPath} onChange={(e) => setSerialPath(e.target.value)} placeholder="COM3 / /dev/ttyUSB0" />
+            <label>{t('baudRate')}</label>
+            <select value={baudRate} onChange={(e) => setBaudRate(e.target.value)}>
+              {[9600, 19200, 38400, 57600, 115200].map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+            <label>{t('parity')}</label>
+            <select value={parity} onChange={(e) => setParity(e.target.value)}>
+              <option value="even">Even</option>
+              <option value="odd">Odd</option>
+              <option value="none">None</option>
+            </select>
+            <label>{t('stopBits')}</label>
+            <select value={stopBits} onChange={(e) => setStopBits(e.target.value)}>
+              <option value="1">1</option>
+              <option value="2">2</option>
+            </select>
+            <label>{t('flowControl')}</label>
+            <select value={flowControl} onChange={(e) => setFlowControl(e.target.value)}>
+              <option value="none">None</option>
+              <option value="rtscts">RTS/CTS</option>
+              <option value="xonxoff">XON/XOFF</option>
+            </select>
+          </>
+        )}
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" onClick={() => onAdd(name, ip, Number(port))}>{t('add')}</button>
+          <button className="btn primary" onClick={save}>{initial ? t('save') : t('add')}</button>
         </div>
       </div>
     </div>

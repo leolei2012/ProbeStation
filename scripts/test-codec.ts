@@ -1,4 +1,4 @@
-import { DATA_TYPES, decodeRegister, encodeRegister, registerWidth, toBin, toHex } from '../packages/core/src/codec.ts'
+import { DATA_TYPES, decodeRegister, encodeRegister, formatRawByAddr, formatRegisterValue, registerWidth, toBin, toHex } from '../packages/core/src/codec.ts'
 
 let fail = 0
 function roundTrip(type: string, value: number | bigint, tol = 1e-3) {
@@ -34,5 +34,9 @@ console.log('toBin(0x12ab) =', toBin(0x12ab), '(expect 0001001010101011)')
 console.log('decode int32 [0x1234,0x5678] =', decodeRegister('int32', [0x1234, 0x5678]), '(expect 305419896)')
 console.log('decode uint64 [0,0,1,0] =', decodeRegister('uint64', [0, 0, 1, 0]), '(expect 65536)')
 console.log('decode int32-LE [0x5678,0x1234] =', decodeRegister('int32-LE', [0x5678, 0x1234]), '(expect 305419896)')
+console.log('format hex32 [0x1234,0x5678] =', formatRegisterValue('hex32', [0x1234, 0x5678]), '(expect 0x1234 0x5678)')
+console.log('format bin16 [0x12ab] =', formatRegisterValue('bin16', [0x12ab]), '(expect 0001001010101011)')
+const f = formatRawByAddr([{ id: 1, startAddress: 0, dataType: 'hex32' }], { 0: 0x1234, 1: 0x5678 })
+console.log('formatRawByAddr hex32 =', f.get(1), '(expect 0x1234 0x5678)')
 console.log(fail === 0 ? 'CODEC TEST OK' : 'CODEC TEST FAILED: ' + fail)
 process.exit(fail === 0 ? 0 : 1)

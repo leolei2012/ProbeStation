@@ -12,10 +12,10 @@ const store = ctx.get('store', false)
 const t1 = '2026-08-14T10:00:00Z'
 const t2 = '2026-08-14T10:00:01Z'
 store.write([
-  { objectId: obj.id, registerId: r1.id, timestamp: t1, rawValue: 100, quality: 'good' },
-  { objectId: obj.id, registerId: r2.id, timestamp: t1, rawValue: 800, quality: 'good' },
-  { objectId: obj.id, registerId: r1.id, timestamp: t2, rawValue: 101, quality: 'good' },
-  { objectId: obj.id, registerId: r2.id, timestamp: t2, rawValue: 801, quality: 'good' },
+  { objectId: obj.id, address: r1.startAddress, timestamp: t1, rawValue: 100, quality: 'good' },
+  { objectId: obj.id, address: r2.startAddress, timestamp: t1, rawValue: 800, quality: 'good' },
+  { objectId: obj.id, address: r1.startAddress, timestamp: t2, rawValue: 101, quality: 'good' },
+  { objectId: obj.id, address: r2.startAddress, timestamp: t2, rawValue: 801, quality: 'good' },
 ])
 await store.flush()
 
@@ -25,6 +25,10 @@ console.log('CSV', res.statusCode, '\n' + res.body)
 
 const resX = await app.inject({ method: 'GET', url: `/api/export/xlsx?object_id=${obj.id}&start=2000-01-01T00:00:00Z&end=2100-01-01T00:00:00Z` })
 console.log('XLSX', resX.statusCode, 'bytes:', (resX.rawPayload as Buffer).length)
+
+// register_ids 过滤：只导出 r2（转速）
+const resFilter = await app.inject({ method: 'GET', url: `/api/export/csv?object_id=${obj.id}&start=2000-01-01T00:00:00Z&end=2100-01-01T00:00:00Z&register_ids=${r2.id}` })
+console.log('CSV filtered (r2 only):', resFilter.statusCode, '\n' + resFilter.body)
 
 console.log('SINK TEST OK')
 process.exit(0)

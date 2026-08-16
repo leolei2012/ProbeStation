@@ -12,6 +12,7 @@ import * as importerPlugin from '@probebench/importer'
 import * as mcpPlugin from '@probebench/mcp'
 import * as slavePlugin from '@probebench/slave'
 import * as workspacePlugin from '@probebench/workspace'
+import * as otaPlugin from '@probebench/ota'
 
 const ctx = new Context()
 const wsDir = workspacePlugin.resolveInitialWorkspace('data')
@@ -23,6 +24,7 @@ await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080, staticDir: 'apps/web/
 await ctx.plugin(sinkPlugin)
 await ctx.plugin(rulePlugin)
 await ctx.plugin(importerPlugin)
+await ctx.plugin(otaPlugin)
 await ctx.plugin(mcpPlugin)
 await ctx.plugin(slavePlugin, { port: 8502, holdingSize: 5000 })
 await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })

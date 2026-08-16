@@ -9,17 +9,18 @@ export const name = 'config'
 export interface Config { dbPath: string }
 export const Config: z<Config> = z.object({ dbPath: z.string() })
 
-export interface DeviceRecord { id: number; name: string; ip: string; port: number; mode: string; isActive: number }
+export interface DeviceRecord { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number }
 export interface GroupRecord { id: number; objectId: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; mode: string; isActive: number }
 export interface RegisterRecord { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; quantity: number; dataType: string }
 export interface RuleRecord { id: number; registerId: number; operator: string; threshold: number; message: string | null }
 export interface LogRecord { id: number; ts: string; level: string; source: string | null; message: string | null }
+export interface FirmwareRecord { id: number; name: string; version: string | null; size: number; crc32: number; filePath: string | null; createdAt: string | null }
 
-const OBJECT_SELECT = 'SELECT id, name, ip, port, mode, is_active AS isActive FROM monitor_objects'
+const OBJECT_SELECT = 'SELECT id, name, ip, port, mode, is_active AS isActive, transport, serial_path AS serialPath, baud_rate AS baudRate, parity, stop_bits AS stopBits, data_bits AS dataBits, flow_control AS flowControl, slave_id AS slaveId FROM monitor_objects'
 const GROUP_SELECT = 'SELECT id, object_id AS objectId, name, slave_id AS slaveId, function_code AS functionCode, start_address AS startAddress, quantity, poll_interval_ms AS pollIntervalMs, mode, is_active AS isActive FROM register_groups'
 const REGISTER_SELECT = 'SELECT id, group_id AS groupId, object_id AS objectId, alias, function_code AS functionCode, start_address AS startAddress, quantity, data_type AS dataType FROM registers'
 
-const OBJECT_MAP: Record<string, string> = { name: 'name', ip: 'ip', port: 'port', mode: 'mode', isActive: 'is_active' }
+const OBJECT_MAP: Record<string, string> = { name: 'name', ip: 'ip', port: 'port', mode: 'mode', isActive: 'is_active', transport: 'transport', serialPath: 'serial_path', baudRate: 'baud_rate', parity: 'parity', stopBits: 'stop_bits', dataBits: 'data_bits', flowControl: 'flow_control', slaveId: 'slave_id' }
 const GROUP_MAP: Record<string, string> = { name: 'name', slaveId: 'slave_id', functionCode: 'function_code', startAddress: 'start_address', quantity: 'quantity', pollIntervalMs: 'poll_interval_ms', mode: 'mode', isActive: 'is_active' }
 const REGISTER_MAP: Record<string, string> = { alias: 'alias', functionCode: 'function_code', startAddress: 'start_address', dataType: 'data_type' }
 
@@ -37,7 +38,25 @@ export class ConfigStore {
     if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true })
     const db = new DatabaseSync(dbPath)
     db.exec(this.schema())
+    this.migrate(db)
     return db
+  }
+
+  /** 旧库补列（幂等，列已存在则忽略）。 */
+  private migrate(db: DatabaseSync): void {
+    const cols: Array<[string, string]> = [
+      ['transport', "TEXT DEFAULT 'tcp'"],
+      ['serial_path', 'TEXT'],
+      ['baud_rate', 'INTEGER DEFAULT 9600'],
+      ['parity', "TEXT DEFAULT 'even'"],
+      ['stop_bits', 'INTEGER DEFAULT 1'],
+      ['data_bits', 'INTEGER DEFAULT 8'],
+      ['flow_control', "TEXT DEFAULT 'none'"],
+      ['slave_id', 'INTEGER DEFAULT 1'],
+    ]
+    for (const [col, ddl] of cols) {
+      try { db.exec(`ALTER TABLE monitor_objects ADD COLUMN ${col} ${ddl}`) } catch { /* 列已存在 */ }
+    }
   }
 
   /** 切换工作区：关闭旧库、打开新库（幂等，CREATE TABLE IF NOT EXISTS）。 */
@@ -52,7 +71,11 @@ export class ConfigStore {
       CREATE TABLE IF NOT EXISTS monitor_objects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL, ip TEXT NOT NULL, port INTEGER DEFAULT 502,
-        mode TEXT DEFAULT 'master', is_active INTEGER DEFAULT 1
+        mode TEXT DEFAULT 'master', is_active INTEGER DEFAULT 1,
+        transport TEXT DEFAULT 'tcp', serial_path TEXT,
+        baud_rate INTEGER DEFAULT 9600, parity TEXT DEFAULT 'even',
+        stop_bits INTEGER DEFAULT 1, data_bits INTEGER DEFAULT 8,
+        flow_control TEXT DEFAULT 'none', slave_id INTEGER DEFAULT 1
       );
       CREATE TABLE IF NOT EXISTS register_groups (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,13 +98,27 @@ export class ConfigStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, level TEXT DEFAULT 'INFO',
         source TEXT, message TEXT
       );
+      CREATE TABLE IF NOT EXISTS firmwares (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL, version TEXT,
+        size INTEGER DEFAULT 0, crc32 INTEGER DEFAULT 0,
+        file_path TEXT, created_at TEXT
+      );
     `
   }
 
   listObjects(): DeviceRecord[] { return this.db.prepare(OBJECT_SELECT + ' ORDER BY id').all() as unknown as DeviceRecord[] }
   getObject(id: number): DeviceRecord | undefined { return this.db.prepare(OBJECT_SELECT + ' WHERE id = ?').get(id) as unknown as DeviceRecord | undefined }
-  createObject(name: string, ip: string, port: number, mode = 'master'): DeviceRecord {
-    const res = this.db.prepare('INSERT INTO monitor_objects (name, ip, port, mode) VALUES (?, ?, ?, ?)').run(name, ip, port, mode)
+  createObject(name: string, ip: string, port: number, mode = 'master', extra?: Partial<Pick<DeviceRecord, 'transport' | 'serialPath' | 'baudRate' | 'parity' | 'stopBits' | 'dataBits' | 'flowControl' | 'slaveId'>>): DeviceRecord {
+    const transport = extra?.transport ?? 'tcp'
+    const serialPath = extra?.serialPath ?? null
+    const baudRate = extra?.baudRate ?? 9600
+    const parity = extra?.parity ?? 'even'
+    const stopBits = extra?.stopBits ?? 1
+    const dataBits = extra?.dataBits ?? 8
+    const flowControl = extra?.flowControl ?? 'none'
+    const slaveId = extra?.slaveId ?? 1
+    const res = this.db.prepare('INSERT INTO monitor_objects (name, ip, port, mode, transport, serial_path, baud_rate, parity, stop_bits, data_bits, flow_control, slave_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(name, ip, port, mode, transport, serialPath, baudRate, parity, stopBits, dataBits, flowControl, slaveId)
     return this.getObject(Number(res.lastInsertRowid))!
   }
   updateObject(id: number, fields: Record<string, unknown>): DeviceRecord | undefined { this.update('monitor_objects', id, fields, OBJECT_MAP); return this.getObject(id) }
@@ -125,6 +162,15 @@ export class ConfigStore {
   log(level: string, source: string, message: string): void { this.db.prepare('INSERT INTO logs (ts, level, source, message) VALUES (?, ?, ?, ?)').run(new Date().toISOString(), level, source, message) }
   listLogs(limit = 100): LogRecord[] { return this.db.prepare('SELECT id, ts, level, source, message FROM logs ORDER BY id DESC LIMIT ?').all(limit) as unknown as LogRecord[] }
   clearLogs(): void { this.db.prepare('DELETE FROM logs').run() }
+
+  listFirmwares(): FirmwareRecord[] { return this.db.prepare('SELECT id, name, version, size, crc32, file_path AS filePath, created_at AS createdAt FROM firmwares ORDER BY id DESC').all() as unknown as FirmwareRecord[] }
+  getFirmware(id: number): FirmwareRecord | undefined { return this.db.prepare('SELECT id, name, version, size, crc32, file_path AS filePath, created_at AS createdAt FROM firmwares WHERE id = ?').get(id) as unknown as FirmwareRecord | undefined }
+  createFirmware(name: string, version: string | null, size: number, crc32: number, filePath: string | null): FirmwareRecord {
+    const res = this.db.prepare('INSERT INTO firmwares (name, version, size, crc32, file_path, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(name, version, size, crc32 >>> 0, filePath, new Date().toISOString())
+    return this.getFirmware(Number(res.lastInsertRowid))!
+  }
+  setFirmwarePath(id: number, filePath: string): void { this.db.prepare('UPDATE firmwares SET file_path = ? WHERE id = ?').run(filePath, id) }
+  deleteFirmware(id: number): void { this.db.prepare('DELETE FROM firmwares WHERE id = ?').run(id) }
 
   private update(table: string, id: number, fields: Record<string, unknown>, mapping: Record<string, string>): void {
     const cols: string[] = []

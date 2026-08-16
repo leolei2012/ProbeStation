@@ -13,12 +13,12 @@ const reg = cfg.createRegister(g.id, obj.id, 'r', 3, 0)
 slave.setRegister(0, 100)
 poller.startAll()
 await new Promise(r => setTimeout(r, 800))
-console.log('latest after start:', store.getLatest()[reg.id]?.rawValue)
+console.log('latest after start:', store.getLatestByObject(obj.id)[reg.startAddress]?.rawValue)
 
 cfg.toggleObject(obj.id)  // isActive 1 -> 0（断开）
 slave.setRegister(0, 999)
 await new Promise(r => setTimeout(r, 1500))
-const v = store.getLatest()[reg.id]?.rawValue
+const v = store.getLatestByObject(obj.id)[reg.startAddress]?.rawValue
 console.log('latest after disconnect:', v, '(expect 100，不应更新为 999)')
 poller.stopAll()
 const ok = v === 100

@@ -1,0 +1,231 @@
+{
+  "generatedAt": "2026-08-15T10:53:21.164Z",
+  "consoleErrorCount": 1,
+  "consoleWarningCount": 0,
+  "pageErrorCount": 0,
+  "failedRequestCount": 0,
+  "badResponseCount": 0,
+  "consoleWarnings": [],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "pageErrors": [],
+  "failedRequests": [],
+  "badResponses": [],
+  "sections": [
+    {
+      "name": "页面加载与基础检查",
+      "checks": [
+        {
+          "ok": true,
+          "label": "HTTP 状态 200",
+          "detail": "status=200"
+        },
+        {
+          "ok": true,
+          "label": "标题 ProbeStation",
+          "detail": "title=ProbeStation"
+        },
+        {
+          "ok": true,
+          "label": "侧栏品牌渲染",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "侧栏存在",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "设置按钮存在",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "加载 2 台设备",
+          "detail": "device-item 数量=2"
+        }
+      ],
+      "notes": [
+        "networkidle 耗时(含轮询抖动)≈883ms"
+      ],
+      "issues": []
+    },
+    {
+      "name": "控制台与资源检查",
+      "checks": [
+        {
+          "ok": false,
+          "label": "无 console.error",
+          "detail": "count=1"
+        },
+        {
+          "ok": true,
+          "label": "无未捕获 JS 异常",
+          "detail": "count=0"
+        },
+        {
+          "ok": true,
+          "label": "无失败请求",
+          "detail": "count=0"
+        },
+        {
+          "ok": true,
+          "label": "无 4xx/5xx 响应",
+          "detail": "count=0"
+        }
+      ],
+      "notes": [
+        "console.warning count=0"
+      ],
+      "issues": [
+        "console.error: Failed to load resource: the server responded with a status of 404 (Not Found)"
+      ]
+    },
+    {
+      "name": "功能流程测试",
+      "checks": [
+        {
+          "ok": true,
+          "label": "设备1 显示 2 个分组",
+          "detail": "count=2"
+        },
+        {
+          "ok": true,
+          "label": "设备头显示设备名",
+          "detail": "name=测试从站"
+        },
+        {
+          "ok": true,
+          "label": "4 个 Tab",
+          "detail": "count=4"
+        },
+        {
+          "ok": true,
+          "label": "实时表 20 行寄存器",
+          "detail": "rows=20"
+        },
+        {
+          "ok": true,
+          "label": "历史页有起止时间输入",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "历史查询有响应(表或空态)",
+          "detail": "rows=200 empty=0"
+        },
+        {
+          "ok": true,
+          "label": "曲线渲染 SVG 折线",
+          "detail": "paths=20"
+        },
+        {
+          "ok": true,
+          "label": "固件占位提示",
+          "detail": "text=固件升级功能规划中（OTA）"
+        },
+        {
+          "ok": true,
+          "label": "双击值弹出写寄存器弹窗",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "写值提交后弹窗关闭",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "新建设备弹窗可打开",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "新建设备有 名称/IP/端口 3 个输入",
+          "detail": "inputs=3"
+        },
+        {
+          "ok": true,
+          "label": "新建设备后列表变 3 台",
+          "detail": "count=3"
+        },
+        {
+          "ok": true,
+          "label": "删除后恢复 2 台",
+          "detail": "count=2"
+        },
+        {
+          "ok": true,
+          "label": "设置弹窗打开",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "切换深色主题生效",
+          "detail": "data-theme=dark"
+        },
+        {
+          "ok": true,
+          "label": "切换英文生效",
+          "detail": "brandSub=Device observation & testing"
+        },
+        {
+          "ok": true,
+          "label": "工作区弹窗打开",
+          "detail": ""
+        }
+      ],
+      "notes": [
+        "历史查询结果行数=200",
+        "写弹窗信息: 写寄存器计数器 · 地址 0 · int16值功能码FC16 写多个寄存器FC06 写单个寄存器取消写",
+        "删除设备是否有确认对话框: 无（直接删除）",
+        "工作区浏览子目录按钮数=1"
+      ],
+      "issues": []
+    },
+    {
+      "name": "多设备/响应式",
+      "checks": [
+        {
+          "ok": true,
+          "label": "desktop 无横向溢出",
+          "detail": "{\"hOverflow\":false,\"tableOverflow\":false,\"scrollWidth\":1440,\"clientWidth\":1440}"
+        },
+        {
+          "ok": true,
+          "label": "tablet 无横向溢出",
+          "detail": "{\"hOverflow\":false,\"tableOverflow\":false,\"scrollWidth\":768,\"clientWidth\":768}"
+        },
+        {
+          "ok": true,
+          "label": "mobile 无横向溢出",
+          "detail": "{\"hOverflow\":false,\"tableOverflow\":true,\"scrollWidth\":375,\"clientWidth\":375}"
+        }
+      ],
+      "notes": [
+        "desktop 视口 1440x900 scrollW=1440 clientW=1440 tableOverflow=false",
+        "tablet 视口 768x1024 scrollW=768 clientW=768 tableOverflow=false",
+        "mobile 视口 375x812 scrollW=375 clientW=375 tableOverflow=true"
+      ],
+      "issues": []
+    },
+    {
+      "name": "性能/加载时间",
+      "checks": [
+        {
+          "ok": true,
+          "label": "TTFB < 1s",
+          "detail": "ttfb=1ms"
+        }
+      ],
+      "notes": [
+        "TTFB=1ms, DOMContentLoaded=25ms, load=25ms",
+        "资源数=2, 传输体积≈192.4KB",
+        "资源分类: {\"script\":{\"count\":1,\"bytes\":182776},\"link\":{\"count\":1,\"bytes\":14206}}"
+      ],
+      "issues": []
+    }
+  ]
+}

@@ -8,7 +8,7 @@ const g = cfg.createGroup(obj.id, 'Holding', 3, 0, 2)
 const reg = cfg.createRegister(g.id, obj.id, '温度', 3, 0)
 cfg.createRule(reg.id, '>', 100, '温度过高')
 
-ctx.emit('poller/result', { objectId: obj.id, points: [{ objectId: obj.id, registerId: reg.id, rawValue: 150, quality: 'good', timestamp: new Date().toISOString() }] })
+ctx.emit('poller/result', { objectId: obj.id, points: [{ objectId: obj.id, address: reg.startAddress, rawValue: 150, quality: 'good', timestamp: new Date().toISOString() }] })
 await new Promise((r) => setTimeout(r, 100))
 
 const app = ctx.get('api', false)

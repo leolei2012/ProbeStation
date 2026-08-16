@@ -1,0 +1,173 @@
+{
+  "generatedAt": "2026-08-15T11:56:28.910Z",
+  "consoleErrorCount": 0,
+  "consoleWarningCount": 0,
+  "pageErrorCount": 0,
+  "failedRequestCount": 0,
+  "badResponseCount": 0,
+  "consoleErrors": [],
+  "sections": [
+    {
+      "name": "加载与基础(回归)",
+      "checks": [
+        {
+          "ok": true,
+          "label": "HTTP 200",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "加载 2 台设备",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "侧栏有可见「新建设备」按钮",
+          "detail": ""
+        }
+      ],
+      "notes": [],
+      "issues": []
+    },
+    {
+      "name": "控制台/资源/gzip",
+      "checks": [
+        {
+          "ok": true,
+          "label": "无 console.error(favicon 已修)",
+          "detail": "count=0"
+        },
+        {
+          "ok": true,
+          "label": "无未捕获 JS 异常",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "无失败请求",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "无 4xx/5xx",
+          "detail": ""
+        },
+        {
+          "ok": false,
+          "label": "JS 资源已压缩",
+          "detail": "content-encoding=zstd"
+        }
+      ],
+      "notes": [
+        "JS content-encoding=zstd"
+      ],
+      "issues": []
+    },
+    {
+      "name": "历史多分组对齐(P0)",
+      "checks": [
+        {
+          "ok": true,
+          "label": "历史表 21 列(时间+20寄存器)",
+          "detail": "cols=21"
+        },
+        {
+          "ok": false,
+          "label": "首行无 \"—\"(两组已对齐)",
+          "detail": "dash=10"
+        }
+      ],
+      "notes": [
+        "首行单元格数=21, \"—\"数=10"
+      ],
+      "issues": []
+    },
+    {
+      "name": "删除确认(P1)",
+      "checks": [
+        {
+          "ok": true,
+          "label": "新建后 3 台",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "删除弹确认对话框",
+          "detail": "msg=确定删除设备「E2E临时设备」？其下所有分组与寄存器将一并删除。"
+        },
+        {
+          "ok": true,
+          "label": "拒绝后设备保留",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "接受后删除成功",
+          "detail": ""
+        }
+      ],
+      "notes": [],
+      "issues": []
+    },
+    {
+      "name": "写寄存器校验与反馈(P1)",
+      "checks": [
+        {
+          "ok": true,
+          "label": "写弹窗打开",
+          "detail": ""
+        },
+        {
+          "ok": true,
+          "label": "空值提示",
+          "detail": "msg=请输入值"
+        },
+        {
+          "ok": true,
+          "label": "非法数字提示",
+          "detail": "msg=请输入有效数字"
+        },
+        {
+          "ok": true,
+          "label": "合法值写成功并关闭",
+          "detail": ""
+        }
+      ],
+      "notes": [],
+      "issues": []
+    },
+    {
+      "name": "移动端响应式(P2)",
+      "checks": [
+        {
+          "ok": true,
+          "label": "主区接近满宽",
+          "detail": "mainW=375 viewport=375"
+        },
+        {
+          "ok": true,
+          "label": "侧栏已折叠或抽屉化",
+          "detail": "sidebarW=264"
+        }
+      ],
+      "notes": [
+        "移动端: {\"viewportW\":375,\"sidebarW\":264,\"sidebarLeft\":0,\"mainLeft\":0,\"mainW\":375,\"tableMinWidth\":\"440px\",\"docScrollW\":375}"
+      ],
+      "issues": []
+    },
+    {
+      "name": "性能(回归)",
+      "checks": [
+        {
+          "ok": true,
+          "label": "加载耗时正常",
+          "detail": "{\"ttfb\":3,\"dcl\":40,\"load\":40}"
+        }
+      ],
+      "notes": [
+        "TTFB=3ms DCL=40ms load=40ms"
+      ],
+      "issues": []
+    }
+  ]
+}

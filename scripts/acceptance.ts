@@ -31,7 +31,7 @@ const target = regs[0]
 await post('写寄存器 (FC16)', '/api/registers/' + target.id + '/write', { value: 123, method: 'multiple' })
 
 // 历史查询
-await get('历史查询', '/api/data/query?object_id=2&register_id=' + target.id + '&start=2000-01-01T00:00:00Z&end=2100-01-01T00:00:00Z')
+await get('历史查询', '/api/data/query?object_id=2&address=' + target.startAddress + '&start=2000-01-01T00:00:00Z&end=2100-01-01T00:00:00Z')
 // 导出
 await get('CSV 导出', '/api/export/csv?object_id=2&start=2000-01-01T00:00:00Z&end=2100-01-01T00:00:00Z')
 // 规则

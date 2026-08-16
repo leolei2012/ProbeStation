@@ -163,3 +163,59 @@ export function toHex(word: number): string {
 export function toBin(word: number): string {
   return (word & 0xffff).toString(2).padStart(16, '0')
 }
+
+export function formatNumber(d: number | bigint): string {
+  if (typeof d === 'bigint') return d.toString()
+  if (Number.isNaN(d)) return 'NaN'
+  if (!Number.isFinite(d)) return d > 0 ? 'Inf' : '-Inf'
+  return Number.isInteger(d) ? String(d) : String(Number(d.toPrecision(7)))
+}
+
+export interface DecodableRegister { id: number; startAddress: number; dataType: string }
+
+/** 把原始字按类型格式化成显示字符串：hex/bin 逐字、数值按 formatNumber。 */
+export function formatRegisterValue(dataType: string, words: number[]): string {
+  const dispWords = applyEndianness(dataType, words)
+  if (isHexType(dataType)) return dispWords.map(toHex).join(' ')
+  if (isBinType(dataType)) return dispWords.map(toBin).join(' ')
+  return formatNumber(decodeRegister(dataType, words))
+}
+
+/** 按寄存器收集相邻地址的原始字；被覆盖或数据不足返回 null。 */
+function collectWordsByAddr(registers: DecodableRegister[], rawByAddr: Record<number, number>): Map<number, { words: number[]; dataType: string } | null> {
+  const sorted = [...registers].sort((a, b) => a.startAddress - b.startAddress)
+  const out = new Map<number, { words: number[]; dataType: string } | null>()
+  let consumedUpTo = -Infinity
+  for (const r of sorted) {
+    const w = registerWidth(r.dataType)
+    if (r.startAddress < consumedUpTo) { out.set(r.id, null); continue }
+    const words: number[] = []
+    for (let a = r.startAddress; a < r.startAddress + w; a++) {
+      const v = rawByAddr[a]
+      if (v === undefined) break
+      words.push(v)
+    }
+    if (words.length !== w) { out.set(r.id, null); continue }
+    out.set(r.id, { words, dataType: r.dataType })
+    consumedUpTo = r.startAddress + w
+  }
+  return out
+}
+
+/** 把「地址 → 原始 16 位字」按寄存器解码成完整数值；被覆盖或数据不足返回 null。 */
+export function decodeRawByAddr(registers: DecodableRegister[], rawByAddr: Record<number, number>): Map<number, number | bigint | null> {
+  const out = new Map<number, number | bigint | null>()
+  for (const [id, info] of collectWordsByAddr(registers, rawByAddr)) {
+    out.set(id, info === null ? null : decodeRegister(info.dataType, info.words))
+  }
+  return out
+}
+
+/** 把「地址 → 原始 16 位字」按寄存器解码成显示字符串（hex/bin 逐字）；被覆盖或数据不足返回 null。 */
+export function formatRawByAddr(registers: DecodableRegister[], rawByAddr: Record<number, number>): Map<number, string | null> {
+  const out = new Map<number, string | null>()
+  for (const [id, info] of collectWordsByAddr(registers, rawByAddr)) {
+    out.set(id, info === null ? null : formatRegisterValue(info.dataType, info.words))
+  }
+  return out
+}

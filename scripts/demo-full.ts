@@ -30,7 +30,7 @@ const app = ctx.get('api', false)
 for (const url of [
   '/api/monitor_objects',
   '/api/monitor_objects/1/latest',
-  '/api/data/query?object_id=1&register_id=0&start=2000-01-01T00:00:00Z&end=2100-01-01T00:00:00Z',
+  '/api/data/query?object_id=1&address=0&start=2000-01-01T00:00:00Z&end=2100-01-01T00:00:00Z',
 ]) {
   const res = await app.inject({ method: 'GET', url })
   console.log(`GET ${url}`)

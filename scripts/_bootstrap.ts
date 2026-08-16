@@ -9,6 +9,7 @@ import * as pollerPlugin from '../packages/poller/src/index.ts'
 import * as sinkPlugin from '../packages/sink/src/index.ts'
 import * as importerPlugin from '../packages/importer/src/index.ts'
 import * as workspacePlugin from '../packages/workspace/src/index.ts'
+import * as otaPlugin from '../packages/ota/src/index.ts'
 import * as apiPlugin from '../packages/api/src/index.ts'
 import * as rulePlugin from '../packages/rule/src/index.ts'
 import * as slavePlugin from '../packages/slave/src/index.ts'
@@ -35,6 +36,7 @@ export async function boot(opts: BootOptions = {}): Promise<{ ctx: Context; dir:
   await ctx.plugin(sinkPlugin)
   await ctx.plugin(importerPlugin)
   await ctx.plugin(workspacePlugin, { defaultWorkspace: dir, registryPath })
+  await ctx.plugin(otaPlugin)
   if (opts.rule) await ctx.plugin(rulePlugin)
   if (opts.slave != null) await ctx.plugin(slavePlugin, { port: opts.slave })
   if (opts.mcp) await ctx.plugin(mcpPlugin)

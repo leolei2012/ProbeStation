@@ -13,12 +13,12 @@ const triggers: any[] = []
 ctx.on('rule/trigger', (p: any) => triggers.push(p))
 
 // emit a poll result that exceeds threshold (150 > 100) -> should trigger
-ctx.emit('poller/result', { objectId: obj.id, points: [{ objectId: obj.id, registerId: reg.id, rawValue: 150, quality: 'good', timestamp: new Date().toISOString() }] })
+ctx.emit('poller/result', { objectId: obj.id, points: [{ objectId: obj.id, address: reg.startAddress, rawValue: 150, quality: 'good', timestamp: new Date().toISOString() }] })
 await new Promise((r) => setTimeout(r, 100))
 console.log('triggers after 150:', JSON.stringify(triggers))
 
 // emit below threshold -> no trigger
-ctx.emit('poller/result', { objectId: obj.id, points: [{ objectId: obj.id, registerId: reg.id, rawValue: 50, quality: 'good', timestamp: new Date().toISOString() }] })
+ctx.emit('poller/result', { objectId: obj.id, points: [{ objectId: obj.id, address: reg.startAddress, rawValue: 50, quality: 'good', timestamp: new Date().toISOString() }] })
 await new Promise((r) => setTimeout(r, 100))
 console.log('triggers after 50 (should still be 1):', triggers.length)
 

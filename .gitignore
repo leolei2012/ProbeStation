@@ -4,3 +4,10 @@ dist/
 *.log
 data/
 reference/
+
+# 第三方参考工程（自身带 .git，勿整体提交；协议见 github.com/leolei2012/MB-RTU）
+.ref-MB-RTU/
+
+# 测试临时工作区产物
+test-ws-*/
+

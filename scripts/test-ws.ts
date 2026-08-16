@@ -4,7 +4,7 @@ const { ctx } = await boot({ api: { port: 18080 } })
 
 // write a sample so latest is non-empty
 const store = ctx.get('store', false)
-store.write([{ objectId: 1, registerId: 1, timestamp: new Date().toISOString(), rawValue: 555, quality: 'good' }])
+store.write([{ objectId: 1, address: 1, timestamp: new Date().toISOString(), rawValue: 555, quality: 'good' }])
 await store.flush()
 
 const app = ctx.get('api', false)
@@ -27,7 +27,7 @@ await new Promise((r) => setTimeout(r, 200))
 console.log('after connect, received[0] =', received[0])
 
 // emit poller/result -> expect ws broadcast
-ctx.emit('poller/result', { objectId: 1, points: [{ objectId: 1, registerId: 1, timestamp: new Date().toISOString(), rawValue: 777, quality: 'good' }] })
+ctx.emit('poller/result', { objectId: 1, points: [{ objectId: 1, address: 1, timestamp: new Date().toISOString(), rawValue: 777, quality: 'good' }] })
 await new Promise((r) => setTimeout(r, 200))
 console.log('after emit, received[1] =', received[1])
 

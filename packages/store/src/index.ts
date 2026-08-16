@@ -18,10 +18,10 @@ export const Config: z<Config> = z.object({
   flushBatchSize: z.number().default(1000),
 })
 
-/** One decoded poll sample, ready to persist. */
+/** 一个原始 16 位字采样，按 Modbus 地址键控（类型只是显示方式，解码在消费端做）。 */
 export interface PollPoint {
   objectId: number
-  registerId: number
+  address: number
   timestamp: string
   rawValue: number
   quality: string
@@ -36,7 +36,7 @@ export class DuckDBStore {
   private ready: Promise<DuckDBConnection>
   private instance: DuckDBInstance | null = null
   private buffer: PollPoint[] = []
-  private readonly latest = new Map<number, { rawValue: number; quality: string; timestamp: string }>()
+  private readonly latest = new Map<string, { rawValue: number; quality: string; timestamp: string }>()
   private flushTimer: NodeJS.Timeout | null = null
   private dbPath: string
 
@@ -55,11 +55,13 @@ export class DuckDBStore {
     const conn = await instance.connect()
     await conn.run(`CREATE TABLE IF NOT EXISTS poll_data (
       object_id INTEGER,
-      register_id INTEGER,
+      address INTEGER,
       ts TIMESTAMP,
       raw_value DOUBLE,
       quality VARCHAR
     )`)
+    // 迁移：旧表用 register_id 列
+    try { await conn.run(`ALTER TABLE poll_data RENAME COLUMN register_id TO address`) } catch { /* 已是 address 或表刚建 */ }
     return conn
   }
 
@@ -81,7 +83,7 @@ export class DuckDBStore {
   write(points: PollPoint[]): void {
     for (const p of points) {
       this.buffer.push(p)
-      this.latest.set(p.registerId, { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp })
+      this.latest.set(p.objectId + ':' + p.address, { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp })
     }
     if (this.buffer.length >= this.config.flushBatchSize) void this.flush()
   }
@@ -93,46 +95,56 @@ export class DuckDBStore {
     const batch = this.buffer.splice(0)
     // TODO(phase2): replace string interpolation with parameterized insert.
     const rows = batch.map(p =>
-      `(${p.objectId}, ${p.registerId}, '${p.timestamp}', ${p.rawValue}, '${p.quality}')`,
+      `(${p.objectId}, ${p.address}, '${p.timestamp}', ${p.rawValue}, '${p.quality}')`,
     ).join(', ')
     await conn.run(`INSERT INTO poll_data VALUES ${rows}`)
   }
 
-  /** Query the cold tier for all registers of one object over a time range. */
+  /** Query the cold tier for all addresses of one object over a time range. */
   async queryObject(
     objectId: number, start: string, end: string,
-  ): Promise<Array<{ ts: string; registerId: number; rawValue: number }>> {
+  ): Promise<Array<{ ts: string; address: number; rawValue: number; quality: string }>> {
     const conn = await this.ready
     const reader = await conn.runAndReadAll(
-      `SELECT ts, register_id, raw_value FROM poll_data
+      `SELECT ts, address, raw_value, quality FROM poll_data
        WHERE object_id = $objectId AND ts >= $start AND ts <= $end
        ORDER BY ts`,
       { objectId, start, end },
     )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; register_id: unknown; raw_value: unknown }>
-    return rows.map(r => ({ ts: String(r.ts), registerId: Number(r.register_id), rawValue: Number(r.raw_value) }))
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; address: unknown; raw_value: unknown; quality: unknown }>
+    return rows.map(r => ({ ts: String(r.ts), address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
   }
 
-  /** Latest snapshot from the hot tier (keyed by register id). */
-  getLatest(): Record<number, { rawValue: number; quality: string; timestamp: string }> {
-    const out: Record<number, { rawValue: number; quality: string; timestamp: string }> = {}
-    for (const [rid, v] of this.latest) out[rid] = v
+  /** Latest snapshot from the hot tier (keyed by `objectId:address` 复合键，避免多设备地址冲突). */
+  getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string }> {
+    const out: Record<string, { rawValue: number; quality: string; timestamp: string }> = {}
+    for (const [k, v] of this.latest) out[k] = v
     return out
   }
 
-  /** Query the cold tier for one register over a time range. */
+  /** 单设备的最新快照（按地址键控）。 */
+  getLatestByObject(objectId: number): Record<number, { rawValue: number; quality: string; timestamp: string }> {
+    const out: Record<number, { rawValue: number; quality: string; timestamp: string }> = {}
+    const prefix = objectId + ':'
+    for (const [k, v] of this.latest) {
+      if (k.startsWith(prefix)) out[Number(k.slice(prefix.length))] = v
+    }
+    return out
+  }
+
+  /** Query the cold tier for a single address over a time range. */
   async query(
-    objectId: number, registerId: number, start: string, end: string,
-  ): Promise<Array<{ ts: string; rawValue: number }>> {
+    objectId: number, address: number, start: string, end: string,
+  ): Promise<Array<{ ts: string; rawValue: number; quality: string }>> {
     const conn = await this.ready
     const reader = await conn.runAndReadAll(
-      `SELECT ts, raw_value FROM poll_data
-       WHERE object_id = $objectId AND register_id = $registerId AND ts >= $start AND ts <= $end
+      `SELECT ts, raw_value, quality FROM poll_data
+       WHERE object_id = $objectId AND address = $address AND ts >= $start AND ts <= $end
        ORDER BY ts`,
-      { objectId, registerId, start, end },
+      { objectId, address, start, end },
     )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown }>
-    return rows.map(r => ({ ts: String(r.ts), rawValue: Number(r.raw_value) }))
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown }>
+    return rows.map(r => ({ ts: String(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
   }
 }
 
