@@ -210,17 +210,20 @@ export class SerialDriver implements ModbusDriver {
           if (err) reject(err)
           else resolve(sp)
         })
-        // 打开成功后的运行期错误（如拔出）：不吞，告警留痕；读/写路径会各自再向上抛错
+        // 打开成功后的运行期错误（如拔出）：标记断开 + 告警；读/写路径会各自再向上抛错
         sp.on('error', (err: any) => {
           if (!settled) {
             settled = true
             clearTimeout(timer)
             reject(err)
           } else {
+            if (this.serialPort === sp) this.ready = false
             const msg = err && err.message ? err.message : String(err)
             this.onWarn('serial port runtime error: ' + msg)
           }
         })
+        // 串口被关闭/拔出：若仍是当前端口则标记断开，让 poller 下次重建连接
+        sp.on('close', () => { if (this.serialPort === sp) this.ready = false })
       } catch (e) {
         if (!settled) {
           settled = true
