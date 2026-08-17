@@ -18,6 +18,7 @@ export const Config: z<Config> = z.object({
 class PollingEngine {
   private drivers = new Map<string, any>()
   private rtuLocks = new Map<string, Promise<void>>()
+  private rtuBusy = new Set<string>() // 串口上有在途轮询时置位，跳过本轮，避免慢设备把队列堆爆
   private paused = new Set<number>()
   private timer: NodeJS.Timeout | undefined
   private running = false
@@ -70,7 +71,11 @@ class PollingEngine {
         }
       }
       for (const obj of tcp) void this.pollObject(obj).catch((e) => this.logPollError(obj, e))
-      for (const [port, objs] of rtuByPort) this.enqueueRtu(port, () => this.pollRtuGroup(objs))
+      for (const [port, objs] of rtuByPort) {
+        if (this.rtuBusy.has(port)) continue // 上一轮还没读完就跳过，避免慢设备把串口队列堆爆（数据越来越旧）
+        this.rtuBusy.add(port)
+        this.enqueueRtu(port, () => this.pollRtuGroup(objs)).finally(() => this.rtuBusy.delete(port))
+      }
       this.runWatchdog(objects)
       this.releaseUnusedRtuDrivers()
       this.timer = setTimeout(loop, this.nextInterval())
