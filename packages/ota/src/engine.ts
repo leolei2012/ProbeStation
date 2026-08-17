@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import {
   crc32, buildStartPdu, buildDataPdu, buildEndPdu, buildStatusPdu,
@@ -45,6 +45,18 @@ export class OtaEngine {
   }
 
   listFirmwares(): any[] { return this.ctx.config.listFirmwares() }
+
+  /** 删除固件：落盘文件 + 数据库记录。 */
+  deleteFirmware(firmwareId: number): { ok: boolean } {
+    const rec = this.ctx.config.getFirmware(firmwareId)
+    if (!rec) return { ok: false }
+    const abs = rec.filePath
+      ? resolve(this.ctx.workspace.getCurrent(), rec.filePath)
+      : join(this.firmwareDir(), 'firmware_' + rec.id + '.bin')
+    try { unlinkSync(abs) } catch { /* 文件可能已不存在 */ }
+    this.ctx.config.deleteFirmware(firmwareId)
+    return { ok: true }
+  }
 
   /** 读固件内容。 */
   private readFirmware(firmwareId: number): { content: Buffer; rec: any } {

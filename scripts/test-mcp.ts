@@ -41,8 +41,8 @@ console.log('tools:', JSON.stringify(tools.tools.map(t => t.name)))
 const r1 = await client.callTool({ name: 'list_devices', arguments: {} })
 console.log('list_devices:', JSON.stringify(r1.content))
 
-const r2 = await client.callTool({ name: 'read_register', arguments: { device_id: obj.id, register_id: reg0.id } })
-console.log('read_register:', JSON.stringify(r2.content))
+const r2 = await client.callTool({ name: 'read_register', arguments: { device_id: obj.id, address: reg0.startAddress } })
+console.log('read_register (by address):', JSON.stringify(r2.content))
 
 // CRUD tools
 const g2 = await client.callTool({ name: 'create_group', arguments: { device_id: obj.id, name: '测试组', start_address: 20, quantity: 5 } })

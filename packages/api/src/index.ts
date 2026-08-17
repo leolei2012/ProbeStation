@@ -41,6 +41,7 @@ export function apply(ctx: Context, config: Config): void {
     // ── 固件上传（OTA，PRD 07）──────────────────────────────
     fastify.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req: any, body: any, done: any) => done(null, body))
     fastify.get('/api/firmwares', async () => ota.listFirmwares())
+    fastify.delete('/api/firmwares/:id', async (req: any) => ota.deleteFirmware(Number((req.params as any).id)))
     fastify.post('/api/firmware/upload', async (req: any, reply: any) => {
       const name = String((req.query as any)?.name ?? 'firmware')
       const version = String((req.query as any)?.version ?? '')

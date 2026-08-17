@@ -26,10 +26,15 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `set_poll_interval` | `device_id, poll_interval_ms` | 设设备采样周期（毫秒，≥1 整数；1ms 只是下限，实际受 Modbus 往返限制） |
 | `set_data_retention` | `retention_seconds, device_id?` | 设历史保留（秒，0=永久；缺省 device_id 设全局，否则设该设备覆盖） |
 | `get_data_retention` | `device_id?` | 查当前生效保留时长（设备覆盖优先于全局） |
-| `read_register` | `device_id, register_id` | 读单寄存器实时值（热缓存） |
-| `read_all` | `device_id` | 读某设备全部寄存器快照 |
+| `read_register` | `device_id, address` | 按 Modbus 地址读单寄存器实时值（address 即寄存器起始地址，平台内部映射 id） |
+| `write_register` | `device_id, address, value` | 按 Modbus 地址写寄存器（FC16，控制真机） |
+| `get_device_snapshot` | `device_id` | 读某设备全部寄存器快照（含别名/地址/类型/时间戳/质量） |
 | `query_history` | `device_id, register_id, start, end` | 查历史时序 |
-| `write_register` | `device_id, register_id, value` | 写寄存器（FC16，控制真机） |
+| `start_recording` | `device_id, interval_ms, duration_ms, addresses?` | 连续采样：录 duration_ms，事后 get_recording 回放 |
+| `start_trigger_recording` | `device_id, interval_ms, trigger_address, operator, threshold?, before_ms, after_ms, addresses?` | 触发记录：条件命中缓存前后窗口（operator 支持 > < >= <= == != changed） |
+| `get_recording` | `recording_id` | 取录制完整采样序列（原始 16 位字） |
+| `list_recordings` | — | 列录制会话（不含 samples） |
+| `stop_recording` | `recording_id` | 提前结束/取消录制 |
 | `create_group` | `device_id, name, function_code?, start_address, quantity, slave_id?, poll_interval_ms?` | 新建分组 |
 | `update_group` | `group_id, name?, slave_id?, function_code?, start_address?, quantity?, poll_interval_ms?, is_active?` | 更改分组 |
 | `create_register` | `group_id, alias?, function_code?, start_address, data_type?` | 新增寄存器 |

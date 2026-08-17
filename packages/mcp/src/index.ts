@@ -7,6 +7,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z as zz } from 'zod'
 import { decodeRawByAddr, encodeRegister, registerWidth } from '@probebench/core'
+import { Recorder } from './recorder.ts'
 
 export const name = 'mcp'
 export const inject = ['config', 'store', 'poller', 'ota']
@@ -23,6 +24,11 @@ export function apply(ctx: Context, config: Config): void {
   const store = (ctx as any).store
   const poller = (ctx as any).poller
   const ota = (ctx as any).ota
+  const recorder = new Recorder(ctx as any, cfg)
+
+  /** 按 (device_id, Modbus address) 定位寄存器（统一寻址，不再用数据库自增 id）。 */
+  const findRegisterByAddress = (deviceId: number, address: number) =>
+    cfg.listRegistersByObject(deviceId).find((r: any) => r.startAddress === address)
 
   // 每个会话一个独立 McpServer：Protocol 只能连一个 transport，多会话/多连接必须各自实例。
   function registerTools(server: McpServer): void {
@@ -59,11 +65,11 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('read_register', {
-      title: 'Read register', description: '读某设备单个寄存器的实时值',
-      inputSchema: { device_id: zz.number(), register_id: zz.number() },
+      title: 'Read register', description: '按 Modbus 地址读某设备单个寄存器的实时值（address 即寄存器起始地址，无需数据库 id）',
+      inputSchema: { device_id: zz.number(), address: zz.number() },
     }, async (args) => {
-      const reg = cfg.getRegister(args.register_id)
-      if (!reg || reg.objectId !== args.device_id) return { content: [{ type: 'text', text: 'register not found' }], isError: true }
+      const reg = findRegisterByAddress(args.device_id, args.address)
+      if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
       const latest = store.getLatestByObject(args.device_id)
       const rawByAddr: Record<number, number> = {}
       for (const k of Object.keys(latest)) rawByAddr[Number(k)] = latest[Number(k)].rawValue
@@ -120,15 +126,15 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('write_register', {
-      title: 'Write register', description: '写某设备单个寄存器（FC16，控制真机，危险操作）',
-      inputSchema: { device_id: zz.number(), register_id: zz.number(), value: zz.number() },
+      title: 'Write register', description: '按 Modbus 地址写某设备单个寄存器（FC16，控制真机，危险操作；address 即寄存器起始地址，无需数据库 id）',
+      inputSchema: { device_id: zz.number(), address: zz.number(), value: zz.number() },
     }, async (args) => {
-      const reg = cfg.getRegister(args.register_id)
-      if (!reg || reg.objectId !== args.device_id) return { content: [{ type: 'text', text: 'register not found' }], isError: true }
+      const reg = findRegisterByAddress(args.device_id, args.address)
+      if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
       const words = encodeRegister(reg.dataType ?? 'int16', args.value)
       await poller.write(reg.objectId, reg.startAddress, words, 'multiple')
-      cfg.log('INFO', 'mcp', 'write register ' + args.register_id + ' = ' + args.value)
-      return { content: [{ type: 'text', text: JSON.stringify({ register_id: args.register_id, value: args.value }) }] }
+      cfg.log('INFO', 'mcp', 'write register addr ' + args.address + ' = ' + args.value)
+      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, address: reg.startAddress, value: args.value }) }] }
     })
 
     server.registerTool('create_group', {
@@ -277,6 +283,52 @@ export function apply(ctx: Context, config: Config): void {
         })
       }
       return { content: [{ type: 'text', text: JSON.stringify(rules) }] }
+    })
+
+    // ── 连续采样 + 触发记录 ─────────────────────────
+    server.registerTool('start_recording', {
+      title: 'Start recording', description: '连续采样：以 interval_ms 间隔录 duration_ms 毫秒，事后 get_recording 回放（期间临时把设备采样周期调到 interval_ms，结束后恢复）',
+      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), duration_ms: zz.number(), addresses: zz.array(zz.number()).optional() },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      if (!Number.isInteger(args.interval_ms) || args.interval_ms < 1) return { content: [{ type: 'text', text: 'interval_ms must be an integer >= 1' }], isError: true }
+      if (!Number.isInteger(args.duration_ms) || args.duration_ms < 1) return { content: [{ type: 'text', text: 'duration_ms must be a positive integer' }], isError: true }
+      const id = recorder.startRecording(args.device_id, args.interval_ms, args.duration_ms, args.addresses)
+      cfg.log('INFO', 'mcp', 'start recording ' + id + ' (device ' + args.device_id + ', ' + args.interval_ms + 'ms x ' + args.duration_ms + 'ms)')
+      return { content: [{ type: 'text', text: JSON.stringify({ recording_id: id }) }] }
+    })
+
+    server.registerTool('start_trigger_recording', {
+      title: 'Start trigger recording', description: '触发记录：trigger_address 满足 operator/阈值时，缓存触发前 before_ms + 触发后 after_ms 的采样。operator 支持 > < >= <= == != changed',
+      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), trigger_address: zz.number(), operator: zz.string(), threshold: zz.number().optional(), before_ms: zz.number(), after_ms: zz.number(), addresses: zz.array(zz.number()).optional() },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      if (!Number.isInteger(args.interval_ms) || args.interval_ms < 1) return { content: [{ type: 'text', text: 'interval_ms must be an integer >= 1' }], isError: true }
+      const id = recorder.startTriggerRecording(args.device_id, args.interval_ms, args.trigger_address, args.operator, args.threshold ?? 0, args.before_ms ?? 0, args.after_ms ?? 0, args.addresses)
+      cfg.log('INFO', 'mcp', 'start trigger recording ' + id + ' (device ' + args.device_id + ', trigger addr ' + args.trigger_address + ' ' + args.operator + ' ' + (args.threshold ?? 0) + ')')
+      return { content: [{ type: 'text', text: JSON.stringify({ recording_id: id }) }] }
+    })
+
+    server.registerTool('get_recording', {
+      title: 'Get recording', description: '取某次录制的完整采样序列（samples 为原始 16 位字，消费端按类型解码）',
+      inputSchema: { recording_id: zz.string() },
+    }, async (args) => {
+      const rec = recorder.getRecording(args.recording_id)
+      if (!rec) return { content: [{ type: 'text', text: 'recording not found' }], isError: true }
+      return { content: [{ type: 'text', text: JSON.stringify(rec) }] }
+    })
+
+    server.registerTool('list_recordings', {
+      title: 'List recordings', description: '列出录制会话（不含 samples，用 get_recording 取详情）',
+      inputSchema: {},
+    }, async () => ({ content: [{ type: 'text', text: JSON.stringify(recorder.listRecordings()) }] }))
+
+    server.registerTool('stop_recording', {
+      title: 'Stop recording', description: '提前结束录制（触发记录可用它取消）',
+      inputSchema: { recording_id: zz.string() },
+    }, async (args) => {
+      const ok = recorder.stopRecording(args.recording_id)
+      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id }) }] }
     })
 
     // ── OTA 固件升级（PRD 07）─────────────────────

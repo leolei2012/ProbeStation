@@ -11,3 +11,6 @@ reference/
 # 测试临时工作区产物
 test-ws-*/
 
+# DSH 会话备份
+dsh-session-*.zip
+
