@@ -205,7 +205,12 @@ export class ConfigStore {
     this.notify('rule', id)
   }
 
-  log(level: string, source: string, message: string): void { this.db.prepare('INSERT INTO logs (ts, level, source, message) VALUES (?, ?, ?, ?)').run(new Date().toISOString(), level, source, message) }
+  log(level: string, source: string, message: string): void {
+    const res = this.db.prepare('INSERT INTO logs (ts, level, source, message) VALUES (?, ?, ?, ?)').run(new Date().toISOString(), level, source, message)
+    // 长期运行防日志表无限膨胀：每 100 条清一次，只保留最近 10000 条
+    const id = Number((res as any).lastInsertRowid)
+    if (id % 100 === 0) this.db.prepare('DELETE FROM logs WHERE id < ?').run(id - 10000)
+  }
   listLogs(limit = 100): LogRecord[] { return this.db.prepare('SELECT id, ts, level, source, message FROM logs ORDER BY id DESC LIMIT ?').all(limit) as unknown as LogRecord[] }
   clearLogs(): void { this.db.prepare('DELETE FROM logs').run() }
 

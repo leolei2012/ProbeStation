@@ -42,11 +42,33 @@ export interface RecordingSession {
  * - 触发模式：维护 beforeMs 的环形窗口，条件命中后继续录 afterMs 再结束（带 10 分钟安全上限）。
  */
 export class Recorder {
+  private static readonly MAX_SESSIONS = 50 // 长期运行防内存无限增长：只保留最近 50 段录制
   private sessions = new Map<string, RecordingSession>()
   private timers = new Map<string, NodeJS.Timeout>()
 
   constructor(private readonly ctx: any, private readonly cfg: any) {
     ctx.on('poller/result', ({ objectId, points }: any) => this.onResult(objectId, points))
+  }
+
+  private addSession(session: RecordingSession): void {
+    this.sessions.set(session.id, session)
+    while (this.sessions.size > Recorder.MAX_SESSIONS) {
+      let oldestId: string | null = null
+      let oldestTs = Infinity
+      for (const s of this.sessions.values()) {
+        if (s.startedAt < oldestTs) { oldestTs = s.startedAt; oldestId = s.id }
+      }
+      if (oldestId != null) this.sessions.delete(oldestId)
+      else break
+    }
+  }
+
+  /** 删除一段录制（含仍在录制中的，会先结束）。 */
+  deleteRecording(id: string): boolean {
+    if (!this.sessions.has(id)) return false
+    this.finish(id)
+    this.sessions.delete(id)
+    return true
   }
 
   /** 连续采样：以 intervalMs 间隔录 durationMs 秒（毫秒）。addresses 缺省 = 全部。 */
@@ -68,7 +90,7 @@ export class Recorder {
       triggered: false,
       lastTriggerValue: null,
     }
-    this.sessions.set(session.id, session)
+    this.addSession(session)
     this.cfg.updateObject(deviceId, { pollIntervalMs: intervalMs })
     this.timers.set(session.id, setTimeout(() => this.finish(session.id), durationMs))
     return session.id
@@ -93,7 +115,7 @@ export class Recorder {
       triggered: false,
       lastTriggerValue: null,
     }
-    this.sessions.set(session.id, session)
+    this.addSession(session)
     this.cfg.updateObject(deviceId, { pollIntervalMs: intervalMs })
     // 安全上限：10 分钟仍不触发则结束，避免无限录制
     this.timers.set(session.id, setTimeout(() => this.finish(session.id), 10 * 60 * 1000))

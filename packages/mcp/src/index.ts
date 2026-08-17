@@ -331,6 +331,14 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id }) }] }
     })
 
+    server.registerTool('delete_recording', {
+      title: 'Delete recording', description: '删除一段录制（释放内存；录制中会先结束）',
+      inputSchema: { recording_id: zz.string() },
+    }, async (args) => {
+      const ok = recorder.deleteRecording(args.recording_id)
+      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id }) }] }
+    })
+
     // ── OTA 固件升级（PRD 07）─────────────────────
     server.registerTool('upload_firmware', {
       title: 'Upload firmware', description: '上传固件（base64，建议 <1MB；大文件走 HTTP POST /api/firmware/upload 原始二进制）',
