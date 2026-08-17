@@ -15,7 +15,7 @@ export interface Config {
 export const Config: z<Config> = z.object({
   defaultTimeoutMs: z.number().default(3000),
   defaultUnitId: z.number().default(1),
-  connectTimeoutMs: z.number().default(3000),
+  connectTimeoutMs: z.number().default(5000), // CH340/CP2102 首次 open 可能较慢，放宽到 5s
 })
 
 const EXC_MSG: Record<number, string> = { 1: 'Illegal Function', 2: 'Illegal Data Address', 3: 'Illegal Data Value', 4: 'Slave Device Failure', 5: 'Acknowledge', 6: 'Slave Device Busy', 8: 'Memory Parity Error', 10: 'Gateway Path Unavailable', 11: 'Gateway Target Failed to Respond' }

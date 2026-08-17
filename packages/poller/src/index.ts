@@ -248,6 +248,7 @@ class PollingEngine {
     const obj = this.ctx.config.getObject(id)
     if (!obj) return
     const key = this.driverKey(obj)
+    this.connectCooldown.delete(key) // 编辑设备后立即重连，不残留旧冷却
     const d = this.drivers.get(key)
     if (d) { this.drivers.delete(key); await Promise.resolve(d.disconnect()).catch(() => {}) }
   }
@@ -257,6 +258,8 @@ class PollingEngine {
     const groups = this.ctx.config.listGroups(objectId).filter((g: any) => g.isActive)
     for (const g of groups) this.setGroupError(objectId, g.id, 'Disconnected')
     const obj = this.ctx.config.getObject(objectId)
+    // 断开时清掉连接冷却：用户手动「断开→连接」应立即重连，而不是再等冷却期
+    if (obj) this.connectCooldown.delete(this.driverKey(obj))
     // TCP 释放该设备自己的连接；RTU 串口由 releaseUnusedRtuDrivers() 按引用计数统一释放
     if (!obj || obj.transport !== 'rtu') {
       const key = 'tcp:' + objectId
