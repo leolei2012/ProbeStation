@@ -20,10 +20,10 @@
 | Phase | 内容 | 状态 |
 |---|---|---|
 | 0–4 | 脚手架 → 采集/持久化 → API/前端 → 全部功能（slave/importer/sink/rule/logs/写/CRUD/MCP） | ✅ |
-| 5 | 降采样/保留、AI 测试层 | ⬜ |
+| 5 | 降采样、AI 调试语义层 | ⬜ |
 
-**已实现**：Modbus 轮询、DuckDB 时序、REST+WS、React 仪表盘（DSH 风格）、写寄存器、CRUD、从站模拟、告警、MBS/MBP 导入、CSV/XLSX 导出、日志、MCP 服务器（AI 接口）。
-**未实现**：OTA 固件升级、降采样/保留、AI 测试层（语义 Excel → DSH skill）。
+**已实现**：Modbus TCP/RTU 轮询、DuckDB 时序、REST+WS（心跳、断线重连、REST 兜底）、React 仪表盘（DSH 风格）、写寄存器、CRUD、从站模拟、告警、MBS/MBP 导入、CSV/XLSX 导出、日志、工作区、按设备轮询速率、数据保留、连续/触发录制、29 个 MCP 工具、OTA 固件升级（0x41 IAP，TCP/RTU）。
+**未实现**：时序降采样、AI 调试语义层（语义清单/DSH skill）、FC05/FC15 线圈写入及后续完整从站能力。
 
 ---
 
@@ -45,9 +45,9 @@ npm run start   # 构建前端 + 一键启动
 
 TypeScript · Cordis 4（插件运行时）· schemastery（配置校验）· jsmodbus（Modbus）· Fastify（REST/WS）· DuckDB（时序）· node:sqlite（元数据）· React 18 + Vite（前端）· npm workspaces。
 
-## 插件（11 个，全部「一切皆插件」）
+## 插件（13 个，全部「一切皆插件」）
 
-`core / config / modbus / poller / store / sink / rule / api / slave / importer / mcp` + 前端 `apps/web` + 入口 `apps/cli`。
+`core / config / modbus / poller / store / sink / rule / api / slave / importer / mcp / ota / workspace` + 前端 `apps/web` + 入口 `apps/cli`。
 
 完整职责、服务契约、数据流、插件开发范式、踩坑记录见 [`docs/03`](docs/03-开发与接手指南.md)。
 
@@ -57,9 +57,12 @@ TypeScript · Cordis 4（插件运行时）· schemastery（配置校验）· js
 
 ```bash
 npx tsx scripts/test-loop.ts      # 轮询→落库→查询
+npx tsx scripts/test-protocol.ts  # 统一 Modbus 模型、校验、结构化错误和兼容执行入口
+npx tsx scripts/test-modbus-diagnostics.ts # 有界报文缓冲、错误率和响应耗时统计
+npx tsx scripts/test-store-area-migration.ts # 时序表 area 结构升级与四数据区隔离
 npx tsx scripts/test-crud.ts      # 写寄存器 + CRUD
 npx tsx scripts/test-ws.ts        # WebSocket
 npx tsx scripts/test-rule.ts      # 告警
-npx tsx scripts/test-mcp.ts       # MCP 工具
+npx tsx scripts/test-mcp.ts       # MCP 29 个工具
 # ... 全部见 docs/03 §2
 ```

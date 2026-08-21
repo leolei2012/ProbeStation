@@ -26,30 +26,30 @@ slave.setRegister(1, 500)
 poller.startAll()
 await new Promise((r) => setTimeout(r, 800))
 
-console.log('A after start =', store.getLatestByObject(objA.id)[regA.startAddress]?.rawValue, '(expect 100)')
+console.log('A after start =', store.getLatestByObject(objA.id, 'holding-register')[regA.startAddress]?.rawValue, '(expect 100)')
 const bDisconnected = errors.some((e) => e.groupId === gB.id && e.error === 'Disconnected')
-const bNotPolled = store.getLatestByObject(objB.id)[regB.startAddress]?.rawValue === undefined
+const bNotPolled = store.getLatestByObject(objB.id, 'holding-register')[regB.startAddress]?.rawValue === undefined
 console.log('B Disconnected event =', bDisconnected, '| B not polled =', bNotPolled)
 
 // A 运行中「断开」
 cfg.toggleObject(objA.id)
 slave.setRegister(0, 111)
 await new Promise((r) => setTimeout(r, 1500))
-const aFrozen = store.getLatestByObject(objA.id)[regA.startAddress]?.rawValue === 100
+const aFrozen = store.getLatestByObject(objA.id, 'holding-register')[regA.startAddress]?.rawValue === 100
 const aDisconnected = errors.some((e) => e.groupId === gA.id && e.error === 'Disconnected')
 console.log('A frozen =', aFrozen, '| A Disconnected event =', aDisconnected)
 
 // A 「重连」
 cfg.toggleObject(objA.id)
 await new Promise((r) => setTimeout(r, 2000))
-const aResumed = store.getLatestByObject(objA.id)[regA.startAddress]?.rawValue === 111
-console.log('A resumed =', aResumed, '(latest =', store.getLatestByObject(objA.id)[regA.startAddress]?.rawValue + ')')
+const aResumed = store.getLatestByObject(objA.id, 'holding-register')[regA.startAddress]?.rawValue === 111
+console.log('A resumed =', aResumed, '(latest =', store.getLatestByObject(objA.id, 'holding-register')[regA.startAddress]?.rawValue + ')')
 
 // B 点「连接」：启动时断开的设备，连接后应开始轮询
 cfg.updateObject(objB.id, { isActive: 1 })
 await new Promise((r) => setTimeout(r, 2000))
-const bPolled = store.getLatestByObject(objB.id)[regB.startAddress]?.rawValue === 500
-console.log('B after connect =', store.getLatestByObject(objB.id)[regB.startAddress]?.rawValue, '(expect 500) | polled =', bPolled)
+const bPolled = store.getLatestByObject(objB.id, 'holding-register')[regB.startAddress]?.rawValue === 500
+console.log('B after connect =', store.getLatestByObject(objB.id, 'holding-register')[regB.startAddress]?.rawValue, '(expect 500) | polled =', bPolled)
 
 poller.stopAll()
 const ok = aFrozen && aDisconnected && aResumed && bDisconnected && bNotPolled && bPolled

@@ -1,5 +1,6 @@
 import type { Context } from 'cordis'
 import z from 'schemastery'
+import { areaForFunction, type ModbusFunctionCode } from '@probebench/core'
 
 export const name = 'poller'
 export const inject = ['config', 'modbus', 'store']
@@ -37,11 +38,10 @@ class PollingEngine {
       const points: Array<Record<string, unknown>> = []
       const cycleTs = new Date().toISOString() // 同一轮询周期内所有分组共享时间戳
       for (const g of device.groups) {
-        const values: number[] = g.functionCode === 4
-          ? await driver.readInputRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
-          : await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
+        const values = await this.readGroup(driver, g)
+        const area = areaForFunction(g.functionCode as ModbusFunctionCode)
         for (let i = 0; i < values.length; i++) {
-          points.push({ objectId: device.id, address: g.startAddress + i, timestamp: cycleTs, rawValue: values[i], quality: 'good' })
+          points.push({ objectId: device.id, area, address: g.startAddress + i, timestamp: cycleTs, rawValue: Number(values[i]), quality: 'good' })
         }
       }
       this.ctx.emit('poller/result', { objectId: device.id, points })
@@ -114,6 +114,40 @@ class PollingEngine {
     return !!d && d.isConnected()
   }
 
+  /** 返回设备（TCP）或共享串口通道（RTU）的实时通信指标。 */
+  getDeviceDiagnostics(objectId: number): Record<string, unknown> {
+    const obj = this.ctx.config.getObject(objectId)
+    if (!obj) throw new Error('object ' + objectId + ' not found')
+    const driver = this.drivers.get(this.driverKey(obj))
+    return {
+      objectId,
+      connected: !!driver && driver.isConnected(),
+      scope: obj.transport === 'rtu' ? 'channel' : 'device',
+      channelKey: this.driverKey(obj),
+      metrics: driver?.getDiagnostics?.() ?? null,
+    }
+  }
+
+  /** RTU 共享串口时只返回该对象实际配置的 slave id 报文；TCP 天然按设备隔离。 */
+  getDeviceFrames(objectId: number, limit = 200): any[] {
+    const obj = this.ctx.config.getObject(objectId)
+    if (!obj) throw new Error('object ' + objectId + ' not found')
+    const driver = this.drivers.get(this.driverKey(obj))
+    if (!driver?.getFrames) return []
+    const safeLimit = Math.max(0, Math.min(2000, Math.trunc(limit)))
+    const frames = driver.getFrames(obj.transport === 'rtu' ? 2000 : safeLimit)
+    if (obj.transport !== 'rtu') return frames
+    const slaveIds = new Set(this.ctx.config.listGroups(objectId).map((g: any) => g.slaveId ?? obj.slaveId ?? 1))
+    if (slaveIds.size === 0) slaveIds.add(obj.slaveId ?? 1)
+    return frames.filter((frame: any) => slaveIds.has(frame.slaveId)).slice(-safeLimit)
+  }
+
+  clearDeviceDiagnostics(objectId: number): void {
+    const obj = this.ctx.config.getObject(objectId)
+    if (!obj) throw new Error('object ' + objectId + ' not found')
+    this.drivers.get(this.driverKey(obj))?.clearDiagnostics?.()
+  }
+
   /** OTA 升级期间暂停/恢复该设备轮询（避免和升级抢连接，尤其 RTU 半双工）。 */
   pauseObject(objectId: number): void { this.paused.add(objectId) }
   resumeObject(objectId: number): void {
@@ -181,13 +215,12 @@ class PollingEngine {
     const cycleTs = new Date().toISOString() // 同一轮询周期内所有分组共享时间戳，避免历史页多分组错位
     for (const g of due) {
       try {
-        const values: number[] = g.functionCode === 4
-          ? await driver.readInputRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
-          : await driver.readHoldingRegisters(g.startAddress, g.quantity, g.slaveId ?? 1)
+        const values = await this.readGroup(driver, g)
+        const area = areaForFunction(g.functionCode as ModbusFunctionCode)
         this.clearGroupError(obj.id, g.id)
         for (let i = 0; i < values.length; i++) {
           const addr = g.startAddress + i
-          points.push({ objectId: obj.id, address: addr, timestamp: cycleTs, rawValue: values[i], quality: 'good' })
+          points.push({ objectId: obj.id, area, address: addr, timestamp: cycleTs, rawValue: Number(values[i]), quality: 'good' })
         }
       } catch (e) {
         this.setGroupError(obj.id, g.id, this.errMsg(e))
@@ -197,6 +230,16 @@ class PollingEngine {
       this.ctx.emit('poller/result', { objectId: obj.id, points })
       this.ctx.store.write(points)
       this.lastOutcomeAt.set(obj.id, Date.now())
+    }
+  }
+
+  private async readGroup(driver: any, group: any): Promise<Array<number | boolean>> {
+    const slaveId = group.slaveId ?? 1
+    switch (group.functionCode) {
+      case 1: return driver.readCoils(group.startAddress, group.quantity, slaveId)
+      case 2: return driver.readDiscreteInputs(group.startAddress, group.quantity, slaveId)
+      case 4: return driver.readInputRegisters(group.startAddress, group.quantity, slaveId)
+      default: return driver.readHoldingRegisters(group.startAddress, group.quantity, slaveId)
     }
   }
 
@@ -316,7 +359,11 @@ class PollingEngine {
     const key = this.driverKey(fresh)
     let driver = this.drivers.get(key)
     if (!driver || !driver.isConnected()) {
-      driver = this.ctx.modbus.createDriver(fresh.transport === 'rtu' ? 'rtu' : 'tcp')
+      const transport = fresh.transport === 'rtu' ? 'rtu' : 'tcp'
+      const identity = transport === 'rtu'
+        ? { channelKey: key }
+        : { deviceId: fresh.id, channelKey: key }
+      driver = this.ctx.modbus.createDriver(transport, identity)
       await driver.connect(fresh)
       this.drivers.set(key, driver)
     }

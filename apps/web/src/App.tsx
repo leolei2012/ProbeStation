@@ -21,6 +21,7 @@ interface WorkspaceInfo { current: string; currentTitle: string; recent: { path:
 type Lang = 'zh' | 'en'
 type Theme = 'light' | 'dark' | 'system'
 type T = (key: string) => string
+type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'disconnected'
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
@@ -41,6 +42,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     stopped: '已停用',
     connected: '已连接',
     disconnected: '未连接',
+    realtimeConnected: '实时通道正常', realtimeConnecting: '实时通道连接中', realtimeStale: '实时数据延迟', realtimeReconnecting: '实时通道重连中（第 {n} 次）', realtimeDisconnected: '实时通道已断开',
     groupDisconnected: '已断开',
     connect: '连接',
     disconnect: '断开',
@@ -56,7 +58,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
     tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件',
     groupCount: '{n} 组',
-    newGroup: '新建分组', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', scanRate: '扫描间隔(ms)', edit: '编辑', save: '保存', fcReadHolding: '读保持寄存器', fcReadInput: '读输入寄存器',
+    newGroup: '新建分组', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', scanRate: '扫描间隔(ms)', edit: '编辑', save: '保存', fcReadCoils: '读线圈', fcReadDiscrete: '读离散输入', fcReadHolding: '读保持寄存器', fcReadInput: '读输入寄存器',
     histHint: '最近 1 小时数据', histStart: '开始时间', histEnd: '结束时间', histQuery: '查询', histLoading: '查询中…', histPrev: '上一页', histNext: '下一页', histTotal: '共 {n} 条', histPage: '第 {x}/{y} 页', noHistory: '暂无历史数据', colTime: '时间', histTruncated: '结果较多，仅显示最近 {n} 条', histIdle: '选择时间范围后点击「查询」', histEmpty: '该时间段暂无历史数据', histError: '查询失败', histRangeInvalid: '开始时间必须早于结束时间', histLast1h: '最近 1 小时', histLast6h: '最近 6 小时', histLast24h: '最近 24 小时', histToday: '今天', histQuick: '快捷', selectRegisters: '选择寄存器', selectAll: '全选', clearAll: '清空', histNoRegs: '未选择任何寄存器', curveHint: '最近 1 小时曲线', curveReset: '重置缩放', curveZoomHint: '框选放大：左上→右下拖拽；恢复：右下→左上拖拽', firmwareHint: '暂无固件，请先上传', fwUpload: '上传固件', fwAbort: '中止升级', fwState: '状态', fwUpgrade: '升级', fwUploaded: '固件已上传', fwUploadErr: '上传失败', fwStarted: '升级已发起', fwUpgradeErr: '升级发起失败', fwDelete: '删除', fwDeleted: '固件已删除', fwDeleteErr: '删除失败', confirmDeleteFirmware: '确定删除固件 {name} 吗？',
     appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
@@ -82,6 +84,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     stopped: 'Stopped',
     connected: 'Connected',
     disconnected: 'Disconnected',
+    realtimeConnected: 'Live channel connected', realtimeConnecting: 'Live channel connecting', realtimeStale: 'Live data delayed', realtimeReconnecting: 'Live channel reconnecting (attempt {n})', realtimeDisconnected: 'Live channel disconnected',
     groupDisconnected: 'Disconnected',
     connect: 'Connect',
     disconnect: 'Disconnect',
@@ -97,7 +100,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
     tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware',
     groupCount: '{n} groups',
-    newGroup: 'New Group', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', scanRate: 'Scan rate(ms)', edit: 'Edit', save: 'Save', fcReadHolding: 'Read Holding', fcReadInput: 'Read Input',
+    newGroup: 'New Group', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', scanRate: 'Scan rate(ms)', edit: 'Edit', save: 'Save', fcReadCoils: 'Read Coils', fcReadDiscrete: 'Read Discrete Inputs', fcReadHolding: 'Read Holding', fcReadInput: 'Read Input',
     histHint: 'Last 1 hour', histStart: 'Start', histEnd: 'End', histQuery: 'Query', histLoading: 'Loading…', histPrev: 'Prev', histNext: 'Next', histTotal: '{n} rows', histPage: 'Page {x}/{y}', noHistory: 'No history data', colTime: 'Time', histTruncated: 'Too many rows, showing latest {n}', histIdle: 'Select a time range and click Query', histEmpty: 'No history data in this range', histError: 'Query failed', histRangeInvalid: 'Start time must be before end time', histLast1h: 'Last 1h', histLast6h: 'Last 6h', histLast24h: 'Last 24h', histToday: 'Today', histQuick: 'Quick', selectRegisters: 'Select registers', selectAll: 'Select all', clearAll: 'Clear', histNoRegs: 'No registers selected', curveHint: 'Last 1 hour', curveReset: 'Reset zoom', curveZoomHint: 'Drag top-left→bottom-right to zoom in; drag back to reset', firmwareHint: 'No firmware uploaded yet', fwUpload: 'Upload firmware', fwAbort: 'Abort', fwState: 'State', fwUpgrade: 'Upgrade', fwUploaded: 'Firmware uploaded', fwUploadErr: 'Upload failed', fwStarted: 'Upgrade started', fwUpgradeErr: 'Upgrade failed', fwDelete: 'Delete', fwDeleted: 'Firmware deleted', fwDeleteErr: 'Delete failed', confirmDeleteFirmware: 'Delete firmware {name}?',
     appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
@@ -187,15 +190,23 @@ function WorkspaceRow({ w, isCurrent, isExpanded, deviceCount, onToggle, onSwitc
 
 interface RegView { value: string; covered: boolean; invalid: boolean; writable: boolean }
 
+function areaForFunctionCode(fc: number): string {
+  if (fc === 1 || fc === 5 || fc === 15) return 'coil'
+  if (fc === 2) return 'discrete-input'
+  if (fc === 4) return 'input-register'
+  return 'holding-register'
+}
+
 /** 按地址顺序合并多字：首字显示合并值、被覆盖字显示 —、数据不足显示 —（不可写）。 */
 function buildRegViews(groups: DeviceGroup[], latest: Record<string, LatestValue>, objectId: number): Map<number, RegView> {
-  const rawByAddr: Record<number, number> = {}
-  const prefix = objectId + ':'
-  for (const k of Object.keys(latest)) {
-    if (k.startsWith(prefix)) rawByAddr[Number(k.slice(prefix.length))] = latest[k].rawValue
-  }
   const views = new Map<number, RegView>()
   for (const g of groups) {
+    const rawByAddr: Record<number, number> = {}
+    const area = areaForFunctionCode(g.functionCode)
+    const prefix = `${objectId}:${area}:`
+    for (const k of Object.keys(latest)) {
+      if (k.startsWith(prefix)) rawByAddr[Number(k.slice(prefix.length))] = latest[k].rawValue
+    }
     const regs = [...g.registers].sort((a, b) => a.startAddress - b.startAddress)
     const groupEnd = g.startAddress + g.quantity
     let consumedUpTo = -Infinity
@@ -241,6 +252,7 @@ export default function App() {
   const [showWorkspace, setShowWorkspace] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [wsExpanded, setWsExpanded] = useState(true)
+  const [realtime, setRealtime] = useState<{ status: RealtimeStatus; attempt: number }>({ status: 'connecting', attempt: 0 })
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const selectedIdRef = useRef<number | null>(selectedId)
@@ -276,20 +288,108 @@ export default function App() {
   useEffect(() => { refreshDevices(); refreshWorkspace() }, [refreshDevices, refreshWorkspace])
   useEffect(() => { if (selectedId != null) refreshRegisters(selectedId) }, [selectedId, refreshRegisters])
   useEffect(() => {
-    const ws = new WebSocket('ws://' + location.host + '/ws')
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data)
-      if (msg.type === 'latest') setLatest(msg.data)
-      else if (msg.type === 'poller/result') {
-        setLatest((prev) => { const next = { ...prev }; for (const p of msg.points) next[p.objectId + ':' + p.address] = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp }; return next })
+    const HEARTBEAT_MS = 10_000
+    const STALE_MS = 30_000
+    const FORCE_RECONNECT_MS = 45_000
+    const FALLBACK_MS = 5_000
+    let ws: WebSocket | null = null
+    let stopped = false
+    let attempt = 0
+    let lastMessageAt = Date.now()
+    let currentStatus: RealtimeStatus = 'connecting'
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+
+    const updateStatus = (status: RealtimeStatus, nextAttempt = attempt) => {
+      currentStatus = status
+      setRealtime({ status, attempt: nextAttempt })
+    }
+    const mergeObjectSnapshot = (objectId: number, data: Record<string, LatestValue>) => {
+      const prefix = objectId + ':'
+      setLatest((prev) => {
+        const next = { ...prev }
+        for (const key of Object.keys(next)) if (key.startsWith(prefix)) delete next[key]
+        for (const [address, value] of Object.entries(data)) next[prefix + address] = value
+        return next
+      })
+    }
+    const fetchFallback = async () => {
+      if (currentStatus === 'connected') return
+      const id = selectedIdRef.current
+      if (id == null) return
+      try { mergeObjectSnapshot(id, await api.get('/api/monitor_objects/' + id + '/latest')) } catch { /* 下轮继续尝试 */ }
+    }
+    const scheduleReconnect = () => {
+      if (stopped || reconnectTimer) return
+      attempt += 1
+      updateStatus(attempt >= 10 ? 'disconnected' : 'reconnecting', attempt)
+      const base = Math.min(15_000, 1_000 * 2 ** Math.min(attempt - 1, 4))
+      const delay = Math.round(base * (0.8 + Math.random() * 0.4))
+      reconnectTimer = setTimeout(() => { reconnectTimer = undefined; connect() }, delay)
+    }
+    const handleMessage = (event: MessageEvent) => {
+      lastMessageAt = Date.now()
+      if (currentStatus !== 'connected') updateStatus('connected', 0)
+      let msg: any
+      try { msg = JSON.parse(String(event.data)) } catch { return }
+      if (!msg || typeof msg.type !== 'string' || msg.type === 'pong') return
+      if (msg.type === 'latest' && msg.data && typeof msg.data === 'object') setLatest(msg.data)
+      else if (msg.type === 'poller/result' && Array.isArray(msg.points)) {
+        setLatest((prev) => { const next = { ...prev }; for (const p of msg.points) if (p.area) next[p.objectId + ':' + p.area + ':' + p.address] = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp }; return next })
       }
       else if (msg.type === 'group-error') setGroupErrors((prev) => ({ ...prev, [msg.groupId]: msg.error }))
       else if (msg.type === 'group-ok') setGroupErrors((prev) => { const next = { ...prev }; delete next[msg.groupId]; return next })
       else if (msg.type === 'workspace/changed') { setSelectedId(null); setLatest({}); setGroupErrors({}); refreshDevices(); refreshWorkspace() }
       else if (msg.type === 'config/changed') { refreshDevices(); if (selectedIdRef.current != null) refreshRegisters(selectedIdRef.current) }
     }
-    return () => ws.close()
-  }, [])
+    const connect = () => {
+      if (stopped) return
+      const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://'
+      updateStatus(attempt === 0 ? 'connecting' : 'reconnecting', attempt)
+      const socket = new WebSocket(protocol + location.host + '/ws')
+      ws = socket
+      socket.onopen = () => {
+        if (ws !== socket) return
+        attempt = 0
+        lastMessageAt = Date.now()
+        updateStatus('connected', 0)
+      }
+      socket.onmessage = (event) => { if (ws === socket) handleMessage(event) }
+      socket.onerror = () => { if (ws === socket) socket.close() }
+      socket.onclose = () => { if (ws === socket) { ws = null; scheduleReconnect() } }
+    }
+    const reconnectNow = () => {
+      if (stopped) return
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = undefined }
+      attempt = 0
+      if (ws) { const old = ws; ws = null; old.close() }
+      connect()
+    }
+
+    const heartbeat = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }))
+    }, HEARTBEAT_MS)
+    const watchdog = setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return
+      const idle = Date.now() - lastMessageAt
+      if (idle >= FORCE_RECONNECT_MS) ws.close()
+      else if (idle >= STALE_MS && currentStatus === 'connected') updateStatus('stale', attempt)
+    }, 5_000)
+    const fallback = setInterval(() => { void fetchFallback() }, FALLBACK_MS)
+    const onOnline = () => reconnectNow()
+    const onVisible = () => { if (document.visibilityState === 'visible' && currentStatus !== 'connected') reconnectNow() }
+    window.addEventListener('online', onOnline)
+    document.addEventListener('visibilitychange', onVisible)
+    connect()
+
+    return () => {
+      stopped = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      clearInterval(heartbeat); clearInterval(watchdog); clearInterval(fallback)
+      window.removeEventListener('online', onOnline)
+      document.removeEventListener('visibilitychange', onVisible)
+      if (ws) { const old = ws; ws = null; old.close() }
+    }
+  }, [refreshDevices, refreshRegisters, refreshWorkspace])
 
   const addDevice = useCallback(async (f: DeviceFields) => {
     if (!f.name || (f.transport !== 'rtu' && !f.ip)) return
@@ -396,7 +496,7 @@ export default function App() {
 
       <main className="main">
         {selected
-          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} groupErrors={groupErrors} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
           : <EmptyState t={t} onAdd={() => setShowAdd(true)} />}
       </main>
 
@@ -411,18 +511,25 @@ function EmptyState({ t, onAdd }: { t: T; onAdd: () => void }) {
   return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div><button className="btn primary" onClick={onAdd}>{t('newDevice')}</button></div>
 }
 
-function DeviceView({ t, device, groups, latest, groupErrors, onToggle, onEdit, onDelete, onRefresh }: {
+function DeviceView({ t, device, groups, latest, groupErrors, realtime, onToggle, onEdit, onDelete, onRefresh }: {
   t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
+  realtime: { status: RealtimeStatus; attempt: number }
   onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => void; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
   const [showEdit, setShowEdit] = useState(false)
   const registers = groups.flatMap((g) => g.registers)
+  const realtimeText = realtime.status === 'connected' ? t('realtimeConnected')
+    : realtime.status === 'connecting' ? t('realtimeConnecting')
+      : realtime.status === 'stale' ? t('realtimeStale')
+        : realtime.status === 'reconnecting' ? t('realtimeReconnecting').replace('{n}', String(realtime.attempt))
+          : t('realtimeDisconnected')
   return (
     <div>
       <div className="device-head">
         <span className="name">{device.name}</span>
         <span className={'status-badge' + (device.isActive ? ' on' : '')}>{device.isActive ? t('connected') : t('disconnected')}</span>
+        <span className={'status-badge realtime ' + realtime.status}>{realtimeText}</span>
         <div style={{ flex: 1 }} />
         <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? t('disconnect') : t('connect')}</button>
         <button className="btn" onClick={() => setShowEdit(true)}>{t('edit')}</button>
@@ -530,6 +637,8 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
         <input value={slaveId} onChange={(e) => setSlaveId(e.target.value)} />
         <label>{t('functionCode')}</label>
         <select value={functionCode} onChange={(e) => setFunctionCode(e.target.value)}>
+          <option value="1">FC01 · {t('fcReadCoils')}</option>
+          <option value="2">FC02 · {t('fcReadDiscrete')}</option>
           <option value="3">FC03 · {t('fcReadHolding')}</option>
           <option value="4">FC04 · {t('fcReadInput')}</option>
         </select>
@@ -747,12 +856,22 @@ function HistoryTable({ t, device, groups, registers }: { t: T; device: Device; 
     try {
       const startIso = new Date(start).toISOString()
       const endIso = new Date(end).toISOString()
-      const pts: Array<{ ts: string; address: number; rawValue: number }> = await api.get('/api/data/object?object_id=' + device.id + '&start=' + startIso + '&end=' + endIso)
-      const rawByTs = new Map<string, Record<number, number>>()
-      for (const p of pts) { if (!rawByTs.has(p.ts)) rawByTs.set(p.ts, {}); rawByTs.get(p.ts)![p.address] = p.rawValue }
+      const pts: Array<{ ts: string; area: string; address: number; rawValue: number }> = await api.get('/api/data/object?object_id=' + device.id + '&start=' + startIso + '&end=' + endIso)
+      const rawByTs = new Map<string, Map<string, Record<number, number>>>()
+      for (const p of pts) {
+        if (!rawByTs.has(p.ts)) rawByTs.set(p.ts, new Map())
+        const area = p.area
+        const byArea = rawByTs.get(p.ts)!
+        if (!byArea.has(area)) byArea.set(area, {})
+        byArea.get(area)![p.address] = p.rawValue
+      }
       const nextRows: Array<{ ts: string; values: Record<number, string> }> = []
-      for (const [ts, rawByAddr] of rawByTs) {
-        const formatted = formatRawByAddr(registers, rawByAddr)
+      for (const [ts, byArea] of rawByTs) {
+        const formatted = new Map<number, string>()
+        for (const area of ['coil', 'discrete-input', 'holding-register', 'input-register']) {
+          const subset = registers.filter(r => areaForFunctionCode(r.functionCode) === area)
+          for (const [id, value] of formatRawByAddr(subset, byArea.get(area) ?? {})) formatted.set(id, value)
+        }
         const values: Record<number, string> = {}
         for (const r of selectedRegisters) values[r.id] = formatted.get(r.id) ?? '—'
         nextRows.push({ ts, values })
@@ -891,7 +1010,7 @@ function tickTime(ts: number, span: number): string {
 
 
 function CurveChart({ t, device, groups, registers }: { t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
-  const [pts, setPts] = useState<Array<{ ts: string; address: number; rawValue: number }>>([])
+  const [pts, setPts] = useState<Array<{ ts: string; area: string; address: number; rawValue: number }>>([])
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
   const [view, setView] = useState<{ t0: number; t1: number; v0: number; v1: number } | null>(null)
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
@@ -925,15 +1044,22 @@ function CurveChart({ t, device, groups, registers }: { t: T; device: Device; gr
 
   const W = size.w, H = size.h
   const L = 60, R = 14, T = 12, B = 28 // 四周留白：左=Y 轴标签，下=X 轴标签
-  const rawByTs = new Map<number, Record<number, number>>()
+  const rawByTs = new Map<number, Map<string, Record<number, number>>>()
   for (const p of pts) {
     const t = new Date(p.ts).getTime()
-    if (!rawByTs.has(t)) rawByTs.set(t, {})
-    rawByTs.get(t)![p.address] = p.rawValue
+    if (!rawByTs.has(t)) rawByTs.set(t, new Map())
+    const area = p.area
+    const byArea = rawByTs.get(t)!
+    if (!byArea.has(area)) byArea.set(area, {})
+    byArea.get(area)![p.address] = p.rawValue
   }
   const byReg = new Map<number, Array<[number, number]>>()
-  for (const [t, rawByAddr] of rawByTs) {
-    const decoded = decodeRawByAddr(registers, rawByAddr)
+  for (const [t, byArea] of rawByTs) {
+    const decoded = new Map<number, number | bigint>()
+    for (const area of ['coil', 'discrete-input', 'holding-register', 'input-register']) {
+      const subset = registers.filter(r => areaForFunctionCode(r.functionCode) === area)
+      for (const [id, value] of decodeRawByAddr(subset, byArea.get(area) ?? {})) decoded.set(id, value)
+    }
     for (const r of registers) {
       if (!selected.has(r.id)) continue
       const v = decoded.get(r.id)

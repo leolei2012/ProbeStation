@@ -6,7 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z as zz } from 'zod'
-import { decodeRawByAddr, encodeRegister, registerWidth } from '@probebench/core'
+import { areaForFunction, decodeRawByAddr, encodeRegister, registerWidth, type ModbusArea } from '@probebench/core'
 import { Recorder } from './recorder.ts'
 
 export const name = 'mcp'
@@ -26,9 +26,9 @@ export function apply(ctx: Context, config: Config): void {
   const ota = (ctx as any).ota
   const recorder = new Recorder(ctx as any, cfg)
 
-  /** 按 (device_id, Modbus address) 定位寄存器（统一寻址，不再用数据库自增 id）。 */
-  const findRegisterByAddress = (deviceId: number, address: number) =>
-    cfg.listRegistersByObject(deviceId).find((r: any) => r.startAddress === address)
+  /** 按设备、数据区和协议地址定位点，四数据区地址空间相互独立。 */
+  const findRegisterByAddress = (deviceId: number, area: ModbusArea, address: number) =>
+    cfg.listRegistersByObject(deviceId).find((r: any) => r.startAddress === address && areaForFunction(r.functionCode) === area)
 
   // 每个会话一个独立 McpServer：Protocol 只能连一个 transport，多会话/多连接必须各自实例。
   function registerTools(server: McpServer): void {
@@ -66,16 +66,16 @@ export function apply(ctx: Context, config: Config): void {
 
     server.registerTool('read_register', {
       title: 'Read register', description: '按 Modbus 地址读某设备单个寄存器的实时值（address 即寄存器起始地址，无需数据库 id）',
-      inputSchema: { device_id: zz.number(), address: zz.number() },
+      inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number() },
     }, async (args) => {
-      const reg = findRegisterByAddress(args.device_id, args.address)
+      const reg = findRegisterByAddress(args.device_id, args.area, args.address)
       if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
-      const latest = store.getLatestByObject(args.device_id)
+      const latest = store.getLatestByObject(args.device_id, args.area)
       const rawByAddr: Record<number, number> = {}
       for (const k of Object.keys(latest)) rawByAddr[Number(k)] = latest[Number(k)].rawValue
       const v = decodeRawByAddr([reg], rawByAddr).get(reg.id) ?? null
       const lv = latest[reg.startAddress]
-      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, address: reg.startAddress, value: typeof v === 'bigint' ? String(v) : v, timestamp: lv?.timestamp ?? null, quality: lv?.quality ?? null }) }] }
+      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, area: args.area, address: reg.startAddress, value: typeof v === 'bigint' ? String(v) : v, timestamp: lv?.timestamp ?? null, quality: lv?.quality ?? null }) }] }
     })
 
     server.registerTool('get_device_snapshot', {
@@ -83,17 +83,23 @@ export function apply(ctx: Context, config: Config): void {
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
       const regs = cfg.listRegistersByObject(args.device_id)
-      const latest = store.getLatestByObject(args.device_id)
-      const rawByAddr: Record<number, number> = {}
-      for (const k of Object.keys(latest)) rawByAddr[Number(k)] = latest[Number(k)].rawValue
-      const decoded = decodeRawByAddr(regs, rawByAddr)
+      const latestAll = store.getLatestByObjectAll(args.device_id)
+      const decoded = new Map<number, number | bigint>()
+      for (const area of ['coil', 'discrete-input', 'holding-register', 'input-register'] as ModbusArea[]) {
+        const subset = regs.filter((r: any) => areaForFunction(r.functionCode) === area)
+        const rawByAddr: Record<number, number> = {}
+        for (const [key, value] of Object.entries(latestAll) as Array<[string, any]>) if (key.startsWith(area + ':')) rawByAddr[Number(key.slice(area.length + 1))] = value.rawValue
+        for (const [id, value] of decodeRawByAddr(subset, rawByAddr)) decoded.set(id, value)
+      }
       const out = regs.map((r) => {
         const v = decoded.get(r.id) ?? null
-        const lv = latest[r.startAddress]
+        const area = areaForFunction(r.functionCode)
+        const lv = latestAll[area + ':' + r.startAddress]
         return {
           register_id: r.id,
           alias: r.alias,
           address: r.startAddress,
+          area,
           data_type: r.dataType,
           value: typeof v === 'bigint' ? String(v) : v,
           timestamp: lv?.timestamp ?? null,
@@ -110,9 +116,11 @@ export function apply(ctx: Context, config: Config): void {
       const reg = cfg.getRegister(args.register_id)
       if (!reg) return { content: [{ type: 'text', text: 'register not found' }], isError: true }
       const points = await store.queryObject(args.device_id, args.start, args.end)
+      const area = areaForFunction(reg.functionCode)
       const rawByTs = new Map<string, Record<number, number>>()
       const qualByTs = new Map<string, string>()
       for (const p of points) {
+        if (p.area !== area) continue
         if (!rawByTs.has(p.ts)) rawByTs.set(p.ts, {})
         rawByTs.get(p.ts)![p.address] = p.rawValue
         if (p.address === reg.startAddress) qualByTs.set(p.ts, p.quality)
@@ -129,7 +137,7 @@ export function apply(ctx: Context, config: Config): void {
       title: 'Write register', description: '按 Modbus 地址写某设备单个寄存器（FC16，控制真机，危险操作；address 即寄存器起始地址，无需数据库 id）',
       inputSchema: { device_id: zz.number(), address: zz.number(), value: zz.number() },
     }, async (args) => {
-      const reg = findRegisterByAddress(args.device_id, args.address)
+      const reg = findRegisterByAddress(args.device_id, 'holding-register', args.address)
       if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
       const words = encodeRegister(reg.dataType ?? 'int16', args.value)
       await poller.write(reg.objectId, reg.startAddress, words, 'multiple')
@@ -223,8 +231,8 @@ export function apply(ctx: Context, config: Config): void {
     }, async (args) => {
       const obj = cfg.getObject(args.device_id)
       if (!obj) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
-      const latest = store.getLatestByObject(args.device_id)
-      const ts = Object.keys(latest).map((k) => latest[Number(k)].timestamp ?? '').filter(Boolean).sort().pop() ?? null
+      const latest = store.getLatestByObjectAll(args.device_id)
+      const ts = Object.values(latest).map((value: any) => value.timestamp ?? '').filter(Boolean).sort().pop() ?? null
       return { content: [{ type: 'text', text: JSON.stringify({
         device_id: obj.id,
         name: obj.name,

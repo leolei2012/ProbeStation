@@ -22,6 +22,7 @@ export const Config: z<Config> = z.object({
 })
 
 export * from './codec.ts'
+export * from './protocol.ts'
 
 export function apply(ctx: Context, config: Config): void {
   ctx.logger('core').info(

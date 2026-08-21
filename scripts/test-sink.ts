@@ -12,10 +12,10 @@ const store = ctx.get('store', false)
 const t1 = '2026-08-14T10:00:00Z'
 const t2 = '2026-08-14T10:00:01Z'
 store.write([
-  { objectId: obj.id, address: r1.startAddress, timestamp: t1, rawValue: 100, quality: 'good' },
-  { objectId: obj.id, address: r2.startAddress, timestamp: t1, rawValue: 800, quality: 'good' },
-  { objectId: obj.id, address: r1.startAddress, timestamp: t2, rawValue: 101, quality: 'good' },
-  { objectId: obj.id, address: r2.startAddress, timestamp: t2, rawValue: 801, quality: 'good' },
+  { objectId: obj.id, area: 'holding-register', address: r1.startAddress, timestamp: t1, rawValue: 100, quality: 'good' },
+  { objectId: obj.id, area: 'holding-register', address: r2.startAddress, timestamp: t1, rawValue: 800, quality: 'good' },
+  { objectId: obj.id, area: 'holding-register', address: r1.startAddress, timestamp: t2, rawValue: 101, quality: 'good' },
+  { objectId: obj.id, area: 'holding-register', address: r2.startAddress, timestamp: t2, rawValue: 801, quality: 'good' },
 ])
 await store.flush()
 

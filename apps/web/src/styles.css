@@ -93,6 +93,10 @@ body { font-family: var(--font); color: var(--text-1); font-size: 14px; backgrou
 .device-head .name { font-size: 20px; font-weight: 600; }
 .status-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--surface-hover); color: var(--text-2); }
 .status-badge.on { background: var(--success-soft); color: var(--success); }
+.status-badge.realtime.connected { background: var(--success-soft); color: var(--success); }
+.status-badge.realtime.connecting, .status-badge.realtime.reconnecting { background: rgba(59, 130, 246, 0.12); color: #3b82f6; }
+.status-badge.realtime.stale { background: rgba(245, 158, 11, 0.14); color: #d97706; }
+.status-badge.realtime.disconnected { background: rgba(236, 19, 19, 0.1); color: #ec1313; }
 
 .toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .btn { padding: 6px 14px; border: 1px solid var(--border-2); background: var(--surface); border-radius: 8px; cursor: pointer; font-size: 12px; color: var(--text-1); font-family: var(--font); }

@@ -1,6 +1,6 @@
 import type { Context } from 'cordis'
 import ExcelJS from 'exceljs'
-import { formatRawByAddr } from '@probebench/core'
+import { areaForFunction, formatRawByAddr } from '@probebench/core'
 
 export const name = 'sink'
 export const inject = ['config', 'store']
@@ -21,16 +21,26 @@ export class Sink {
       registers = registers.filter((r: any) => idSet.has(r.id))
     }
     const points = await this.ctx.store.queryObject(objectId, start, end)
-    // pivot: ts -> { address: rawValue }
+    // pivot: ts -> area -> { address: rawValue }，避免四数据区同地址互相覆盖。
     const tsOrder: string[] = []
-    const rawByTs = new Map<string, Record<number, number>>()
+    const rawByTs = new Map<string, Map<string, Record<number, number>>>()
     for (const p of points) {
-      if (!rawByTs.has(p.ts)) { rawByTs.set(p.ts, {}); tsOrder.push(p.ts) }
-      rawByTs.get(p.ts)![p.address] = p.rawValue
+      if (!rawByTs.has(p.ts)) { rawByTs.set(p.ts, new Map()); tsOrder.push(p.ts) }
+      const byArea = rawByTs.get(p.ts)!
+      if (!byArea.has(p.area)) byArea.set(p.area, {})
+      byArea.get(p.area)![p.address] = p.rawValue
     }
     // format per ts: ts -> Map<registerId, string|null>
     const formatted = new Map<string, Map<number, string | null>>()
-    for (const ts of tsOrder) formatted.set(ts, formatRawByAddr(registers, rawByTs.get(ts)!))
+    for (const ts of tsOrder) {
+      const result = new Map<number, string | null>()
+      const byArea = rawByTs.get(ts)!
+      for (const area of ['coil', 'discrete-input', 'holding-register', 'input-register']) {
+        const subset = registers.filter((r: any) => areaForFunction(r.functionCode) === area)
+        for (const [id, value] of formatRawByAddr(subset, byArea.get(area) ?? {})) result.set(id, value)
+      }
+      formatted.set(ts, result)
+    }
     return { registers, tsOrder, formatted }
   }
 

@@ -30,6 +30,25 @@ export function apply(ctx: Context, config: Config): void {
   const ota = (ctx as any).ota
 
   const sockets = new Set<any>()
+  const lastSeen = new Map<any, number>()
+  const removeSocket = (socket: any): void => {
+    sockets.delete(socket)
+    lastSeen.delete(socket)
+  }
+  const safeSend = (socket: any, message: string): boolean => {
+    if (socket.readyState !== 1) { removeSocket(socket); return false }
+    try { socket.send(message); return true } catch { removeSocket(socket); try { socket.terminate() } catch { /* ignore */ }; return false }
+  }
+  const broadcast = (message: string): void => { for (const socket of [...sockets]) safeSend(socket, message) }
+  const socketSweep = setInterval(() => {
+    const cutoff = Date.now() - 60_000
+    for (const socket of [...sockets]) {
+      if ((lastSeen.get(socket) ?? 0) >= cutoff && socket.readyState === 1) continue
+      removeSocket(socket)
+      try { socket.terminate() } catch { /* ignore */ }
+    }
+  }, 15_000)
+  if (typeof socketSweep.unref === 'function') socketSweep.unref()
 
   // 压缩 + 所有路由 + WebSocket + 静态托管，都放进同一个异步 register：
   // compress 必须「await 注册完成后」再定义路由，onRoute 钩子才会对后续路由生效。
@@ -80,6 +99,19 @@ export function apply(ctx: Context, config: Config): void {
     })
     fastify.delete('/api/monitor_objects/:id', async (req: any) => { cfg.deleteObject(Number((req.params as any).id)); return { ok: true } })
     fastify.post('/api/monitor_objects/:id/toggle', async (req: any) => cfg.toggleObject(Number((req.params as any).id)))
+
+    // ── Modbus diagnostics ─────────────────────────────────
+    fastify.get('/api/monitor_objects/:id/diagnostics', async (req: any) =>
+      poller.getDeviceDiagnostics(Number((req.params as any).id)))
+    fastify.get('/api/monitor_objects/:id/frames', async (req: any) => {
+      const raw = Number((req.query as any)?.limit ?? 200)
+      const limit = Number.isFinite(raw) ? Math.max(0, Math.min(2000, Math.trunc(raw))) : 200
+      return poller.getDeviceFrames(Number((req.params as any).id), limit)
+    })
+    fastify.post('/api/monitor_objects/:id/frames/clear', async (req: any) => {
+      poller.clearDeviceDiagnostics(Number((req.params as any).id))
+      return { ok: true }
+    })
 
     // ── Groups ──────────────────────────────────────────────
     fastify.get('/api/monitor_objects/:id/groups', async (req: any) => cfg.listGroups(Number((req.params as any).id)))
@@ -185,10 +217,12 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     // ── Data ────────────────────────────────────────────────
-    fastify.get('/api/monitor_objects/:id/latest', async (req: any) => store.getLatestByObject(Number((req.params as any).id)))
-    fastify.get('/api/data/query', async (req: any) => {
+    fastify.get('/api/monitor_objects/:id/latest', async (req: any) => store.getLatestByObjectAll(Number((req.params as any).id)))
+    fastify.get('/api/data/query', async (req: any, reply: any) => {
       const q = req.query as any
-      return store.query(Number(q.object_id), Number(q.address), String(q.start), String(q.end))
+      const area = String(q.area ?? '')
+      if (!['coil', 'discrete-input', 'holding-register', 'input-register'].includes(area)) return reply.code(400).send({ error: 'area is required' })
+      return store.query(Number(q.object_id), Number(q.address), String(q.start), String(q.end), area)
     })
     fastify.get('/api/data/object', async (req: any) => {
       const q = req.query as any
@@ -199,8 +233,22 @@ export function apply(ctx: Context, config: Config): void {
     await fastify.register(websocket)
     fastify.get('/ws', { websocket: true }, (socket: any) => {
       sockets.add(socket)
-      socket.on('close', () => sockets.delete(socket))
-      socket.send(JSON.stringify({ type: 'latest', data: store.getLatest() }))
+      lastSeen.set(socket, Date.now())
+      socket.on('message', (raw: any) => {
+        lastSeen.set(socket, Date.now())
+        try {
+          const msg = JSON.parse(String(raw))
+          if (msg?.type === 'ping') safeSend(socket, JSON.stringify({ type: 'pong', timestamp: msg.timestamp ?? Date.now() }))
+        } catch { /* 忽略非法客户端消息，保持连接 */ }
+      })
+      socket.on('close', () => removeSocket(socket))
+      socket.on('error', () => { removeSocket(socket); try { socket.terminate() } catch { /* ignore */ } })
+      safeSend(socket, JSON.stringify({ type: 'latest', data: store.getLatest() }))
+    })
+
+    fastify.addHook('onClose', async () => {
+      clearInterval(socketSweep)
+      for (const socket of [...sockets]) { removeSocket(socket); try { socket.terminate() } catch { /* ignore */ } }
     })
 
     // ── 前端静态托管 ────────────────────────────────────────
@@ -213,27 +261,27 @@ export function apply(ctx: Context, config: Config): void {
   // ── 事件中继（同步注册，供 WS 广播） ──────────────────────
   ctx.on('poller/result', ({ objectId, points }: any) => {
     const msg = JSON.stringify({ type: 'poller/result', objectId, points })
-    for (const s of sockets) s.send(msg)
+    broadcast(msg)
   })
   ctx.on('rule/trigger', (payload: any) => {
     const msg = JSON.stringify({ type: 'rule/trigger', ...payload })
-    for (const s of sockets) s.send(msg)
+    broadcast(msg)
   })
   ctx.on('poller/group-error', (payload: any) => {
     const msg = JSON.stringify({ type: 'group-error', ...payload })
-    for (const s of sockets) s.send(msg)
+    broadcast(msg)
   })
   ctx.on('poller/group-ok', (payload: any) => {
     const msg = JSON.stringify({ type: 'group-ok', ...payload })
-    for (const s of sockets) s.send(msg)
+    broadcast(msg)
   })
   ctx.on('workspace/changed', (payload: any) => {
     const msg = JSON.stringify({ type: 'workspace/changed', ...payload })
-    for (const s of sockets) s.send(msg)
+    broadcast(msg)
   })
   ctx.on('config/changed', (payload: any) => {
     const msg = JSON.stringify({ type: 'config/changed', ...payload })
-    for (const s of sockets) s.send(msg)
+    broadcast(msg)
   })
 
   ctx.provide('api', app)

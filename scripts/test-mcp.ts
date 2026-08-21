@@ -25,7 +25,7 @@ const reg0 = cfg.createRegister(g.id, obj.id, '寄存器0', 3, 0)
 cfg.createRegister(g.id, obj.id, '寄存器1', 3, 1)
 
 const store = ctx.get('store', false)
-store.write([{ objectId: obj.id, address: reg0.startAddress, timestamp: new Date().toISOString(), rawValue: 5555, quality: 'good' }])
+store.write([{ objectId: obj.id, area: 'holding-register', address: reg0.startAddress, timestamp: new Date().toISOString(), rawValue: 5555, quality: 'good' }])
 await store.flush()
 
 await new Promise(r => setTimeout(r, 500))
@@ -41,7 +41,7 @@ console.log('tools:', JSON.stringify(tools.tools.map(t => t.name)))
 const r1 = await client.callTool({ name: 'list_devices', arguments: {} })
 console.log('list_devices:', JSON.stringify(r1.content))
 
-const r2 = await client.callTool({ name: 'read_register', arguments: { device_id: obj.id, address: reg0.startAddress } })
+const r2 = await client.callTool({ name: 'read_register', arguments: { device_id: obj.id, area: 'holding-register', address: reg0.startAddress } })
 console.log('read_register (by address):', JSON.stringify(r2.content))
 
 // CRUD tools

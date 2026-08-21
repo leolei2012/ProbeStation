@@ -1,6 +1,7 @@
 import type { Context } from 'cordis'
 import z from 'schemastery'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
+import type { ModbusArea } from '@probebench/core'
 
 /** Cordis plugin name. */
 export const name = 'store'
@@ -26,6 +27,7 @@ export const Config: z<Config> = z.object({
 /** 一个原始 16 位字采样，按 Modbus 地址键控（类型只是显示方式，解码在消费端做）。 */
 export interface PollPoint {
   objectId: number
+  area: ModbusArea
   address: number
   timestamp: string
   rawValue: number
@@ -67,6 +69,7 @@ export class DuckDBStore {
     const conn = await instance.connect()
     await conn.run(`CREATE TABLE IF NOT EXISTS poll_data (
       object_id INTEGER,
+      area VARCHAR DEFAULT 'holding-register',
       address INTEGER,
       ts TIMESTAMP,
       raw_value DOUBLE,
@@ -74,6 +77,7 @@ export class DuckDBStore {
     )`)
     // 迁移：旧表用 register_id 列
     try { await conn.run(`ALTER TABLE poll_data RENAME COLUMN register_id TO address`) } catch { /* 已是 address 或表刚建 */ }
+    try { await conn.run(`ALTER TABLE poll_data ADD COLUMN area VARCHAR DEFAULT 'holding-register'`) } catch { /* 已迁移或新表 */ }
     return conn
   }
 
@@ -95,8 +99,10 @@ export class DuckDBStore {
   /** Enqueue points into the hot buffer; auto-flush when the batch is full. */
   write(points: PollPoint[]): void {
     for (const p of points) {
+      const area = p.area
+      if (!area) throw new Error('PollPoint.area is required')
       this.buffer.push(p)
-      this.latest.set(p.objectId + ':' + p.address, { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp })
+      this.latest.set(`${p.objectId}:${area}:${p.address}`, { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp })
     }
     if (this.buffer.length >= this.config.flushBatchSize) void this.flush()
   }
@@ -108,9 +114,9 @@ export class DuckDBStore {
     const batch = this.buffer.splice(0)
     // TODO(phase2): replace string interpolation with parameterized insert.
     const rows = batch.map(p =>
-      `(${p.objectId}, ${p.address}, '${p.timestamp}', ${p.rawValue}, '${p.quality}')`,
+      `(${p.objectId}, '${p.area}', ${p.address}, '${p.timestamp}', ${p.rawValue}, '${p.quality}')`,
     ).join(', ')
-    await conn.run(`INSERT INTO poll_data VALUES ${rows}`)
+    await conn.run(`INSERT INTO poll_data (object_id, area, address, ts, raw_value, quality) VALUES ${rows}`)
   }
 
   /**
@@ -156,45 +162,57 @@ export class DuckDBStore {
   /** Query the cold tier for all addresses of one object over a time range. */
   async queryObject(
     objectId: number, start: string, end: string,
-  ): Promise<Array<{ ts: string; address: number; rawValue: number; quality: string }>> {
+  ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string }>> {
     const conn = await this.ready
     const reader = await conn.runAndReadAll(
-      `SELECT ts, address, raw_value, quality FROM poll_data
+      `SELECT ts, area, address, raw_value, quality FROM poll_data
        WHERE object_id = $objectId AND ts >= $start AND ts <= $end
        ORDER BY ts`,
       { objectId, start, end },
     )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; address: unknown; raw_value: unknown; quality: unknown }>
-    return rows.map(r => ({ ts: String(r.ts), address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown }>
+    return rows.map(r => ({ ts: String(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
   }
 
-  /** Latest snapshot from the hot tier (keyed by `objectId:address` 复合键，避免多设备地址冲突). */
+  /** 全局快照键统一为 objectId:area:address。 */
   getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string }> {
     const out: Record<string, { rawValue: number; quality: string; timestamp: string }> = {}
     for (const [k, v] of this.latest) out[k] = v
     return out
   }
 
-  /** 单设备的最新快照（按地址键控）。 */
-  getLatestByObject(objectId: number): Record<number, { rawValue: number; quality: string; timestamp: string }> {
+  /** 单设备、单数据区的最新快照（按地址键控）。 */
+  getLatestByObject(objectId: number, area: ModbusArea): Record<number, { rawValue: number; quality: string; timestamp: string }> {
     const out: Record<number, { rawValue: number; quality: string; timestamp: string }> = {}
-    const prefix = objectId + ':'
+    const prefix = `${objectId}:${area}:`
     for (const [k, v] of this.latest) {
       if (k.startsWith(prefix)) out[Number(k.slice(prefix.length))] = v
     }
     return out
   }
 
+  /** 单设备四数据区快照，键统一为 area:address。 */
+  getLatestByObjectAll(objectId: number): Record<string, { rawValue: number; quality: string; timestamp: string }> {
+    const out: Record<string, { rawValue: number; quality: string; timestamp: string }> = {}
+    const prefix = objectId + ':'
+    for (const [k, v] of this.latest) {
+      if (!k.startsWith(prefix)) continue
+      const key = k.slice(prefix.length)
+      out[key] = v
+    }
+    return out
+  }
+
   /** Query the cold tier for a single address over a time range. */
   async query(
-    objectId: number, address: number, start: string, end: string,
+    objectId: number, address: number, start: string, end: string, area: ModbusArea,
   ): Promise<Array<{ ts: string; rawValue: number; quality: string }>> {
     const conn = await this.ready
     const reader = await conn.runAndReadAll(
       `SELECT ts, raw_value, quality FROM poll_data
-       WHERE object_id = $objectId AND address = $address AND ts >= $start AND ts <= $end
+       WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
        ORDER BY ts`,
-      { objectId, address, start, end },
+      { objectId, area, address, start, end },
     )
     const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown }>
     return rows.map(r => ({ ts: String(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))

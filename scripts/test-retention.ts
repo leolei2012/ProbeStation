@@ -21,10 +21,10 @@ const a = cfg.createObject('A-全局', '127.0.0.1', 502) // 跟随全局 600s
 const b = cfg.createObject('B-覆盖', '127.0.0.1', 502, 'master', { dataRetainSeconds: 60 }) // 覆盖 60s
 
 store.write([
-  { objectId: a.id, address: 0, timestamp: iso(2 * 3600 * 1000), rawValue: 111, quality: 'good' }, // A 的 2h 前 → 应删
-  { objectId: a.id, address: 1, timestamp: iso(5 * 60 * 1000), rawValue: 222, quality: 'good' },   // A 的 5min 前 → 全局 600s 内 → 保留
-  { objectId: b.id, address: 0, timestamp: iso(5 * 60 * 1000), rawValue: 333, quality: 'good' },   // B 的 5min 前 → 覆盖 60s 外 → 删
-  { objectId: b.id, address: 1, timestamp: iso(10 * 1000), rawValue: 444, quality: 'good' },       // B 的 10s 前 → 保留
+  { objectId: a.id, area: 'holding-register', address: 0, timestamp: iso(2 * 3600 * 1000), rawValue: 111, quality: 'good' }, // A 的 2h 前 → 应删
+  { objectId: a.id, area: 'holding-register', address: 1, timestamp: iso(5 * 60 * 1000), rawValue: 222, quality: 'good' },   // A 的 5min 前 → 全局 600s 内 → 保留
+  { objectId: b.id, area: 'holding-register', address: 0, timestamp: iso(5 * 60 * 1000), rawValue: 333, quality: 'good' },   // B 的 5min 前 → 覆盖 60s 外 → 删
+  { objectId: b.id, area: 'holding-register', address: 1, timestamp: iso(10 * 1000), rawValue: 444, quality: 'good' },       // B 的 10s 前 → 保留
 ])
 await store.flush()
 await store.cleanup()

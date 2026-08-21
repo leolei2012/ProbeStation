@@ -3,6 +3,23 @@ import z from 'schemastery'
 import net from 'node:net'
 import { ModbusTCPClient, ModbusRTUClient } from 'jsmodbus'
 import { SerialPort } from 'serialport'
+import {
+  areaForFunction,
+  assertModbusRequest,
+  classifyModbusError,
+  isModbusFunctionCode,
+  type ModbusRequest,
+  type ModbusResult,
+} from '@probebench/core'
+import {
+  ModbusDiagnostics,
+  attachFrameCapture,
+  type DiagnosticsIdentity,
+  type ModbusDiagnosticsSnapshot,
+  type ModbusFrameRecord,
+} from './diagnostics.js'
+
+export * from './diagnostics.js'
 
 export const name = 'modbus'
 
@@ -10,12 +27,14 @@ export interface Config {
   defaultTimeoutMs: number
   defaultUnitId: number
   connectTimeoutMs: number
+  frameBufferSize?: number
 }
 
 export const Config: z<Config> = z.object({
   defaultTimeoutMs: z.number().default(3000),
   defaultUnitId: z.number().default(1),
   connectTimeoutMs: z.number().default(5000), // CH340/CP2102 首次 open 可能较慢，放宽到 5s
+  frameBufferSize: z.number().default(2000),
 })
 
 const EXC_MSG: Record<number, string> = { 1: 'Illegal Function', 2: 'Illegal Data Address', 3: 'Illegal Data Value', 4: 'Slave Device Failure', 5: 'Acknowledge', 6: 'Slave Device Busy', 8: 'Memory Parity Error', 10: 'Gateway Path Unavailable', 11: 'Gateway Target Failed to Respond' }
@@ -38,12 +57,70 @@ export interface ModbusDriver {
   connect(opts: ConnectOptions): Promise<void>
   disconnect(): Promise<void>
   isConnected(): boolean
+  readCoils(address: number, count: number, slaveId?: number): Promise<boolean[]>
+  readDiscreteInputs(address: number, count: number, slaveId?: number): Promise<boolean[]>
   readHoldingRegisters(address: number, count: number, slaveId?: number): Promise<number[]>
   readInputRegisters(address: number, count: number, slaveId?: number): Promise<number[]>
   writeRegister(address: number, value: number, slaveId?: number): Promise<void>
   writeRegisters(address: number, values: number[], slaveId?: number): Promise<void>
+  /** 统一请求入口；兼容阶段先覆盖现有 FC03/04/06/16，其他功能码按后续阶段逐项实现。 */
+  execute(request: ModbusRequest): Promise<ModbusResult>
   /** 返回底层原始 socket（net.Socket / SerialPort），供 OTA 拼 0x41 原始帧直连。 */
   getRawSocket(slaveId?: number): Promise<any>
+  getDiagnostics(): ModbusDiagnosticsSnapshot
+  getFrames(limit?: number): ModbusFrameRecord[]
+  clearDiagnostics(): void
+}
+
+/**
+ * 在不破坏旧驱动方法的前提下提供统一执行入口。
+ * 后续 FC01/02/05/15 落地时只需扩展这里和具体 transport，不需要改变 poller 的结果契约。
+ */
+export async function executeModbusRequest(driver: ModbusDriver, request: ModbusRequest): Promise<ModbusResult> {
+  const started = Date.now()
+  const area = isModbusFunctionCode(Number(request.functionCode)) ? areaForFunction(request.functionCode) : 'holding-register'
+  try {
+    assertModbusRequest(request)
+    const slaveId = request.slaveId
+    let values: Array<number | boolean> | undefined
+    switch (request.functionCode) {
+      case 1:
+        values = await driver.readCoils(request.startAddress, request.quantity!, slaveId)
+        break
+      case 2:
+        values = await driver.readDiscreteInputs(request.startAddress, request.quantity!, slaveId)
+        break
+      case 3:
+        values = await driver.readHoldingRegisters(request.startAddress, request.quantity!, slaveId)
+        break
+      case 4:
+        values = await driver.readInputRegisters(request.startAddress, request.quantity!, slaveId)
+        break
+      case 6:
+        await driver.writeRegister(request.startAddress, request.values![0] as number, slaveId)
+        break
+      case 16:
+        await driver.writeRegisters(request.startAddress, Array.from(request.values as ReadonlyArray<number>), slaveId)
+        break
+      default:
+        return {
+          ok: false,
+          request,
+          area,
+          durationMs: Date.now() - started,
+          error: { code: 'unsupported_function', message: `FC${request.functionCode} is not implemented by this driver yet`, retryable: false },
+        }
+    }
+    return { ok: true, request, area, values, durationMs: Date.now() - started }
+  } catch (error) {
+    return {
+      ok: false,
+      request,
+      area,
+      durationMs: Date.now() - started,
+      error: classifyModbusError(error),
+    }
+  }
 }
 
 /** 把 jsmodbus 响应 body 转成 16 位字数组。 */
@@ -63,7 +140,9 @@ function normalizeError(e: any): Error {
     if (e.err === 'Timeout') return new Error('Timeout')
     if (e.err === 'ModbusException') {
       const code = e.response?.body?.code
-      return new Error(EXC_MSG[code] ?? 'Modbus exception')
+      const error = new Error(EXC_MSG[code] ?? 'Modbus exception')
+      ;(error as any).exceptionCode = code
+      return error
     }
     if (typeof e.message === 'string' && e.message) return new Error(e.message)
     return new Error(e.err)
@@ -80,7 +159,11 @@ class JsmodbusDriver implements ModbusDriver {
   private ready = false
   private readonly clients = new Map<number, { socket: net.Socket; client: ModbusTCPClient }>()
 
-  constructor(private readonly config: Config) {}
+  private readonly diagnostics: ModbusDiagnostics
+
+  constructor(private readonly config: Config, identity: DiagnosticsIdentity = {}) {
+    this.diagnostics = new ModbusDiagnostics('tcp', config.frameBufferSize ?? 2000, identity)
+  }
 
   async connect(opts: ConnectOptions): Promise<void> {
     this.host = opts.ip ?? ''
@@ -100,6 +183,7 @@ class JsmodbusDriver implements ModbusDriver {
     const existing = this.clients.get(slaveId)
     if (existing && !existing.socket.destroyed && existing.socket.writable) return existing.client
     const socket = new net.Socket()
+    attachFrameCapture(socket, this.diagnostics)
     const client = new ModbusTCPClient(socket, slaveId, this.config.defaultTimeoutMs)
     await new Promise<void>((resolve, reject) => {
       socket.once('connect', resolve)
@@ -110,38 +194,77 @@ class JsmodbusDriver implements ModbusDriver {
     return client
   }
 
+  async readCoils(address: number, count: number, slaveId = 1): Promise<boolean[]> {
+    const started = Date.now()
+    try {
+      const res = await (await this.getClient(slaveId)).readCoils(address, count)
+      const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
+  }
+
+  async readDiscreteInputs(address: number, count: number, slaveId = 1): Promise<boolean[]> {
+    const started = Date.now()
+    try {
+      const res = await (await this.getClient(slaveId)).readDiscreteInputs(address, count)
+      const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
+  }
+
   async readHoldingRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+    const started = Date.now()
     try {
       const res = await (await this.getClient(slaveId)).readHoldingRegisters(address, count)
-      return toValues(res.response.body)
-    } catch (e) { throw normalizeError(e) }
+      const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
   async readInputRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+    const started = Date.now()
     try {
       const res = await (await this.getClient(slaveId)).readInputRegisters(address, count)
-      return toValues(res.response.body)
-    } catch (e) { throw normalizeError(e) }
+      const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
   async writeRegister(address: number, value: number, slaveId = 1): Promise<void> {
+    const started = Date.now()
     try {
       const res = await (await this.getClient(slaveId)).writeSingleRegister(address, value)
       toValues(res.response.body)
-    } catch (e) { throw normalizeError(e) }
+      this.diagnostics.recordSuccess(Date.now() - started)
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
   async writeRegisters(address: number, values: number[], slaveId = 1): Promise<void> {
+    const started = Date.now()
     try {
       const res = await (await this.getClient(slaveId)).writeMultipleRegisters(address, values)
       toValues(res.response.body)
-    } catch (e) { throw normalizeError(e) }
+      this.diagnostics.recordSuccess(Date.now() - started)
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
+
+  execute(request: ModbusRequest): Promise<ModbusResult> { return executeModbusRequest(this, request) }
 
   async getRawSocket(slaveId = 1): Promise<net.Socket> {
     await this.getClient(slaveId)
     return this.clients.get(slaveId)!.socket
   }
+  getDiagnostics(): ModbusDiagnosticsSnapshot { return this.diagnostics.snapshot() }
+  getFrames(limit?: number): ModbusFrameRecord[] { return this.diagnostics.getFrames(limit) }
+  clearDiagnostics(): void { this.diagnostics.clear() }
+}
+
+/** 把 FC01/02 响应转换为稳定的布尔数组。 */
+function toBits(body: any): boolean[] {
+  if (body.isException) {
+    const code = body.code ?? body.exceptionCode
+    const error = new Error(EXC_MSG[code] ?? body.message ?? ('Modbus exception ' + code))
+    ;(error as any).exceptionCode = code
+    throw error
+  }
+  const arr = body.valuesAsArray as Array<boolean | number> | undefined
+  return arr ? Array.from(arr, value => Boolean(value)) : []
 }
 
 /** RTU 串口驱动：一条串口一个 SerialPort，按 slave id 各建一个 ModbusRTUClient（共享同一 socket）。 */
@@ -149,12 +272,14 @@ export class SerialDriver implements ModbusDriver {
   private serialPort: any = null
   private ready = false
   private readonly clients = new Map<number, ModbusRTUClient>()
+  private readonly diagnostics: ModbusDiagnostics
 
   constructor(
     private readonly config: Config,
     private readonly portCtor: any = SerialPort,
     private readonly onWarn: (msg: string) => void = (msg) => console.warn('[modbus]', msg),
-  ) {}
+    identity: DiagnosticsIdentity = {},
+  ) { this.diagnostics = new ModbusDiagnostics('rtu', config.frameBufferSize ?? 2000, identity) }
 
   async connect(opts: ConnectOptions): Promise<void> {
     await this.disconnect()
@@ -176,6 +301,7 @@ export class SerialDriver implements ModbusDriver {
       xoff: flow.xoff,
       autoOpen: true,
     }, this.config.connectTimeoutMs ?? this.config.defaultTimeoutMs)
+    attachFrameCapture(this.serialPort, this.diagnostics)
     this.ready = true
   }
 
@@ -264,48 +390,75 @@ export class SerialDriver implements ModbusDriver {
     return client
   }
 
+  async readCoils(address: number, count: number, slaveId = 1): Promise<boolean[]> {
+    const started = Date.now()
+    try {
+      const res = await this.getClient(slaveId).readCoils(address, count)
+      const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
+  }
+
+  async readDiscreteInputs(address: number, count: number, slaveId = 1): Promise<boolean[]> {
+    const started = Date.now()
+    try {
+      const res = await this.getClient(slaveId).readDiscreteInputs(address, count)
+      const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
+  }
+
   async readHoldingRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+    const started = Date.now()
     try {
       const res = await this.getClient(slaveId).readHoldingRegisters(address, count)
-      return toValues(res.response.body)
-    } catch (e) { throw normalizeError(e) }
+      const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
   async readInputRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+    const started = Date.now()
     try {
       const res = await this.getClient(slaveId).readInputRegisters(address, count)
-      return toValues(res.response.body)
-    } catch (e) { throw normalizeError(e) }
+      const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
   async writeRegister(address: number, value: number, slaveId = 1): Promise<void> {
+    const started = Date.now()
     try {
       const res = await this.getClient(slaveId).writeSingleRegister(address, value)
       toValues(res.response.body)
-    } catch (e) { throw normalizeError(e) }
+      this.diagnostics.recordSuccess(Date.now() - started)
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
   async writeRegisters(address: number, values: number[], slaveId = 1): Promise<void> {
+    const started = Date.now()
     try {
       const res = await this.getClient(slaveId).writeMultipleRegisters(address, values)
       toValues(res.response.body)
-    } catch (e) { throw normalizeError(e) }
+      this.diagnostics.recordSuccess(Date.now() - started)
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
+
+  execute(request: ModbusRequest): Promise<ModbusResult> { return executeModbusRequest(this, request) }
 
   async getRawSocket(_slaveId = 1): Promise<any> {
     if (!this.serialPort) throw new Error('serial port not connected')
     return this.serialPort
   }
+  getDiagnostics(): ModbusDiagnosticsSnapshot { return this.diagnostics.snapshot() }
+  getFrames(limit?: number): ModbusFrameRecord[] { return this.diagnostics.getFrames(limit) }
+  clearDiagnostics(): void { this.diagnostics.clear() }
 }
 
 export function apply(ctx: Context, config: Config): void {
   ctx.provide('modbus', {
-    createDriver(transport = 'tcp'): ModbusDriver {
+    createDriver(transport = 'tcp', identity: DiagnosticsIdentity = {}): ModbusDriver {
       if (transport === 'rtu') {
         const logger = ctx.logger('modbus')
-        return new SerialDriver(config, SerialPort, (msg) => logger.warn(msg))
+        return new SerialDriver(config, SerialPort, (msg) => logger.warn(msg), identity)
       }
-      return new JsmodbusDriver(config)
+      return new JsmodbusDriver(config, identity)
     },
   })
 }

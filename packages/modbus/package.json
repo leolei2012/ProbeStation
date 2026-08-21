@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
+    "@probebench/core": "*",
     "cordis": "^4.0.0-rc.8",
     "jsmodbus": "^4.0.10",
     "serialport": "^13.0.0"

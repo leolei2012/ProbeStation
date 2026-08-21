@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
+    "@probebench/core": "*",
     "cordis": "^4.0.0-rc.8",
     "schemastery": "^3.18.0",
     "exceljs": "^4.4.0",
