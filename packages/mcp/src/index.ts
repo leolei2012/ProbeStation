@@ -75,6 +75,16 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, device_id: args.device_id, poll_interval_ms: args.poll_interval_ms }) }] }
     })
 
+    server.registerTool('set_group_active', {
+      title: 'Pause/resume group', description: '暂停或启用一个分组（active=true 开始轮询；active=false 暂停轮询）。状态同步到 Web UI',
+      inputSchema: { group_id: zz.number(), active: zz.boolean() },
+    }, async (args) => {
+      if (!cfg.getGroup(args.group_id)) return { content: [{ type: 'text', text: 'group not found' }], isError: true }
+      const updated = cfg.updateGroup(args.group_id, { isActive: args.active ? 1 : 0 })
+      cfg.log('INFO', 'mcp', (args.active ? 'resume' : 'pause') + ' group ' + args.group_id)
+      return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
+    })
+
     server.registerTool('read_register', {
       title: 'Read register', description: '按 Modbus 地址读某设备单个寄存器的实时值（address 即寄存器起始地址，无需数据库 id）',
       inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number() },

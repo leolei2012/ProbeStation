@@ -733,6 +733,9 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
     if (!window.confirm(t('confirmDeleteGroup').replace('{name}', g?.name ?? String(id)))) return
     try { await api.del('/api/groups/' + id); onRefresh() } catch { /* 忽略 */ }
   }
+  const toggleGroupPause = async (id: number) => {
+    try { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() } catch { /* 忽略 */ }
+  }
   const views = buildRegViews(groups, latest, device.id)
   return (
     <div>
@@ -749,6 +752,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             <span className="kv">FC{g.functionCode} · 从站 {g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个</span>
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id] === 'Disconnected' ? t('groupDisconnected') : groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
+            <button className="btn" onClick={() => toggleGroupPause(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
             <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>
             <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>
           </div>
