@@ -1173,7 +1173,7 @@ function HistoryView({ t, device, groups, registers }: { t: T; device: Device; g
       {showExport && <ExportModal t={t} onClose={() => setShowExport(false)} onPick={(fmt) => { doExport(fmt); setShowExport(false) }} />}
       {rangeInvalid && <div className="hist-empty warn">{t('histRangeInvalid')}</div>}
       {!rangeInvalid && mode === 'table' && <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={status} error={error} />}
-      {!rangeInvalid && mode === 'chart' && <ChartBody t={t} registers={registers} selected={selected} pts={pts} />}
+      {!rangeInvalid && mode === 'chart' && <ChartBody t={t} registers={registers} selected={selected} pts={pts} status={status} error={error} />}
     </div>
   )
 }
@@ -1275,7 +1275,7 @@ function tickTime(ts: number, span: number): string {
 }
 
 
-function ChartBody({ t, registers, selected, pts }: { t: T; registers: Register[]; selected: Set<number>; pts: Array<{ ts: string; area: string; address: number; rawValue: number }> }) {
+function ChartBody({ t, registers, selected, pts, status, error }: { t: T; registers: Register[]; selected: Set<number>; pts: Array<{ ts: string; area: string; address: number; rawValue: number }>; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null }) {
   const [view, setView] = useState<{ t0: number; t1: number; v0: number; v1: number } | null>(null)
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
   const [size, setSize] = useState({ w: 900, h: 320 })
@@ -1355,9 +1355,11 @@ function ChartBody({ t, registers, selected, pts }: { t: T; registers: Register[
 
   return (
     <div className="chart-wrap">
-      {!hasData && <div className="chart-hint">{t('curveHint')} — 暂无数据</div>}
-      {hasData && selected.size === 0 && <div className="chart-hint">{t('histNoRegs')}</div>}
-      {hasData && selected.size > 0 && (
+      {status === 'idle' && <div className="chart-hint">{t('histIdle')}</div>}
+      {status === 'done' && !hasData && <div className="chart-hint">{t('histEmpty')}</div>}
+      {status === 'error' && <div className="chart-hint warn">{t('histError')} {error}</div>}
+      {status === 'done' && hasData && selected.size === 0 && <div className="chart-hint">{t('histNoRegs')}</div>}
+      {status === 'done' && hasData && selected.size > 0 && (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div className="chart-hint" style={{ marginBottom: 0 }}>{t('curveZoomHint')}</div>
