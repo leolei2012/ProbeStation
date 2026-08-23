@@ -11,7 +11,7 @@ const TYPE_GROUPS = [
   { key: 'grp64LE', types: ['int64-LE', 'uint64-LE', 'float64-LE', 'hex64-LE', 'bin64-LE'] },
 ]
 
-interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; dataRetainSeconds: number | null }
+interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; dataRetainSeconds: number | null; connected: boolean }
 type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number; registers: Register[] }
@@ -279,6 +279,7 @@ export default function App() {
   const [showAdd, setShowAdd] = useState(false)
   const [wsExpanded, setWsExpanded] = useState(true)
   const [realtime, setRealtime] = useState<{ status: RealtimeStatus; attempt: number }>({ status: 'connecting', attempt: 0 })
+  const [deviceConnected, setDeviceConnected] = useState<Record<number, boolean>>({})
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const selectedIdRef = useRef<number | null>(selectedId)
@@ -298,7 +299,14 @@ export default function App() {
   useEffect(() => { localStorage.setItem('ps-lang', lang) }, [lang])
   useEffect(() => { localStorage.setItem('ps-collapsed', collapsed ? '1' : '0') }, [collapsed])
 
-  const refreshDevices = useCallback(() => { api.get('/api/monitor_objects').then(setDevices).catch(() => {}) }, [])
+  const refreshDevices = useCallback(() => {
+    api.get('/api/monitor_objects').then((objs: any[]) => {
+      setDevices(objs)
+      const map: Record<number, boolean> = {}
+      for (const o of objs) if (o && typeof o.id === 'number') map[o.id] = o.connected === true
+      setDeviceConnected(map)
+    }).catch(() => {})
+  }, [])
   const refreshWorkspace = useCallback(() => { api.get('/api/workspace').then(setWorkspace).catch(() => {}) }, [])
   const refreshRegisters = useCallback((id: number) => {
     api.get('/api/monitor_objects/' + id + '/groups').then(async (gs: Array<{ id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number }>) => {
@@ -366,6 +374,16 @@ export default function App() {
       else if (msg.type === 'group-ok') setGroupErrors((prev) => { const next = { ...prev }; delete next[msg.groupId]; return next })
       else if (msg.type === 'workspace/changed') { setSelectedId(null); setLatest({}); setGroupErrors({}); refreshDevices(); refreshWorkspace() }
       else if (msg.type === 'config/changed') { refreshDevices(); if (selectedIdRef.current != null) refreshRegisters(selectedIdRef.current) }
+      else if (msg.type === 'device/status') {
+        if (Array.isArray(msg.states)) {
+          setDeviceConnected((prev) => { const next = { ...prev }; for (const s of msg.states) if (s && typeof s.objectId === 'number') next[s.objectId] = s.connected === true; return next })
+        } else if (typeof msg.objectId === 'number') {
+          setDeviceConnected((prev) => ({ ...prev, [msg.objectId]: msg.connected === true }))
+        }
+      }
+      else if (msg.type === 'group-errors' && Array.isArray(msg.errors)) {
+        setGroupErrors((prev) => { const next = { ...prev }; for (const e of msg.errors) if (e && typeof e.groupId === 'number') next[e.groupId] = e.error; return next })
+      }
     }
     const connect = () => {
       if (stopped) return
@@ -494,7 +512,7 @@ export default function App() {
                           <button className="btn new-device-btn" onClick={() => setShowAdd(true)}>{t('newDevice')}</button>
                           {devices.map((d) => (
                             <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => setSelectedId(d.id)}>
-                              <span className={'device-dot' + (d.isActive ? ' on' : '')} />
+                              <span className={'device-dot' + (deviceConnected[d.id] === true ? ' on' : '')} />
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div className="device-name">{d.name}</div>
                                 <div className="device-sub">{d.transport === 'rtu' ? (d.serialPath || 'RTU') : (d.ip + ':' + d.port)}</div>
@@ -522,7 +540,7 @@ export default function App() {
 
       <main className="main">
         {selected
-          ? <DeviceView key={selected.id} t={t} device={selected} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+          ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
           : <EmptyState t={t} onAdd={() => setShowAdd(true)} />}
       </main>
 
@@ -537,8 +555,8 @@ function EmptyState({ t, onAdd }: { t: T; onAdd: () => void }) {
   return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div><button className="btn primary" onClick={onAdd}>{t('newDevice')}</button></div>
 }
 
-function DeviceView({ t, device, groups, latest, groupErrors, realtime, onToggle, onEdit, onDelete, onRefresh }: {
-  t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
+function DeviceView({ t, device, connected, groups, latest, groupErrors, realtime, onToggle, onEdit, onDelete, onRefresh }: {
+  t: T; device: Device; connected: boolean; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
   realtime: { status: RealtimeStatus; attempt: number }
   onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => void; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
@@ -554,7 +572,7 @@ function DeviceView({ t, device, groups, latest, groupErrors, realtime, onToggle
     <div>
       <div className="device-head">
         <span className="name">{device.name}</span>
-        <span className={'status-badge' + (device.isActive ? ' on' : '')}>{device.isActive ? t('connected') : t('disconnected')}</span>
+        <span className={'status-badge' + (device.isActive && connected ? ' on' : '')}>{!device.isActive ? t('stopped') : connected ? t('connected') : t('disconnected')}</span>
         <span className={'status-badge realtime ' + realtime.status}>{realtimeText}</span>
         <div style={{ flex: 1 }} />
         <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? t('disconnect') : t('connect')}</button>

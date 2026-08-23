@@ -27,6 +27,7 @@ class PollingEngine {
   private groupErrors = new Map<number, string>()
   private connectCooldown = new Map<string, number>() // driverKey -> 最近一次连接失败时间戳（冷却期内不重连）
   private lastOutcomeAt = new Map<number, number>() // objectId -> 最近一次有结果/错误的时间戳（看门狗用）
+  private deviceConnected = new Map<number, boolean>() // objectId -> 最近一次连接状态（变更时发 device/status）
 
   constructor(private readonly ctx: any, private readonly config: Config) {}
 
@@ -78,6 +79,7 @@ class PollingEngine {
       }
       this.runWatchdog(objects)
       this.releaseUnusedRtuDrivers()
+      for (const obj of objects) this.updateDeviceStatus(obj.id)
       this.timer = setTimeout(loop, this.nextInterval())
     }
     void loop()
@@ -112,6 +114,34 @@ class PollingEngine {
     if (!obj) return false
     const d = this.drivers.get(this.driverKey(obj))
     return !!d && d.isConnected()
+  }
+
+  /** 所有启用设备的实时连接状态（供 WS 快照 / REST 设备列表）。 */
+  listConnectionStates(): Array<{ objectId: number; connected: boolean }> {
+    return this.ctx.config.listObjects()
+      .filter((o: any) => o.mode !== 'slave')
+      .map((o: any) => ({ objectId: o.id, connected: o.isActive === 1 && this.isDeviceConnected(o.id) }))
+  }
+
+  /** 当前所有分组错误（供 WS 客户端接入时回放 ⚠ 徽标）。 */
+  listGroupErrors(): Array<{ objectId: number; groupId: number; error: string }> {
+    const out: Array<{ objectId: number; groupId: number; error: string }> = []
+    for (const [groupId, error] of this.groupErrors) {
+      const g = this.ctx.config.getGroup(groupId)
+      if (g) out.push({ objectId: g.objectId, groupId, error })
+    }
+    return out
+  }
+
+  /** 连接状态变化时发 device/status（仅在状态翻转时发，避免每轮刷屏）。 */
+  private updateDeviceStatus(objectId: number): void {
+    const obj = this.ctx.config.getObject(objectId)
+    if (!obj) return
+    const connected = obj.isActive === 1 && this.isDeviceConnected(objectId)
+    const prev = this.deviceConnected.get(objectId)
+    if (prev === connected) return
+    this.deviceConnected.set(objectId, connected)
+    this.ctx.emit('device/status', { objectId, connected })
   }
 
   /** 返回设备（TCP）或共享串口通道（RTU）的实时通信指标。 */

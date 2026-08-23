@@ -177,7 +177,13 @@ class JsmodbusDriver implements ModbusDriver {
     this.ready = false
   }
 
-  isConnected(): boolean { return this.ready }
+  isConnected(): boolean {
+    if (!this.ready) return false
+    for (const { socket } of this.clients.values()) {
+      if (!socket.destroyed && socket.writable) return true
+    }
+    return false
+  }
 
   private async getClient(slaveId: number): Promise<ModbusTCPClient> {
     const existing = this.clients.get(slaveId)
@@ -185,6 +191,12 @@ class JsmodbusDriver implements ModbusDriver {
     const socket = new net.Socket()
     attachFrameCapture(socket, this.diagnostics)
     const client = new ModbusTCPClient(socket, slaveId, this.config.defaultTimeoutMs)
+    const drop = () => {
+      const cur = this.clients.get(slaveId)
+      if (cur && cur.socket === socket) this.clients.delete(slaveId)
+    }
+    socket.on('close', drop)
+    socket.on('error', drop)
     await new Promise<void>((resolve, reject) => {
       socket.once('connect', resolve)
       socket.once('error', reject)

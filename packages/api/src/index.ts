@@ -109,7 +109,11 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     // ── Objects ─────────────────────────────────────────────
-    fastify.get('/api/monitor_objects', async () => cfg.listObjects())
+    fastify.get('/api/monitor_objects', async () => {
+      const objects = cfg.listObjects()
+      const states = new Map((poller.listConnectionStates?.() ?? []).map((s: any) => [s.objectId, s.connected]))
+      return objects.map((o: any) => ({ ...o, connected: states.get(o.id) ?? false }))
+    })
     fastify.post('/api/monitor_objects', async (req: any) => {
       const b = req.body as any
       return cfg.createObject(b.name, b.ip, b.port, b.mode ?? 'master', {
@@ -305,6 +309,8 @@ export function apply(ctx: Context, config: Config): void {
       socket.on('close', () => removeSocket(socket))
       socket.on('error', () => { removeSocket(socket); try { socket.terminate() } catch { /* ignore */ } })
       safeSend(socket, JSON.stringify({ type: 'latest', data: store.getLatest() }))
+      safeSend(socket, JSON.stringify({ type: 'device/status', states: poller.listConnectionStates?.() ?? [] }))
+      safeSend(socket, JSON.stringify({ type: 'group-errors', errors: poller.listGroupErrors?.() ?? [] }))
     })
 
     fastify.addHook('onClose', async () => {
@@ -342,6 +348,10 @@ export function apply(ctx: Context, config: Config): void {
   })
   ctx.on('config/changed', (payload: any) => {
     const msg = JSON.stringify({ type: 'config/changed', ...payload })
+    broadcast(msg)
+  })
+  ctx.on('device/status', (payload: any) => {
+    const msg = JSON.stringify({ type: 'device/status', ...payload })
     broadcast(msg)
   })
 
