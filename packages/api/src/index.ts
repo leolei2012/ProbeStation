@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static'
 import compress from '@fastify/compress'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { baseType, encodeRegister, registerWidth } from '@probebench/core'
+import { baseType, encodeRegister, functionCodeForArea, parsePointCsv, registerWidth, type ModbusArea } from '@probebench/core'
 
 export const name = 'api'
 export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'workspace', 'ota']
@@ -148,6 +148,27 @@ export function apply(ctx: Context, config: Config): void {
       return cfg.updateRegister(id, b)
     })
     fastify.delete('/api/registers/:id', async (req: any) => { cfg.deleteRegister(Number((req.params as any).id)); return { ok: true } })
+
+    // ── 点表导入（语义批量更新） ────────────────────────────
+    fastify.post('/api/monitor_objects/:id/points/import', async (req: any) => {
+      const id = Number((req.params as any).id)
+      const body = req.body as any
+      let rows: any[]
+      if (Array.isArray(body)) rows = body
+      else if (typeof body?.csv === 'string') rows = parsePointCsv(body.csv)
+      else return { code: 400, error: 'expect a JSON array or { csv }' }
+      const points = rows.map((p: any) => ({
+        functionCode: functionCodeForArea(p.area as ModbusArea),
+        address: p.address,
+        alias: p.alias ?? null,
+        dataType: p.data_type ?? p.dataType ?? 'int16',
+        unit: p.unit ?? null,
+        factor: p.factor,
+        offset: p.offset,
+        enumMap: p.enum ?? p.enumMap ?? null,
+      }))
+      return cfg.importPoints(id, points)
+    })
 
     // ── Write ───────────────────────────────────────────────
     fastify.post('/api/registers/:id/write', async (req: any) => {

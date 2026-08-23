@@ -6,7 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z as zz } from 'zod'
-import { areaForFunction, decodeRawByAddr, encodeRegister, invertSemantic, parseEnum, registerWidth, resolveSemantic, type ModbusArea } from '@probebench/core'
+import { areaForFunction, decodeRawByAddr, encodeRegister, functionCodeForArea, invertSemantic, parseEnum, registerWidth, resolveSemantic, type ModbusArea } from '@probebench/core'
 import { Recorder } from './recorder.ts'
 
 /** 把 RegisterRecord 映射成语义寄存器（factor/offset/unit/enum）。 */
@@ -202,6 +202,35 @@ export function apply(ctx: Context, config: Config): void {
       const updated = cfg.updateGroup(args.group_id, fields)
       cfg.log('INFO', 'mcp', 'update group ' + args.group_id)
       return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
+    })
+
+    server.registerTool('import_points', {
+      title: 'Import points', description: '批量导入/更新寄存器语义（alias/data_type/unit/factor/offset/enum），按 area+address 匹配已有寄存器',
+      inputSchema: { device_id: zz.number(), points: zz.array(zz.object({
+        area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']),
+        address: zz.number(),
+        alias: zz.string().optional(),
+        data_type: zz.string().optional(),
+        unit: zz.string().optional(),
+        factor: zz.number().optional(),
+        offset: zz.number().optional(),
+        enum: zz.record(zz.string()).optional(),
+      })) },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      const points = args.points.map((p: any) => ({
+        functionCode: functionCodeForArea(p.area),
+        address: p.address,
+        alias: p.alias ?? null,
+        dataType: p.data_type,
+        unit: p.unit ?? null,
+        factor: p.factor,
+        offset: p.offset,
+        enumMap: p.enum ?? null,
+      }))
+      const report = cfg.importPoints(args.device_id, points)
+      cfg.log('INFO', 'mcp', 'import points device ' + args.device_id + ' => ' + JSON.stringify(report))
+      return { content: [{ type: 'text', text: JSON.stringify(report) }] }
     })
 
     server.registerTool('create_register', {

@@ -77,6 +77,16 @@ export function areaForFunction(functionCode: ModbusFunctionCode): ModbusArea {
   }
 }
 
+/** 数据区 → 读取功能码（coil→FC01，discrete-input→FC02，holding-register→FC03，input-register→FC04）。 */
+export function functionCodeForArea(area: ModbusArea): ModbusFunctionCode {
+  switch (area) {
+    case 'coil': return 1
+    case 'discrete-input': return 2
+    case 'holding-register': return 3
+    case 'input-register': return 4
+  }
+}
+
 export function quantityForRequest(request: ModbusRequest): number {
   if (isReadFunction(request.functionCode)) return request.quantity ?? 0
   if (request.functionCode === 5 || request.functionCode === 6) return 1

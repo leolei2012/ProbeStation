@@ -188,6 +188,29 @@ export class ConfigStore {
   listRegisters(groupId: number): RegisterRecord[] { return this.db.prepare(REGISTER_SELECT + ' WHERE group_id = ? ORDER BY start_address').all(groupId) as unknown as RegisterRecord[] }
   listRegistersByObject(objectId: number): RegisterRecord[] { return this.db.prepare(REGISTER_SELECT + ' WHERE object_id = ? ORDER BY start_address').all(objectId) as unknown as RegisterRecord[] }
   getRegister(id: number): RegisterRecord | undefined { return this.db.prepare(REGISTER_SELECT + ' WHERE id = ?').get(id) as unknown as RegisterRecord | undefined }
+
+  /** 点表导入：按 (functionCode, address) 匹配已有寄存器并更新语义（alias/dataType/unit/factor/offset/enum）。 */
+  importPoints(objectId: number, points: Array<{ functionCode: number; address: number; alias?: string | null; dataType?: string; unit?: string | null; factor?: number; offset?: number; enumMap?: Record<string, string> | null }>): { updated: number; skipped: number; errors: string[] } {
+    const regs = this.listRegistersByObject(objectId)
+    let updated = 0
+    let skipped = 0
+    const errors: string[] = []
+    for (const p of points) {
+      const reg = regs.find((r) => r.functionCode === p.functionCode && r.startAddress === p.address)
+      if (!reg) { skipped++; errors.push('address ' + p.address + ' (fc=' + p.functionCode + ') not found'); continue }
+      const fields: Record<string, unknown> = {}
+      if (p.alias != null) fields.alias = p.alias
+      if (p.dataType != null) fields.dataType = p.dataType
+      if (p.unit !== undefined) fields.unit = p.unit
+      if (p.factor !== undefined) fields.factor = p.factor
+      if (p.offset !== undefined) fields.offset = p.offset
+      if (p.enumMap !== undefined) fields.enumJson = p.enumMap ? JSON.stringify(p.enumMap) : null
+      if (Object.keys(fields).length === 0) { skipped++; continue }
+      this.updateRegister(reg.id, fields)
+      updated++
+    }
+    return { updated, skipped, errors }
+  }
   createRegister(groupId: number, objectId: number, alias: string | null, functionCode: number, startAddress: number, dataType = 'int16', extra?: Partial<Pick<RegisterRecord, 'unit' | 'factor' | 'offset' | 'enumJson'>>): RegisterRecord {
     const unit = extra?.unit ?? null
     const factor = extra?.factor ?? 1

@@ -35,6 +35,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `get_recording` | `recording_id` | 取录制完整采样序列（原始 16 位字） |
 | `list_recordings` | — | 列录制会话（不含 samples） |
 | `stop_recording` | `recording_id` | 提前结束/取消录制 |
+| `import_points` | `device_id, points[]` | 批量导入/更新寄存器语义（area+address 匹配，alias/data_type/unit/factor/offset/enum） |
 | `create_group` | `device_id, name, function_code?, start_address, quantity, slave_id?, poll_interval_ms?` | 新建分组 |
 | `update_group` | `group_id, name?, slave_id?, function_code?, start_address?, quantity?, poll_interval_ms?, is_active?` | 更改分组 |
 | `create_register` | `group_id, alias?, function_code?, start_address, data_type?` | 新增寄存器 |
