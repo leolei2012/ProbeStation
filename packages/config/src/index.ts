@@ -261,6 +261,19 @@ export class ConfigStore {
   setFirmwarePath(id: number, filePath: string): void { this.db.prepare('UPDATE firmwares SET file_path = ? WHERE id = ?').run(filePath, id) }
   deleteFirmware(id: number): void { this.db.prepare('DELETE FROM firmwares WHERE id = ?').run(id) }
 
+  /** 元数据计数（供数据统计展示）。 */
+  metadataStats(): Record<string, number> {
+    const count = (table: string): number => Number((this.db.prepare('SELECT COUNT(*) AS c FROM ' + table).get() as any)?.c ?? 0)
+    return {
+      devices: count('monitor_objects'),
+      groups: count('register_groups'),
+      registers: count('registers'),
+      rules: count('alarm_rules'),
+      firmwares: count('firmwares'),
+      logs: count('logs'),
+    }
+  }
+
   private update(table: string, id: number, fields: Record<string, unknown>, mapping: Record<string, string>): void {
     const cols: string[] = []
     const vals: unknown[] = []

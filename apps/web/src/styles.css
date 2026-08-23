@@ -271,3 +271,21 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .import-line { color: var(--text-2); margin-bottom: 4px; word-break: break-word; }
 .import-line.ok { color: var(--success); }
 .import-line.warn { color: var(--error); }
+
+/* ── 全局 Tab / 数据库统计 ── */
+.global-tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border-1); margin-bottom: 18px; }
+.global-tab { padding: 9px 16px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--text-2); border-bottom: 2px solid transparent; margin-bottom: -1px; font-family: var(--font); font-weight: 500; }
+.global-tab:hover { color: var(--text-1); }
+.global-tab.active { color: var(--text-1); border-bottom-color: var(--brand); }
+.db-view { max-width: 860px; }
+.db-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 18px; }
+.db-title { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+.db-cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.db-card { flex: 1; min-width: 180px; border: 1px solid var(--border-1); border-radius: 10px; padding: 16px; }
+.db-card-title { font-size: 12px; color: var(--text-3); margin-bottom: 8px; }
+.db-big { font-size: 28px; font-weight: 700; font-family: var(--font-code); margin-bottom: 6px; word-break: break-all; }
+.db-section { border: 1px solid var(--border-1); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+.db-section-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.db-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.db-meta-item { font-size: 13px; color: var(--text-2); }
+.db-meta-item b { color: var(--text-1); font-family: var(--font-code); margin-left: 4px; }

@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
 import compress from '@fastify/compress'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { baseType, encodeRegister, functionCodeForArea, registerWidth, smartParseCsv, smartParseTable, type ModbusArea } from '@probebench/core'
 import ExcelJS from 'exceljs'
@@ -259,6 +259,30 @@ export function apply(ctx: Context, config: Config): void {
       if (!Number.isInteger(seconds) || seconds < 0) return { code: 400, error: 'retention_seconds must be a non-negative integer' }
       store.setRetentionSeconds(seconds)
       return { ok: true, retention_seconds: store.getRetentionSeconds() }
+    })
+
+    // ── Data stats ─────────────────────────────────────────
+    const fileSize = (p: string): number | null => { try { return existsSync(p) ? statSync(p).size : null } catch { return null } }
+    fastify.get('/api/stats', async () => {
+      const history = await store.stats()
+      const objects = cfg.listObjects()
+      const nameById = new Map(objects.map((o: any) => [o.id, o.name]))
+      const enriched = {
+        ...history,
+        byDevice: history.byDevice.map((d: any) => ({ ...d, name: nameById.get(d.objectId) ?? ('#' + d.objectId) })),
+      }
+      const wsDir = workspace.getCurrent()
+      return {
+        history: enriched,
+        metadata: cfg.metadataStats(),
+        retention: { retention_seconds: store.getRetentionSeconds() },
+        files: {
+          config_db: fileSize(resolve(wsDir, 'config.db')),
+          poll_duckdb: fileSize(resolve(wsDir, 'poll.duckdb')),
+          poll_duckdb_wal: fileSize(resolve(wsDir, 'poll.duckdb.wal')),
+        },
+        workspace: wsDir,
+      }
     })
 
     // ── Export ─────────────────────────────────────────────

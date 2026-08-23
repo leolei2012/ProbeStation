@@ -66,6 +66,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     dataMgmt: '数据管理', runLogs: '运行日志', clearLogs: '清空日志', logsCleared: '日志已清空', retentionLabel: '历史保留', retentionSaved: '保留时长已保存', retentionForever: '永久',
     newDeviceTitle: '新建设备', editDeviceTitle: '编辑设备', name: '名称', ip: 'IP 地址', port: '端口', transport: '连接方式', transportTcp: 'TCP 网口', transportRtu: 'RTU 串口', serialPath: '串口路径', baudRate: '波特率', parity: '校验位', stopBits: '停止位', dataBits: '数据位', flowControl: '流控', slaveIdLabel: '从站地址', pollIntervalLabel: '采样周期(ms)', cancel: '取消', add: '添加',
     importPoints: '导入点表', importTitle: '智能导入点表', importHint: '粘贴 CSV（首行表头含 地址/名称/类型/枚举 等列），或上传 CSV/XLSX 文件；也支持 JSON 数组。', importPh: '粘贴点表 CSV（首行表头：地址,名称,类型,枚举）', importFile: '上传文件', importDo: '导入', importEmpty: '请输入内容或选择文件', impBadJson: '无法解析 JSON 数组', importUpdated: '更新 {n} 个', importSkipped: '跳过 {n} 个', importErrors: '错误', importColumns: '识别列',
+    tabMonitor: '设备观测', tabDatabase: '数据库', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
     brand: 'ProbeStation',
@@ -109,6 +110,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     dataMgmt: 'Data management', runLogs: 'Runtime logs', clearLogs: 'Clear logs', logsCleared: 'Logs cleared', retentionLabel: 'Data retention', retentionSaved: 'Retention saved', retentionForever: 'Forever',
     newDeviceTitle: 'New device', editDeviceTitle: 'Edit device', name: 'Name', ip: 'IP address', port: 'Port', transport: 'Transport', transportTcp: 'TCP', transportRtu: 'RTU serial', serialPath: 'Serial path', baudRate: 'Baud rate', parity: 'Parity', stopBits: 'Stop bits', dataBits: 'Data bits', flowControl: 'Flow control', slaveIdLabel: 'Slave ID', pollIntervalLabel: 'Poll interval (ms)', cancel: 'Cancel', add: 'Add',
     importPoints: 'Import points', importTitle: 'Smart point import', importHint: 'Paste CSV (header columns like addr/name/type/enum), or upload CSV/XLSX; JSON array is also accepted.', importPh: 'Paste point-table CSV (header: addr,name,type,enum)', importFile: 'Upload file', importDo: 'Import', importEmpty: 'Enter content or choose a file', impBadJson: 'Cannot parse JSON array', importUpdated: '{n} updated', importSkipped: '{n} skipped', importErrors: 'Errors', importColumns: 'Detected columns',
+    tabMonitor: 'Monitor', tabDatabase: 'Database', dbHistory: 'History data', dbTotalRows: 'Total samples', dbTimeSpan: 'Time span', dbDiskUsage: 'Disk usage', dbPerDevice: 'Per device', dbMetadata: 'Metadata', dbRetention: 'Retention', dbRefresh: 'Refresh', dbNoData: 'No history data yet', dbBufferHint: '{n} buffered rows pending flush', dbDevices: 'Devices', dbGroups: 'Groups', dbRegisters: 'Registers', dbRules: 'Alarm rules', dbFirmwares: 'Firmware', dbLogs: 'Logs', dbRetentionForever: 'Forever', dbRetentionDays: '{n} days',
   },
 }
 
@@ -280,6 +282,7 @@ export default function App() {
   const [wsExpanded, setWsExpanded] = useState(true)
   const [realtime, setRealtime] = useState<{ status: RealtimeStatus; attempt: number }>({ status: 'connecting', attempt: 0 })
   const [deviceConnected, setDeviceConnected] = useState<Record<number, boolean>>({})
+  const [view, setView] = useState<'monitor' | 'database'>('monitor')
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const selectedIdRef = useRef<number | null>(selectedId)
@@ -511,7 +514,7 @@ export default function App() {
                         <div className="device-list">
                           <button className="btn new-device-btn" onClick={() => setShowAdd(true)}>{t('newDevice')}</button>
                           {devices.map((d) => (
-                            <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => setSelectedId(d.id)}>
+                            <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => { setSelectedId(d.id); setView('monitor') }}>
                               <span className={'device-dot' + (deviceConnected[d.id] === true ? ' on' : '')} />
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div className="device-name">{d.name}</div>
@@ -539,9 +542,12 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {selected
-          ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
-          : <EmptyState t={t} onAdd={() => setShowAdd(true)} />}
+        <GlobalTabBar t={t} view={view} onChange={setView} />
+        {view === 'database'
+          ? <DatabaseView t={t} />
+          : (selected
+            ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+            : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
       </main>
 
       {showAdd && <DeviceModal t={t} initial={null} onClose={() => setShowAdd(false)} onSave={addDevice} />}
@@ -553,6 +559,116 @@ export default function App() {
 
 function EmptyState({ t, onAdd }: { t: T; onAdd: () => void }) {
   return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div><button className="btn primary" onClick={onAdd}>{t('newDevice')}</button></div>
+}
+
+function GlobalTabBar({ t, view, onChange }: { t: T; view: 'monitor' | 'database'; onChange: (v: 'monitor' | 'database') => void }) {
+  return (
+    <div className="global-tab-bar">
+      <button className={'global-tab' + (view === 'monitor' ? ' active' : '')} onClick={() => onChange('monitor')}>{t('tabMonitor')}</button>
+      <button className={'global-tab' + (view === 'database' ? ' active' : '')} onClick={() => onChange('database')}>{t('tabDatabase')}</button>
+    </div>
+  )
+}
+
+function fmtTs(s: string | null | undefined): string {
+  if (!s) return '—'
+  const t = String(s).replace('T', ' ')
+  return t.length >= 16 ? t.slice(0, 16) : t
+}
+
+function fmtBytes(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—'
+  if (n < 1024) return n + ' B'
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n
+  let i = -1
+  do { v /= 1024; i++ } while (v >= 1024 && i < units.length - 1)
+  return v.toFixed(1) + ' ' + units[i]
+}
+
+function DatabaseView({ t }: { t: T }) {
+  const [stats, setStats] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const load = useCallback(async () => {
+    setLoading(true); setErr(null)
+    try { setStats(await api.get('/api/stats')) } catch (e: any) { setErr(e?.message ?? String(e)) }
+    finally { setLoading(false) }
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  const hist = stats?.history
+  const meta = stats?.metadata
+  const files = stats?.files
+  const retention = stats?.retention?.retention_seconds
+  const diskTotal = files ? (files.poll_duckdb ?? 0) + (files.poll_duckdb_wal ?? 0) + (files.config_db ?? 0) : null
+  const retentionText = retention === 0 ? t('dbRetentionForever') : (retention != null ? t('dbRetentionDays').replace('{n}', String(Math.round(retention / 86400))) : '—')
+
+  return (
+    <div className="db-view">
+      <div className="db-head">
+        <div>
+          <div className="db-title">{t('tabDatabase')}</div>
+          <div className="kv" style={{ wordBreak: 'break-all' }}>{stats?.workspace ?? ''}</div>
+        </div>
+        <div style={{ flex: 1 }} />
+        <button className="btn" onClick={() => void load()} disabled={loading}>{loading ? '…' : t('dbRefresh')}</button>
+      </div>
+      {err && <div className="write-msg error">{err}</div>}
+
+      <div className="db-cards">
+        <div className="db-card">
+          <div className="db-card-title">{t('dbHistory')}</div>
+          <div className="db-big">{hist ? Number(hist.totalRows).toLocaleString() : '—'}</div>
+          <div className="kv">{t('dbTotalRows')}</div>
+        </div>
+        <div className="db-card">
+          <div className="db-card-title">{t('dbTimeSpan')}</div>
+          <div className="db-big" style={{ fontSize: 20, lineHeight: 1.4 }}>{hist ? fmtTs(hist.oldestTs) + ' → ' + fmtTs(hist.newestTs) : '—'}</div>
+        </div>
+        <div className="db-card">
+          <div className="db-card-title">{t('dbDiskUsage')}</div>
+          <div className="db-big">{fmtBytes(diskTotal)}</div>
+          <div className="kv">poll.duckdb {fmtBytes(files?.poll_duckdb)} · wal {fmtBytes(files?.poll_duckdb_wal)} · config.db {fmtBytes(files?.config_db)}</div>
+        </div>
+      </div>
+
+      {hist && hist.bufferPending > 0 && <div className="kv" style={{ marginBottom: 14 }}>{t('dbBufferHint').replace('{n}', String(hist.bufferPending))}</div>}
+
+      <div className="db-section">
+        <div className="db-section-title">{t('dbPerDevice')}</div>
+        {!hist || !Array.isArray(hist.byDevice) || hist.byDevice.length === 0 ? (
+          <div className="kv">{t('dbNoData')}</div>
+        ) : (
+          <table className="reg">
+            <thead><tr><th>{t('dbDevices')}</th><th>{t('dbTotalRows')}</th><th>{t('dbTimeSpan')}</th></tr></thead>
+            <tbody>
+              {hist.byDevice.map((d: any) => (
+                <tr key={d.objectId}><td>{d.name}</td><td className="value">{Number(d.rows).toLocaleString()}</td><td className="kv">{fmtTs(d.oldestTs)} → {fmtTs(d.newestTs)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="db-section">
+        <div className="db-section-title">{t('dbMetadata')}</div>
+        <div className="db-meta">
+          <span className="db-meta-item">{t('dbDevices')} <b>{meta?.devices ?? 0}</b></span>
+          <span className="db-meta-item">{t('dbGroups')} <b>{meta?.groups ?? 0}</b></span>
+          <span className="db-meta-item">{t('dbRegisters')} <b>{meta?.registers ?? 0}</b></span>
+          <span className="db-meta-item">{t('dbRules')} <b>{meta?.rules ?? 0}</b></span>
+          <span className="db-meta-item">{t('dbFirmwares')} <b>{meta?.firmwares ?? 0}</b></span>
+          <span className="db-meta-item">{t('dbLogs')} <b>{meta?.logs ?? 0}</b></span>
+        </div>
+      </div>
+
+      <div className="db-section">
+        <div className="db-section-title">{t('dbRetention')}</div>
+        <div className="kv">{retentionText}</div>
+      </div>
+    </div>
+  )
 }
 
 function DeviceView({ t, device, connected, groups, latest, groupErrors, realtime, onToggle, onEdit, onDelete, onRefresh }: {

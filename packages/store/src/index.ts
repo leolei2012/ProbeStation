@@ -217,6 +217,34 @@ export class DuckDBStore {
     const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown }>
     return rows.map(r => ({ ts: String(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
   }
+
+  /** 数据量统计：总行数 / 时间跨度 / 按设备与数据区分布 / 待落盘缓冲。 */
+  async stats(): Promise<{
+    totalRows: number
+    oldestTs: string | null
+    newestTs: string | null
+    byDevice: Array<{ objectId: number; rows: number; oldestTs: string | null; newestTs: string | null }>
+    byArea: Array<{ area: string; rows: number }>
+    bufferPending: number
+  }> {
+    const conn = await this.ready
+    const num = (v: unknown): number => Number(v ?? 0)
+    const str = (v: unknown): string | null => (v == null ? null : String(v))
+    const countRows = (await conn.runAndReadAll('SELECT COUNT(*) AS c FROM poll_data')).getRowObjects()
+    const totalRows = num(countRows[0]?.c)
+    const spanRows = (await conn.runAndReadAll('SELECT MIN(ts) AS mn, MAX(ts) AS mx FROM poll_data')).getRowObjects()
+    const span = spanRows[0]
+    const byDeviceRows = (await conn.runAndReadAll('SELECT object_id, COUNT(*) AS c, MIN(ts) AS mn, MAX(ts) AS mx FROM poll_data GROUP BY object_id ORDER BY c DESC')).getRowObjects()
+    const byAreaRows = (await conn.runAndReadAll('SELECT area, COUNT(*) AS c FROM poll_data GROUP BY area ORDER BY c DESC')).getRowObjects()
+    return {
+      totalRows,
+      oldestTs: str(span?.mn),
+      newestTs: str(span?.mx),
+      byDevice: byDeviceRows.map((r: any) => ({ objectId: num(r.object_id), rows: num(r.c), oldestTs: str(r.mn), newestTs: str(r.mx) })),
+      byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
+      bufferPending: this.buffer.length,
+    }
+  }
 }
 
 /** Provide `ctx.store` to consumers (poller, api). */
