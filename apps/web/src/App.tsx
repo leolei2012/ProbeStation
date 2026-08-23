@@ -1373,17 +1373,17 @@ function CurveChart({ t, device, groups, registers }: { t: T; device: Device; gr
 
   return (
     <div className="chart-wrap">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
-        <div style={{ flex: 1 }} />
-        {view && <button className="btn" onClick={() => setView(null)}>{t('curveReset')}</button>}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+      <div className="toolbar">
         <label className="hist-label">{t('histStart')}</label>
         <input className="hist-input" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
         <label className="hist-label">{t('histEnd')}</label>
         <input className="hist-input" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} />
         <button className="btn primary" onClick={query}>{t('histQuery')}</button>
+        <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
+        <div style={{ flex: 1 }} />
+        {view && <button className="btn" onClick={() => setView(null)}>{t('curveReset')}</button>}
+      </div>
+      <div className="hist-quick">
         <span className="hist-label">{t('histQuick')}</span>
         <div className="seg">
           <button onClick={() => applyPreset('1h')}>{t('histLast1h')}</button>
