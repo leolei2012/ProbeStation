@@ -149,7 +149,7 @@ export function apply(ctx: Context, config: Config): void {
     fastify.post('/api/monitor_objects/:id/groups', async (req: any) => {
       const oid = Number((req.params as any).id)
       const b = req.body as any
-      const g = cfg.createGroup(oid, b.name, b.functionCode ?? 3, b.startAddress ?? 0, b.quantity ?? 1, b.mode ?? 'read', b.slaveId ?? 1, b.pollIntervalMs ?? 1000)
+      const g = cfg.createGroup(oid, b.name, b.functionCode ?? 3, b.startAddress ?? 0, b.quantity ?? 1, b.mode ?? 'read', b.slaveId ?? 1)
       // 按数量自动生成寄存器（每地址一个，默认 int16、无别名）
       for (let i = 0; i < g.quantity; i++) cfg.createRegister(g.id, g.objectId, null, g.functionCode, g.startAddress + i, 'int16')
       return g

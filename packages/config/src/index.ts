@@ -10,18 +10,18 @@ export interface Config { dbPath: string }
 export const Config: z<Config> = z.object({ dbPath: z.string() })
 
 export interface DeviceRecord { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; dataRetainSeconds: number | null }
-export interface GroupRecord { id: number; objectId: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; mode: string; isActive: number }
+export interface GroupRecord { id: number; objectId: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; mode: string; isActive: number }
 export interface RegisterRecord { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; quantity: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null }
 export interface RuleRecord { id: number; registerId: number; operator: string; threshold: number; message: string | null }
 export interface LogRecord { id: number; ts: string; level: string; source: string | null; message: string | null }
 export interface FirmwareRecord { id: number; name: string; version: string | null; size: number; crc32: number; filePath: string | null; createdAt: string | null }
 
 const OBJECT_SELECT = 'SELECT id, name, ip, port, mode, is_active AS isActive, transport, serial_path AS serialPath, baud_rate AS baudRate, parity, stop_bits AS stopBits, data_bits AS dataBits, flow_control AS flowControl, slave_id AS slaveId, poll_interval_ms AS pollIntervalMs, data_retain_seconds AS dataRetainSeconds FROM monitor_objects'
-const GROUP_SELECT = 'SELECT id, object_id AS objectId, name, slave_id AS slaveId, function_code AS functionCode, start_address AS startAddress, quantity, poll_interval_ms AS pollIntervalMs, mode, is_active AS isActive FROM register_groups'
+const GROUP_SELECT = 'SELECT id, object_id AS objectId, name, slave_id AS slaveId, function_code AS functionCode, start_address AS startAddress, quantity, mode, is_active AS isActive FROM register_groups'
 const REGISTER_SELECT = 'SELECT id, group_id AS groupId, object_id AS objectId, alias, function_code AS functionCode, start_address AS startAddress, quantity, data_type AS dataType, unit, factor, offset, enum_json AS enumJson FROM registers'
 
 const OBJECT_MAP: Record<string, string> = { name: 'name', ip: 'ip', port: 'port', mode: 'mode', isActive: 'is_active', transport: 'transport', serialPath: 'serial_path', baudRate: 'baud_rate', parity: 'parity', stopBits: 'stop_bits', dataBits: 'data_bits', flowControl: 'flow_control', slaveId: 'slave_id', pollIntervalMs: 'poll_interval_ms', dataRetainSeconds: 'data_retain_seconds' }
-const GROUP_MAP: Record<string, string> = { name: 'name', slaveId: 'slave_id', functionCode: 'function_code', startAddress: 'start_address', quantity: 'quantity', pollIntervalMs: 'poll_interval_ms', mode: 'mode', isActive: 'is_active' }
+const GROUP_MAP: Record<string, string> = { name: 'name', slaveId: 'slave_id', functionCode: 'function_code', startAddress: 'start_address', quantity: 'quantity', mode: 'mode', isActive: 'is_active' }
 const REGISTER_MAP: Record<string, string> = { alias: 'alias', functionCode: 'function_code', startAddress: 'start_address', dataType: 'data_type', unit: 'unit', factor: 'factor', offset: 'offset', enumJson: 'enum_json' }
 
 export class ConfigStore {
@@ -74,6 +74,8 @@ export class ConfigStore {
     for (const [col, ddl] of regCols) {
       try { db.exec(`ALTER TABLE registers ADD COLUMN ${col} ${ddl}`) } catch { /* 列已存在 */ }
     }
+    // 已废弃：分组级扫描间隔列，改用设备级采样周期统一轮询（幂等删除）
+    try { db.exec('ALTER TABLE register_groups DROP COLUMN poll_interval_ms') } catch { /* 列已不存在 */ }
   }
 
   /** 切换工作区：关闭旧库、打开新库（幂等，CREATE TABLE IF NOT EXISTS）。 */
@@ -99,7 +101,7 @@ export class ConfigStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         object_id INTEGER NOT NULL, name TEXT NOT NULL, slave_id INTEGER DEFAULT 1,
         function_code INTEGER DEFAULT 3, start_address INTEGER DEFAULT 0, quantity INTEGER DEFAULT 1,
-        poll_interval_ms INTEGER DEFAULT 1000, mode TEXT DEFAULT 'read', is_active INTEGER DEFAULT 1
+        mode TEXT DEFAULT 'read', is_active INTEGER DEFAULT 1
       );
       CREATE TABLE IF NOT EXISTS registers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,8 +165,8 @@ export class ConfigStore {
 
   listGroups(objectId: number): GroupRecord[] { return this.db.prepare(GROUP_SELECT + ' WHERE object_id = ? ORDER BY id').all(objectId) as unknown as GroupRecord[] }
   getGroup(id: number): GroupRecord | undefined { return this.db.prepare(GROUP_SELECT + ' WHERE id = ?').get(id) as unknown as GroupRecord | undefined }
-  createGroup(objectId: number, name: string, functionCode: number, startAddress: number, quantity: number, mode = 'read', slaveId = 1, pollIntervalMs = 1000): GroupRecord {
-    const res = this.db.prepare('INSERT INTO register_groups (object_id, name, slave_id, function_code, start_address, quantity, poll_interval_ms, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(objectId, name, slaveId, functionCode, startAddress, quantity, pollIntervalMs, mode)
+  createGroup(objectId: number, name: string, functionCode: number, startAddress: number, quantity: number, mode = 'read', slaveId = 1): GroupRecord {
+    const res = this.db.prepare('INSERT INTO register_groups (object_id, name, slave_id, function_code, start_address, quantity, mode) VALUES (?, ?, ?, ?, ?, ?, ?)').run(objectId, name, slaveId, functionCode, startAddress, quantity, mode)
     const id = Number(res.lastInsertRowid)
     this.notify('group', id)
     return this.getGroup(id)!
