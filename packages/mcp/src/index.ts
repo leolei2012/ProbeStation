@@ -63,7 +63,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('set_poll_interval', {
-      title: 'Set poll interval', description: '设设备采样周期（毫秒，≥1 整数）。该设备所有组统一用这个周期；实际最快受 Modbus 通信往返限制，1ms 只是下限（=「尽可能快」）',
+      title: 'Set poll interval', description: '设设备扫描间隔（毫秒，≥1 整数）。该设备所有分组按 round-robin 轮流轮询，每个分组约每「间隔 × 分组数」刷新一次；1ms 只是下限（=「尽可能快」）',
       inputSchema: { device_id: zz.number(), poll_interval_ms: zz.number() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
@@ -148,34 +148,42 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('query_history', {
-      title: 'Query history', description: '查某寄存器的时间范围历史时序',
-      inputSchema: { device_id: zz.number(), register_id: zz.number(), start: zz.string(), end: zz.string() },
+      title: 'Query history', description: '查某寄存器的时间范围历史时序（按 area+address 定位，含语义翻译）',
+      inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number(), start: zz.string(), end: zz.string() },
     }, async (args) => {
-      const reg = cfg.getRegister(args.register_id)
-      if (!reg) return { content: [{ type: 'text', text: 'register not found' }], isError: true }
+      const reg = findRegisterByAddress(args.device_id, args.area, args.address)
+      if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
       const points = await store.queryObject(args.device_id, args.start, args.end)
-      const area = areaForFunction(reg.functionCode)
       const rawByTs = new Map<string, Record<number, number>>()
       const qualByTs = new Map<string, string>()
       for (const p of points) {
-        if (p.area !== area) continue
+        if (p.area !== args.area) continue
         if (!rawByTs.has(p.ts)) rawByTs.set(p.ts, {})
         rawByTs.get(p.ts)![p.address] = p.rawValue
         if (p.address === reg.startAddress) qualByTs.set(p.ts, p.quality)
       }
-      const out: Array<{ ts: string; value: string | number | null; quality: string | null }> = []
+      const out: Array<{ ts: string; value: number | string | null; unit: string | null; label: string | null; quality: string | null }> = []
       for (const [ts, rawByAddr] of rawByTs) {
         const v = decodeRawByAddr([reg], rawByAddr).get(reg.id) ?? null
-        out.push({ ts, value: typeof v === 'bigint' ? String(v) : v, quality: qualByTs.get(ts) ?? null })
+        let value: number | string | null = v === null ? null : (typeof v === 'bigint' ? String(v) : v)
+        let unit: string | null = null
+        let label: string | null = null
+        if (v != null && typeof v !== 'bigint') {
+          const s = resolveSemantic(semanticOf(reg), v)
+          value = s.value; unit = s.unit; label = s.label
+        }
+        out.push({ ts, value, unit, label, quality: qualByTs.get(ts) ?? null })
       }
       return { content: [{ type: 'text', text: JSON.stringify(out) }] }
     })
 
     server.registerTool('write_register', {
-      title: 'Write register', description: '按 Modbus 地址写某设备单个寄存器（FC16，控制真机，危险操作；address 即寄存器起始地址，无需数据库 id）',
-      inputSchema: { device_id: zz.number(), address: zz.number(), value: zz.number() },
+      title: 'Write register', description: '按 Modbus 地址写某设备单个寄存器（FC16，控制真机，危险操作；仅支持 holding-register，area 可省略）',
+      inputSchema: { device_id: zz.number(), address: zz.number(), value: zz.number(), area: zz.enum(['holding-register']).optional() },
     }, async (args) => {
-      const reg = findRegisterByAddress(args.device_id, 'holding-register', args.address)
+      const area = args.area ?? 'holding-register'
+      if (area !== 'holding-register') return { content: [{ type: 'text', text: 'only holding-register is writable (coil write not supported yet)' }], isError: true }
+      const reg = findRegisterByAddress(args.device_id, area, args.address)
       if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
       // 物理值 → 逆变换（÷factor、−offset）→ 寄存器值 → 编码
       const raw = invertSemantic(semanticOf(reg), args.value)
