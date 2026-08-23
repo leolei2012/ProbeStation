@@ -262,3 +262,12 @@ table.reg tr:hover td { background: var(--surface-hover); }
 .ws-new-device { width: 100%; margin-top: 4px; padding: 5px 8px; border: none; background: none; cursor: pointer; color: var(--text-2); font-size: 12px; text-align: left; border-radius: 6px; }
 .ws-new-device:hover { background: var(--surface-hover); color: var(--text-1); }
 .ws-recent:hover { background: var(--surface-hover); color: var(--text-1); }
+
+/* ── 点表导入 / 枚举徽标 ── */
+.enum-badge { margin-left: 6px; color: var(--accent); font-size: 11px; font-weight: 500; }
+.import-modal { width: 520px; max-width: 94vw; }
+.import-text { width: 100%; padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 6px; margin-bottom: 10px; font-size: 12px; background: var(--surface); color: var(--text-1); font-family: var(--font-code); resize: vertical; box-sizing: border-box; }
+.import-result { border-top: 1px solid var(--border-1); padding-top: 10px; font-size: 12px; }
+.import-line { color: var(--text-2); margin-bottom: 4px; word-break: break-word; }
+.import-line.ok { color: var(--success); }
+.import-line.warn { color: var(--error); }

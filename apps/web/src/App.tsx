@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './styles.css'
-import { baseType, decodeRawByAddr, formatRawByAddr, formatRegisterValue, isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec.ts'
+import { baseType, decodeRawByAddr, decodeRegister, formatNumber, formatRawByAddr, formatRegisterValue, isBinType, isHexType, parseEnum, registerWidth } from '../../../packages/core/src/codec.ts'
 
 const TYPE_GROUPS = [
   { key: 'grp16BE', types: ['int16', 'uint16', 'float16', 'hex16', 'bin16'] },
@@ -13,7 +13,7 @@ const TYPE_GROUPS = [
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; dataRetainSeconds: number | null }
 type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number }
-interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string }
+interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; pollIntervalMs: number; isActive: number; registers: Register[] }
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
 interface WorkspaceInfo { current: string; currentTitle: string; recent: { path: string; title: string; lastUsedAt: string; createdAt: string }[] }
@@ -52,7 +52,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: '导出 XLSX',
     deleteDevice: '删除设备', deleteGroup: '删除分组', confirmDeleteDevice: '确定删除设备「{name}」？其下所有分组与寄存器将一并删除。', confirmDeleteGroup: '确定删除分组「{name}」？其下所有寄存器将一并删除。',
     regCount: '{n} 个寄存器',
-    colAlias: '别名', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入', valueCovered: '被上一个多字寄存器占用', valueShort: '数据不足（分组读取范围不够）', grp16BE: '16位 大端', grp16LE: '16位 小端', grp32BE: '32位 大端', grp32LE: '32位 小端', grp64BE: '64位 大端', grp64LE: '64位 小端',
+    colAlias: '描述', colAddr: '地址', colType: '类型', colValue: '值', colQuality: '质量', colWrite: '写值', writeReg: '写寄存器', fc16: 'FC16 写多个寄存器', fc06: 'FC06 写单个寄存器', valueHint: '双击值可写入', valueCovered: '被上一个多字寄存器占用', valueShort: '数据不足（分组读取范围不够）', grp16BE: '16位 大端', grp16LE: '16位 小端', grp32BE: '32位 大端', grp32LE: '32位 小端', grp64BE: '64位 大端', grp64LE: '64位 小端',
     write: '写', valuePh: '值', writeErrEmpty: '请输入值', writeErrNaN: '请输入有效数字', writeOk: '已写入',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
@@ -65,6 +65,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     appInfo: '应用信息', version: '版本', arch: '架构', persistence: '持久化',
     dataMgmt: '数据管理', runLogs: '运行日志', clearLogs: '清空日志', logsCleared: '日志已清空', retentionLabel: '历史保留', retentionSaved: '保留时长已保存', retentionForever: '永久',
     newDeviceTitle: '新建设备', editDeviceTitle: '编辑设备', name: '名称', ip: 'IP 地址', port: '端口', transport: '连接方式', transportTcp: 'TCP 网口', transportRtu: 'RTU 串口', serialPath: '串口路径', baudRate: '波特率', parity: '校验位', stopBits: '停止位', dataBits: '数据位', flowControl: '流控', slaveIdLabel: '从站地址', pollIntervalLabel: '采样周期(ms)', cancel: '取消', add: '添加',
+    importPoints: '导入点表', importTitle: '智能导入点表', importHint: '粘贴 CSV（首行表头含 地址/名称/类型/枚举 等列），或上传 CSV/XLSX 文件；也支持 JSON 数组。', importPh: '粘贴点表 CSV（首行表头：地址,名称,类型,枚举）', importFile: '上传文件', importDo: '导入', importEmpty: '请输入内容或选择文件', impBadJson: '无法解析 JSON 数组', importUpdated: '更新 {n} 个', importSkipped: '跳过 {n} 个', importErrors: '错误', importColumns: '识别列',
   },
   en: {
     brand: 'ProbeStation',
@@ -94,7 +95,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     exportXlsx: 'Export XLSX',
     deleteDevice: 'Delete', deleteGroup: 'Delete group', confirmDeleteDevice: 'Delete device "{name}"? All its groups and registers will be removed.', confirmDeleteGroup: 'Delete group "{name}"? All its registers will be removed.',
     regCount: '{n} registers',
-    colAlias: 'Alias', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write', valueCovered: 'Covered by previous register', valueShort: 'Not enough polled data', grp16BE: '16-bit BE', grp16LE: '16-bit LE', grp32BE: '32-bit BE', grp32LE: '32-bit LE', grp64BE: '64-bit BE', grp64LE: '64-bit LE',
+    colAlias: 'Description', colAddr: 'Addr', colType: 'Type', colValue: 'Value', colQuality: 'Quality', colWrite: 'Write', writeReg: 'Write register', fc16: 'FC16 Write multiple', fc06: 'FC06 Write single', valueHint: 'Double-click a value to write', valueCovered: 'Covered by previous register', valueShort: 'Not enough polled data', grp16BE: '16-bit BE', grp16LE: '16-bit LE', grp32BE: '32-bit BE', grp32LE: '32-bit LE', grp64BE: '64-bit BE', grp64LE: '64-bit LE',
     write: 'Write', valuePh: 'value', writeErrEmpty: 'Enter a value', writeErrNaN: 'Enter a valid number', writeOk: 'Written',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
@@ -107,6 +108,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     appInfo: 'App info', version: 'Version', arch: 'Architecture', persistence: 'Persistence',
     dataMgmt: 'Data management', runLogs: 'Runtime logs', clearLogs: 'Clear logs', logsCleared: 'Logs cleared', retentionLabel: 'Data retention', retentionSaved: 'Retention saved', retentionForever: 'Forever',
     newDeviceTitle: 'New device', editDeviceTitle: 'Edit device', name: 'Name', ip: 'IP address', port: 'Port', transport: 'Transport', transportTcp: 'TCP', transportRtu: 'RTU serial', serialPath: 'Serial path', baudRate: 'Baud rate', parity: 'Parity', stopBits: 'Stop bits', dataBits: 'Data bits', flowControl: 'Flow control', slaveIdLabel: 'Slave ID', pollIntervalLabel: 'Poll interval (ms)', cancel: 'Cancel', add: 'Add',
+    importPoints: 'Import points', importTitle: 'Smart point import', importHint: 'Paste CSV (header columns like addr/name/type/enum), or upload CSV/XLSX; JSON array is also accepted.', importPh: 'Paste point-table CSV (header: addr,name,type,enum)', importFile: 'Upload file', importDo: 'Import', importEmpty: 'Enter content or choose a file', impBadJson: 'Cannot parse JSON array', importUpdated: '{n} updated', importSkipped: '{n} skipped', importErrors: 'Errors', importColumns: 'Detected columns',
   },
 }
 
@@ -142,6 +144,14 @@ function formatDateTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+}
+
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  let bin = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  return btoa(bin)
 }
 
 function WorkspaceRow({ w, isCurrent, isExpanded, deviceCount, onToggle, onSwitch, onAdd, t }: {
@@ -188,7 +198,22 @@ function WorkspaceRow({ w, isCurrent, isExpanded, deviceCount, onToggle, onSwitc
   )
 }
 
-interface RegView { value: string; covered: boolean; invalid: boolean; writable: boolean }
+interface RegView { value: string; label: string | null; covered: boolean; invalid: boolean; writable: boolean }
+
+/** 枚举命中时返回 label（仅枚举，不参与系数/偏移/单位）。 */
+function enumLabelOf(reg: Register, decoded: number | bigint): string | null {
+  const map = parseEnum(reg.enumJson)
+  if (!map || typeof decoded === 'bigint' || !Number.isInteger(decoded)) return null
+  const label = map[String(decoded)]
+  return label != null ? label : null
+}
+
+/** 原始值优先显示；枚举命中时追加 " → label" 徽标。 */
+function displayRawWithEnum(reg: Register, decoded: number | bigint): string {
+  const raw = formatNumber(decoded)
+  const label = enumLabelOf(reg, decoded)
+  return label != null ? raw + ' → ' + label : raw
+}
 
 function areaForFunctionCode(fc: number): string {
   if (fc === 1 || fc === 5 || fc === 15) return 'coil'
@@ -215,7 +240,7 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<string, LatestValue
       const start = r.startAddress
       const end = start + w
       if (start < consumedUpTo) {
-        views.set(r.id, { value: '—', covered: true, invalid: false, writable: false })
+        views.set(r.id, { value: '—', label: null, covered: true, invalid: false, writable: false })
         continue
       }
       const words: number[] = []
@@ -226,12 +251,13 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<string, LatestValue
       }
       const enough = words.length === w && end <= groupEnd
       if (!enough) {
-        views.set(r.id, { value: '—', covered: false, invalid: true, writable: false })
+        views.set(r.id, { value: '—', label: null, covered: false, invalid: true, writable: false })
         continue
       }
-      const raw = isHexType(r.dataType) || isBinType(r.dataType)
+      const isRaw = isHexType(r.dataType) || isBinType(r.dataType)
       const value = formatRegisterValue(r.dataType, words)
-      views.set(r.id, { value, covered: false, invalid: false, writable: !raw })
+      const label = isRaw ? null : enumLabelOf(r, decodeRegister(r.dataType, words))
+      views.set(r.id, { value, label, covered: false, invalid: false, writable: !isRaw })
       consumedUpTo = end
     }
   }
@@ -560,6 +586,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
   t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; onRefresh: () => void
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
+  const [importOpen, setImportOpen] = useState(false)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -573,6 +600,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
     <div>
       <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
+        <button className="btn" onClick={() => setImportOpen(true)}>⤓ {t('importPoints')}</button>
+        {importOpen && <ImportPointsModal t={t} device={device} onClose={() => setImportOpen(false)} onDone={onRefresh} />}
       </div>
       {groups.map((g) => (
         <div key={g.id} className="group-block">
@@ -595,7 +624,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
                     <td className="kv">{r.startAddress}</td>
                     <td><AliasCell t={t} reg={r} onRefresh={onRefresh} /></td>
                     <td><TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /></td>
-                    <td className="value" title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : t('valueHint')} onDoubleClick={rv?.writable ? () => setWriteReg(r) : undefined}>{rv?.value ?? '—'}</td>
+                    <td className="value" title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : t('valueHint')} onDoubleClick={rv?.writable ? () => setWriteReg(r) : undefined}>{rv?.value ?? '—'}{rv?.label ? <span className="enum-badge">→ {rv.label}</span> : null}</td>
                   </tr>
                 )
               })}
@@ -742,6 +771,89 @@ function TypeCell({ t, reg, available, disabled, onRefresh }: { t: T; reg: Regis
   )
 }
 
+function ImportPointsModal({ t, device, onClose, onDone }: { t: T; device: Device; onClose: () => void; onDone: () => void }) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [result, setResult] = useState<any>(null)
+
+  const apply = async (body: any) => {
+    setBusy(true); setErr(null); setResult(null)
+    try {
+      const res = await api.post('/api/monitor_objects/' + device.id + '/points/import', body)
+      if (res && res.error) { setErr(res.error); return }
+      setResult(res)
+      onDone()
+    } catch (e) { setErr((e as any)?.message ?? String(e)) }
+    finally { setBusy(false) }
+  }
+
+  const submitPaste = async () => {
+    const s = text.trim()
+    if (!s) { setErr(t('importEmpty')); return }
+    if (s.startsWith('[')) {
+      let arr: any
+      try { arr = JSON.parse(s) } catch { setErr(t('impBadJson')); return }
+      if (!Array.isArray(arr)) { setErr(t('impBadJson')); return }
+      await apply(arr)
+    } else {
+      await apply({ csv: text })
+    }
+  }
+
+  const onFile = async (e: any) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBusy(true); setErr(null); setResult(null)
+    try {
+      const name = file.name.toLowerCase()
+      if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+        const buf = await file.arrayBuffer()
+        const res = await api.post('/api/monitor_objects/' + device.id + '/points/import', { xlsx: arrayBufferToBase64(buf) })
+        if (res && res.error) { setErr(res.error); return }
+        setResult(res); onDone()
+      } else {
+        const txt = await file.text()
+        const res = await api.post('/api/monitor_objects/' + device.id + '/points/import', { csv: txt })
+        if (res && res.error) { setErr(res.error); return }
+        setResult(res); onDone()
+      }
+    } catch (e) { setErr((e as any)?.message ?? String(e)) }
+    finally { setBusy(false); e.target.value = '' }
+  }
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal import-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span>{t('importTitle')}</span>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="kv" style={{ marginBottom: 10 }}>{t('importHint')}</div>
+        <textarea className="import-text" value={text} onChange={(e) => setText(e.target.value)} placeholder={t('importPh')} rows={8} />
+        <div className="modal-actions" style={{ marginBottom: 10 }}>
+          <label className="btn">{t('importFile')}<input type="file" accept=".csv,.txt,.xlsx,.xls" style={{ display: 'none' }} onChange={onFile} disabled={busy} /></label>
+          <div style={{ flex: 1 }} />
+          <button className="btn" onClick={onClose}>{t('cancel')}</button>
+          <button className="btn primary" onClick={submitPaste} disabled={busy}>{t('importDo')}</button>
+        </div>
+        {err && <div className="write-msg error">{err}</div>}
+        {result && (
+          <div className="import-result">
+            <div className="import-line ok">{t('importUpdated').replace('{n}', String(result.updated ?? 0))} · {t('importSkipped').replace('{n}', String(result.skipped ?? 0))}</div>
+            {result.parse && (
+              <div className="import-line">{t('importColumns')}: {Object.entries(result.parse.columns as Record<string, string>).map(([k, v]) => k + '→' + v).join(', ')}</div>
+            )}
+            {Array.isArray(result.errors) && result.errors.length > 0 && (
+              <div className="import-line warn">{t('importErrors')}: {result.errors.slice(0, 8).join('; ')}{result.errors.length > 8 ? ' …' : ''}</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function useRegisterSelection(deviceId: number, registers: Register[]): [Set<number>, (s: Set<number>) => void] {
   const key = 'ps-regs-' + deviceId
   const [selected, setSelected] = useState<Set<number>>(() => {
@@ -870,7 +982,14 @@ function HistoryTable({ t, device, groups, registers }: { t: T; device: Device; 
         const formatted = new Map<number, string>()
         for (const area of ['coil', 'discrete-input', 'holding-register', 'input-register']) {
           const subset = registers.filter(r => areaForFunctionCode(r.functionCode) === area)
-          for (const [id, value] of formatRawByAddr(subset, byArea.get(area) ?? {})) formatted.set(id, value)
+          const raw = byArea.get(area) ?? {}
+          const decoded = decodeRawByAddr(subset, raw)
+          const rawText = formatRawByAddr(subset, raw)
+          for (const r of subset) {
+            if (isHexType(r.dataType) || isBinType(r.dataType)) { formatted.set(r.id, rawText.get(r.id) ?? '—'); continue }
+            const d = decoded.get(r.id)
+            formatted.set(r.id, d == null ? '—' : displayRawWithEnum(r, d))
+          }
         }
         const values: Record<number, string> = {}
         for (const r of selectedRegisters) values[r.id] = formatted.get(r.id) ?? '—'
@@ -1064,8 +1183,9 @@ function CurveChart({ t, device, groups, registers }: { t: T; device: Device; gr
       if (!selected.has(r.id)) continue
       const v = decoded.get(r.id)
       if (v == null) continue
+      const num = typeof v === 'bigint' ? Number(v) : v
       const arr = byReg.get(r.id) ?? []
-      arr.push([t, typeof v === 'bigint' ? Number(v) : v])
+      arr.push([t, num])
       byReg.set(r.id, arr)
     }
   }
