@@ -6,7 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z as zz } from 'zod'
-import { areaForFunction, decodeRawByAddr, encodeRegister, functionCodeForArea, invertSemantic, parseEnum, registerWidth, resolveSemantic, type ModbusArea } from '@probebench/core'
+import { areaForFunction, decodeRawByAddr, encodeRegister, functionCodeForArea, invertSemantic, parseEnum, registerWidth, resolveSemantic, smartParseCsv, type ModbusArea } from '@probebench/core'
 import { Recorder } from './recorder.ts'
 
 /** 把 RegisterRecord 映射成语义寄存器（factor/offset/unit/enum）。 */
@@ -205,7 +205,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('import_points', {
-      title: 'Import points', description: '批量导入/更新寄存器语义（alias/data_type/unit/factor/offset/enum），按 area+address 匹配已有寄存器',
+      title: 'Import points', description: '批量导入/更新寄存器语义，按 area+address 匹配已有寄存器。支持 JSON 点数组（points）或智能 CSV（csv：自动识别表头列、0x/40001 地址、类型/存储区）',
       inputSchema: { device_id: zz.number(), points: zz.array(zz.object({
         area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']),
         address: zz.number(),
@@ -215,18 +215,29 @@ export function apply(ctx: Context, config: Config): void {
         factor: zz.number().optional(),
         offset: zz.number().optional(),
         enum: zz.record(zz.string()).optional(),
-      })) },
+      })).optional(), csv: zz.string().optional() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
-      const points = args.points.map((p: any) => ({
+      let rows: any[]
+      let parseReport: any = null
+      if (typeof args.csv === 'string') {
+        const r = smartParseCsv(args.csv)
+        rows = r.points
+        parseReport = r.report
+      } else if (Array.isArray(args.points)) {
+        rows = args.points
+      } else {
+        return { content: [{ type: 'text', text: 'provide points (JSON array) or csv' }], isError: true }
+      }
+      const points = rows.map((p: any) => ({
         functionCode: functionCodeForArea(p.area),
         address: p.address,
         alias: p.alias ?? null,
-        dataType: p.data_type,
+        dataType: p.data_type ?? p.dataType,
         unit: p.unit ?? null,
         factor: p.factor,
         offset: p.offset,
-        enumMap: p.enum ?? null,
+        enumMap: p.enum ?? p.enumMap ?? null,
       }))
       const report = cfg.importPoints(args.device_id, points)
       cfg.log('INFO', 'mcp', 'import points device ' + args.device_id + ' => ' + JSON.stringify(report))

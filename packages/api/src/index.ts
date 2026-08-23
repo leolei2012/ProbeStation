@@ -6,7 +6,34 @@ import fastifyStatic from '@fastify/static'
 import compress from '@fastify/compress'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { baseType, encodeRegister, functionCodeForArea, parsePointCsv, registerWidth, type ModbusArea } from '@probebench/core'
+import { baseType, encodeRegister, functionCodeForArea, registerWidth, smartParseCsv, smartParseTable, type ModbusArea } from '@probebench/core'
+import ExcelJS from 'exceljs'
+
+/** 把 exceljs 单元格转成字符串（处理公式/数字/文本）。 */
+function xlsxCellText(cell: any): string {
+  const v = cell?.value
+  if (v == null) return ''
+  if (typeof v === 'object' && !(v instanceof Date)) return String(v.result ?? v.text ?? '')
+  return String(v)
+}
+
+/** 读 XLSX 第一个工作表 → 二维字符串数组。 */
+async function readXlsxRows(buffer: Buffer): Promise<string[][]> {
+  const wb = new ExcelJS.Workbook()
+  await wb.xlsx.load(buffer as any)
+  const ws = wb.worksheets[0]
+  if (!ws) return []
+  const rows: string[][] = []
+  ws.eachRow((row: any) => {
+    const cells: string[] = []
+    row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+      while (cells.length < colNumber - 1) cells.push('')
+      cells.push(xlsxCellText(cell))
+    })
+    rows.push(cells)
+  })
+  return rows
+}
 
 export const name = 'api'
 export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'workspace', 'ota']
@@ -153,11 +180,23 @@ export function apply(ctx: Context, config: Config): void {
     fastify.post('/api/monitor_objects/:id/points/import', async (req: any) => {
       const id = Number((req.params as any).id)
       const body = req.body as any
-      let rows: any[]
-      if (Array.isArray(body)) rows = body
-      else if (typeof body?.csv === 'string') rows = parsePointCsv(body.csv)
-      else return { code: 400, error: 'expect a JSON array or { csv }' }
-      const points = rows.map((p: any) => ({
+      let points: any[]
+      let parseReport: any = null
+      if (Array.isArray(body)) {
+        points = body
+      } else if (typeof body?.csv === 'string') {
+        const r = smartParseCsv(body.csv)
+        parseReport = r.report
+        points = r.points
+      } else if (typeof body?.xlsx === 'string') {
+        const rows = await readXlsxRows(Buffer.from(body.xlsx, 'base64'))
+        const r = smartParseTable(rows)
+        parseReport = r.report
+        points = r.points
+      } else {
+        return { code: 400, error: 'expect a JSON array, { csv }, or { xlsx }' }
+      }
+      const normalized = points.map((p: any) => ({
         functionCode: functionCodeForArea(p.area as ModbusArea),
         address: p.address,
         alias: p.alias ?? null,
@@ -167,7 +206,8 @@ export function apply(ctx: Context, config: Config): void {
         offset: p.offset,
         enumMap: p.enum ?? p.enumMap ?? null,
       }))
-      return cfg.importPoints(id, points)
+      const result = cfg.importPoints(id, normalized)
+      return parseReport ? { ...result, parse: parseReport } : result
     })
 
     // ── Write ───────────────────────────────────────────────
