@@ -11,7 +11,7 @@ await new Promise<void>((resolve) => netServer.listen(18503, '127.0.0.1', resolv
 const ctx = new Context()
 await ctx.plugin(modbusPlugin, { defaultTimeoutMs: 1500, defaultUnitId: 1 })
 const driver = ctx.get('modbus', false).createDriver()
-await driver.connect('127.0.0.1', 18503)
+await driver.connect({ ip: '127.0.0.1', port: 18503 })
 
 // 写越界地址（服务器对写操作做边界检查）→ 期望抛 Illegal Data Address（不是 [object Object]）
 try {

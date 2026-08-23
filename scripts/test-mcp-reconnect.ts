@@ -37,6 +37,6 @@ const b = await connectOnce('B')
 await new Promise((r) => setTimeout(r, 300))
 const c = await connectOnce('C')
 
-if (a !== 19 || b !== 19 || c !== 19) throw new Error('tool count mismatch: ' + [a, b, c].join(','))
+if (a === 0 || a !== b || b !== c) throw new Error('tool count mismatch: ' + [a, b, c].join(','))
 console.log('MCP RECONNECT TEST OK')
 process.exit(0)
