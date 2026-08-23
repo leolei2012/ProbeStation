@@ -156,6 +156,11 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(bin)
 }
 
+function toLocalInput(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes())
+}
+
 function WorkspaceRow({ w, isCurrent, isExpanded, deviceCount, onToggle, onSwitch, onAdd, t }: {
   w: { path: string; title: string; createdAt: string }
   isCurrent: boolean
@@ -1268,17 +1273,35 @@ function CurveChart({ t, device, groups, registers }: { t: T; device: Device; gr
   const [view, setView] = useState<{ t0: number; t1: number; v0: number; v1: number } | null>(null)
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
   const [size, setSize] = useState({ w: 900, h: 320 })
+  const [start, setStart] = useState(() => toLocalInput(new Date(Date.now() - 3600_000)))
+  const [end, setEnd] = useState(() => toLocalInput(new Date()))
   const svgRef = useRef<SVGSVGElement | null>(null)
 
   const hasData = pts.length > 0
   const showChart = hasData && selected.size > 0
 
-  useEffect(() => {
+  const fetchRange = useCallback((s: string, e: string) => {
     setView(null)
-    const start = new Date(Date.now() - 3600_000).toISOString()
-    const end = new Date().toISOString()
-    api.get('/api/data/object?object_id=' + device.id + '&start=' + start + '&end=' + end).then(setPts).catch(() => {})
+    api.get('/api/data/object?object_id=' + device.id + '&start=' + new Date(s).toISOString() + '&end=' + new Date(e).toISOString()).then(setPts).catch(() => {})
   }, [device.id])
+
+  useEffect(() => {
+    const now = new Date()
+    const s = toLocalInput(new Date(now.getTime() - 3600_000))
+    const e = toLocalInput(now)
+    setStart(s); setEnd(e); fetchRange(s, e)
+  }, [device.id, fetchRange])
+
+  const applyPreset = (kind: '1h' | '6h' | '24h' | 'today') => {
+    const now = new Date()
+    let s: Date
+    if (kind === 'today') s = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+    else { const h = kind === '1h' ? 1 : kind === '6h' ? 6 : 24; s = new Date(now.getTime() - h * 3600_000) }
+    const ns = toLocalInput(s), ne = toLocalInput(now)
+    setStart(ns); setEnd(ne); fetchRange(ns, ne)
+  }
+
+  const query = () => fetchRange(start, end)
 
   // SVG 挂载后测量实际像素尺寸，用它当 viewBox（1:1 → 文字不拉伸）
   useEffect(() => {
@@ -1354,6 +1377,20 @@ function CurveChart({ t, device, groups, registers }: { t: T; device: Device; gr
         <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
         <div style={{ flex: 1 }} />
         {view && <button className="btn" onClick={() => setView(null)}>{t('curveReset')}</button>}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <label className="hist-label">{t('histStart')}</label>
+        <input className="hist-input" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
+        <label className="hist-label">{t('histEnd')}</label>
+        <input className="hist-input" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} />
+        <button className="btn primary" onClick={query}>{t('histQuery')}</button>
+        <span className="hist-label">{t('histQuick')}</span>
+        <div className="seg">
+          <button onClick={() => applyPreset('1h')}>{t('histLast1h')}</button>
+          <button onClick={() => applyPreset('6h')}>{t('histLast6h')}</button>
+          <button onClick={() => applyPreset('24h')}>{t('histLast24h')}</button>
+          <button onClick={() => applyPreset('today')}>{t('histToday')}</button>
+        </div>
       </div>
       {!hasData && <div className="chart-hint">{t('curveHint')} — 暂无数据</div>}
       {hasData && selected.size === 0 && <div className="chart-hint">{t('histNoRegs')}</div>}
