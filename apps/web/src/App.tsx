@@ -1459,7 +1459,7 @@ function FirmwareView({ t, device }: { t: T; device: Device }) {
   const remove = async (fid: number, name: string) => {
     if (!window.confirm(t('confirmDeleteFirmware').replace('{name}', name))) return
     setBusy(true); setMsg('')
-    try { await api.del('/api/firmwares/' + fid); await refresh(); setMsg(t('fwDeleted')) }
+    try { await api.del('/api/firmwares/' + fid); await refresh() }
     catch (err: any) { setMsg(t('fwDeleteErr') + ' ' + (err?.message ?? '')) }
     finally { setBusy(false) }
   }
