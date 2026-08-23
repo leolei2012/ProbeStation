@@ -1353,14 +1353,13 @@ function ChartBody({ t, registers, selected, pts, status, error }: { t: T; regis
     return { x: clientX - rect.left, y: clientY - rect.top }
   }
 
+  if (status === 'idle') return <div className="hist-empty">{t('histIdle')}</div>
+  if (status === 'error') return <div className="hist-empty warn">{t('histError')} {error}</div>
+  if (status === 'loading') return null
+  if (!hasData) return <div className="hist-empty">{t('histEmpty')}</div>
+  if (selected.size === 0) return <div className="hist-empty">{t('histNoRegs')}</div>
   return (
     <div className="chart-wrap">
-      {status === 'idle' && <div className="chart-hint">{t('histIdle')}</div>}
-      {status === 'done' && !hasData && <div className="chart-hint">{t('histEmpty')}</div>}
-      {status === 'error' && <div className="chart-hint warn">{t('histError')} {error}</div>}
-      {status === 'done' && hasData && selected.size === 0 && <div className="chart-hint">{t('histNoRegs')}</div>}
-      {status === 'done' && hasData && selected.size > 0 && (
-        <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div className="chart-hint" style={{ marginBottom: 0 }}>{t('curveZoomHint')}</div>
             <div style={{ flex: 1 }} />
@@ -1415,8 +1414,6 @@ function ChartBody({ t, registers, selected, pts, status, error }: { t: T; regis
           <div className="legend">
             {series.map(s => { const r = registers.find(rr => rr.id === s.id); return <span key={s.id} className="legend-item"><span className="legend-swatch" style={{ background: s.color }} />{r?.alias ?? s.id}</span> })}
           </div>
-        </>
-      )}
     </div>
   )
 }
