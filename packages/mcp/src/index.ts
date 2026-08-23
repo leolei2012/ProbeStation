@@ -6,8 +6,19 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z as zz } from 'zod'
-import { areaForFunction, decodeRawByAddr, encodeRegister, registerWidth, type ModbusArea } from '@probebench/core'
+import { areaForFunction, decodeRawByAddr, encodeRegister, invertSemantic, parseEnum, registerWidth, resolveSemantic, type ModbusArea } from '@probebench/core'
 import { Recorder } from './recorder.ts'
+
+/** 把 RegisterRecord 映射成语义寄存器（factor/offset/unit/enum）。 */
+function semanticOf(r: any) {
+  return {
+    dataType: r.dataType ?? 'int16',
+    factor: typeof r.factor === 'number' ? r.factor : 1,
+    offset: typeof r.offset === 'number' ? r.offset : 0,
+    unit: r.unit ?? null,
+    enumMap: parseEnum(r.enumJson),
+  }
+}
 
 export const name = 'mcp'
 export const inject = ['config', 'store', 'poller', 'ota']
@@ -73,9 +84,17 @@ export function apply(ctx: Context, config: Config): void {
       const latest = store.getLatestByObject(args.device_id, args.area)
       const rawByAddr: Record<number, number> = {}
       for (const k of Object.keys(latest)) rawByAddr[Number(k)] = latest[Number(k)].rawValue
-      const v = decodeRawByAddr([reg], rawByAddr).get(reg.id) ?? null
+      const decoded = decodeRawByAddr([reg], rawByAddr).get(reg.id) ?? null
       const lv = latest[reg.startAddress]
-      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, area: args.area, address: reg.startAddress, value: typeof v === 'bigint' ? String(v) : v, timestamp: lv?.timestamp ?? null, quality: lv?.quality ?? null }) }] }
+      // 语义翻译：enum 命中给 label，否则 ×factor+offset 给物理值
+      let value: number | string | null = decoded === null ? null : (typeof decoded === 'bigint' ? String(decoded) : decoded)
+      let unit: string | null = null
+      let label: string | null = null
+      if (decoded != null && typeof decoded !== 'bigint') {
+        const s = resolveSemantic(semanticOf(reg), decoded)
+        value = s.value; unit = s.unit; label = s.label
+      }
+      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, area: args.area, address: reg.startAddress, alias: reg.alias, value, unit, label, timestamp: lv?.timestamp ?? null, quality: lv?.quality ?? null }) }] }
     })
 
     server.registerTool('get_device_snapshot', {
@@ -95,13 +114,22 @@ export function apply(ctx: Context, config: Config): void {
         const v = decoded.get(r.id) ?? null
         const area = areaForFunction(r.functionCode)
         const lv = latestAll[area + ':' + r.startAddress]
+        let value: number | string | null = v === null ? null : (typeof v === 'bigint' ? String(v) : v)
+        let unit: string | null = null
+        let label: string | null = null
+        if (v != null && typeof v !== 'bigint') {
+          const s = resolveSemantic(semanticOf(r), v)
+          value = s.value; unit = s.unit; label = s.label
+        }
         return {
           register_id: r.id,
           alias: r.alias,
           address: r.startAddress,
           area,
           data_type: r.dataType,
-          value: typeof v === 'bigint' ? String(v) : v,
+          value,
+          unit,
+          label,
           timestamp: lv?.timestamp ?? null,
           quality: lv?.quality ?? null,
         }
@@ -139,7 +167,9 @@ export function apply(ctx: Context, config: Config): void {
     }, async (args) => {
       const reg = findRegisterByAddress(args.device_id, 'holding-register', args.address)
       if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
-      const words = encodeRegister(reg.dataType ?? 'int16', args.value)
+      // 物理值 → 逆变换（÷factor、−offset）→ 寄存器值 → 编码
+      const raw = invertSemantic(semanticOf(reg), args.value)
+      const words = encodeRegister(reg.dataType ?? 'int16', raw)
       await poller.write(reg.objectId, reg.startAddress, words, 'multiple')
       cfg.log('INFO', 'mcp', 'write register addr ' + args.address + ' = ' + args.value)
       return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, address: reg.startAddress, value: args.value }) }] }
@@ -175,21 +205,26 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('create_register', {
-      title: 'Create register', description: '新增寄存器（别名/功能码/起始地址/类型）',
-      inputSchema: { group_id: zz.number(), alias: zz.string().optional(), function_code: zz.number().optional(), start_address: zz.number(), data_type: zz.string().optional() },
+      title: 'Create register', description: '新增寄存器（别名/功能码/起始地址/类型/单位/缩放/枚举）',
+      inputSchema: { group_id: zz.number(), alias: zz.string().optional(), function_code: zz.number().optional(), start_address: zz.number(), data_type: zz.string().optional(), unit: zz.string().optional(), factor: zz.number().optional(), offset: zz.number().optional(), enum: zz.record(zz.string()).optional() },
     }, async (args) => {
       const g = cfg.getGroup(args.group_id)
       if (!g) return { content: [{ type: 'text', text: 'group not found' }], isError: true }
       const dt = args.data_type ?? 'int16'
       if (args.start_address + registerWidth(dt) > g.startAddress + g.quantity) return { content: [{ type: 'text', text: 'dataType spans beyond group poll range' }], isError: true }
-      const r = cfg.createRegister(args.group_id, g.objectId, args.alias ?? null, args.function_code ?? 3, args.start_address, dt)
+      const r = cfg.createRegister(args.group_id, g.objectId, args.alias ?? null, args.function_code ?? 3, args.start_address, dt, {
+        unit: args.unit ?? null,
+        factor: args.factor ?? 1,
+        offset: args.offset ?? 0,
+        enumJson: args.enum ? JSON.stringify(args.enum) : null,
+      })
       cfg.log('INFO', 'mcp', 'create register ' + r.id)
       return { content: [{ type: 'text', text: JSON.stringify(r) }] }
     })
 
     server.registerTool('update_register', {
-      title: 'Update register', description: '更改寄存器（别名/类型）',
-      inputSchema: { register_id: zz.number(), alias: zz.string().optional(), data_type: zz.string().optional() },
+      title: 'Update register', description: '更改寄存器（别名/类型/单位/缩放/枚举）',
+      inputSchema: { register_id: zz.number(), alias: zz.string().optional(), data_type: zz.string().optional(), unit: zz.string().optional(), factor: zz.number().optional(), offset: zz.number().optional(), enum: zz.record(zz.string()).optional() },
     }, async (args) => {
       const r = cfg.getRegister(args.register_id)
       if (!r) return { content: [{ type: 'text', text: 'register not found' }], isError: true }
@@ -200,6 +235,10 @@ export function apply(ctx: Context, config: Config): void {
         if (grp && r.startAddress + registerWidth(args.data_type) > grp.startAddress + grp.quantity) return { content: [{ type: 'text', text: 'dataType spans beyond group poll range' }], isError: true }
         fields.dataType = args.data_type
       }
+      if (args.unit !== undefined) fields.unit = args.unit
+      if (args.factor !== undefined) fields.factor = args.factor
+      if (args.offset !== undefined) fields.offset = args.offset
+      if (args.enum !== undefined) fields.enumJson = JSON.stringify(args.enum)
       const updated = cfg.updateRegister(args.register_id, fields)
       cfg.log('INFO', 'mcp', 'update register ' + args.register_id)
       return { content: [{ type: 'text', text: JSON.stringify(updated) }] }

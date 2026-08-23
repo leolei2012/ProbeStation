@@ -1,10 +1,10 @@
 /** 纯函数 Modbus 类型编解码器：位宽(16/32/64) × 端序(大端默认/小端 -LE)；hex/bin 为各宽度的原始显示格式。 */
 export const DATA_TYPES = [
-  'int16', 'uint16', 'float16', 'hex16', 'bin16',
-  'int32', 'uint32', 'float32', 'hex32', 'bin32',
+  'int16', 'uint16', 'float16', 'q15', 'hex16', 'bin16',
+  'int32', 'uint32', 'float32', 'q31', 'hex32', 'bin32',
   'int64', 'uint64', 'float64', 'hex64', 'bin64',
-  'int16-LE', 'uint16-LE', 'float16-LE', 'hex16-LE', 'bin16-LE',
-  'int32-LE', 'uint32-LE', 'float32-LE', 'hex32-LE', 'bin32-LE',
+  'int16-LE', 'uint16-LE', 'float16-LE', 'q15-LE', 'hex16-LE', 'bin16-LE',
+  'int32-LE', 'uint32-LE', 'float32-LE', 'q31-LE', 'hex32-LE', 'bin32-LE',
   'int64-LE', 'uint64-LE', 'float64-LE', 'hex64-LE', 'bin64-LE',
 ] as const
 export type DataType = (typeof DATA_TYPES)[number]
@@ -14,6 +14,7 @@ export function baseType(type: string): string { return type.replace(/-LE$|_LE$/
 export function isLittleEndian(type: string): boolean { return baseType(type) !== type }
 export function registerWidth(type: string): 1 | 2 | 4 {
   const b = baseType(type)
+  if (b === 'q31') return 2
   if (b.endsWith('32')) return 2
   if (b.endsWith('64')) return 4
   return 1
@@ -82,9 +83,11 @@ function decodeBE(type: string, words: number[]): RegisterValue {
   if (type === 'int16') return w0 > 0x7fff ? w0 - 0x10000 : w0
   if (type === 'uint16') return w0
   if (type === 'float16') return halfToNumber(w0)
+  if (type === 'q15') return (w0 > 0x7fff ? w0 - 0x10000 : w0) / 32768
   const w1 = words[1] ?? 0
   const u32 = ((w0 << 16) | w1) >>> 0
   if (type === 'int32') return u32 | 0
+  if (type === 'q31') return (u32 | 0) / 2147483648
   if (type === 'uint32') return u32
   if (type === 'float32') {
     const buf = new ArrayBuffer(4)
@@ -109,7 +112,9 @@ function encodeBE(type: string, value: number | bigint): number[] {
   if (type === 'int16') { const v = num() | 0; return [v & 0xffff] }
   if (type === 'uint16') return [Math.max(0, Math.min(0xffff, Math.round(num())))]
   if (type === 'float16') return [floatToHalf(num())]
+  if (type === 'q15') { const v = Math.max(-1, Math.min(1 - 1 / 32768, num())); return [Math.round(v * 32768) & 0xffff] }
   if (type === 'int32') { const v = num() | 0; return [(v >>> 16) & 0xffff, v & 0xffff] }
+  if (type === 'q31') { const v = Math.max(-1, Math.min(1 - 1 / 2147483648, num())); const i = Math.round(v * 2147483648) | 0; return [(i >>> 16) & 0xffff, i & 0xffff] }
   if (type === 'uint32') { const v = num() >>> 0; return [Math.floor(v / 0x10000) & 0xffff, v & 0xffff] }
   if (type === 'float32') {
     const buf = new ArrayBuffer(4)
@@ -218,4 +223,39 @@ export function formatRawByAddr(registers: DecodableRegister[], rawByAddr: Recor
     out.set(id, info === null ? null : formatRegisterValue(info.dataType, info.words))
   }
   return out
+}
+
+// ── 语义层：scale(×factor+offset) + enum ─────────────────────
+
+export interface SemanticRegister {
+  dataType: string
+  factor: number
+  offset: number
+  unit: string | null
+  enumMap: Record<string, string> | null
+}
+
+/** 解析 enum_json 字符串为映射（key 为裸整数值的字符串）。 */
+export function parseEnum(json: string | null | undefined): Record<string, string> | null {
+  if (!json) return null
+  try {
+    const o = JSON.parse(json)
+    return o && typeof o === 'object' && !Array.isArray(o) ? o as Record<string, string> : null
+  } catch { return null }
+}
+
+/** 把已解码的寄存器值做语义翻译：enum 命中返回 label，否则 ×factor+offset。 */
+export function resolveSemantic(reg: SemanticRegister, decoded: number | bigint): { value: number | string; unit: string | null; label: string | null } {
+  if (reg.enumMap && typeof decoded !== 'bigint' && Number.isInteger(decoded)) {
+    const label = reg.enumMap[String(decoded)]
+    if (label != null) return { value: decoded, unit: reg.unit, label }
+  }
+  const physical = Math.round((Number(decoded) * reg.factor + reg.offset) * 1e9) / 1e9
+  return { value: physical, unit: reg.unit, label: null }
+}
+
+/** 把物理值逆变换成寄存器值（写入用）：(物理 - offset) / factor。 */
+export function invertSemantic(reg: SemanticRegister, physical: number): number {
+  const f = reg.factor === 0 ? 1 : reg.factor
+  return (physical - reg.offset) / f
 }
