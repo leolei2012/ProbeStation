@@ -178,19 +178,21 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('write_register', {
-      title: 'Write register', description: '按 Modbus 地址写某设备单个寄存器（FC16，控制真机，危险操作；仅支持 holding-register，area 可省略）',
-      inputSchema: { device_id: zz.number(), address: zz.number(), value: zz.number(), area: zz.enum(['holding-register']).optional() },
+      title: 'Write register', description: '按 Modbus 地址写某设备寄存器（holding-register 用 FC06/FC16，coil 用 FC05/FC15；控制真机，危险操作）',
+      inputSchema: { device_id: zz.number(), address: zz.number(), value: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']).optional(), method: zz.enum(['single', 'multiple']).optional() },
     }, async (args) => {
-      const area = args.area ?? 'holding-register'
-      if (area !== 'holding-register') return { content: [{ type: 'text', text: 'only holding-register is writable (coil write not supported yet)' }], isError: true }
+      const area = (args.area ?? 'holding-register') as 'holding-register' | 'coil' | 'discrete-input' | 'input-register'
+      if (area !== 'holding-register' && area !== 'coil') return { content: [{ type: 'text', text: 'only holding-register and coil are writable' }], isError: true }
       const reg = findRegisterByAddress(args.device_id, area, args.address)
       if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
       // 物理值 → 逆变换（÷factor、−offset）→ 寄存器值 → 编码
       const raw = invertSemantic(semanticOf(reg), args.value)
       const words = encodeRegister(reg.dataType ?? 'int16', raw)
-      await poller.write(reg.objectId, reg.startAddress, words, 'multiple')
-      cfg.log('INFO', 'mcp', 'write register addr ' + args.address + ' = ' + args.value)
-      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, address: reg.startAddress, value: args.value }) }] }
+      const method = words.length > 1 ? 'multiple' : (args.method ?? 'multiple')
+      const grp = cfg.getGroup(reg.groupId)
+      await poller.write(reg.objectId, reg.startAddress, words, method, grp?.slaveId ?? 1, area)
+      cfg.log('INFO', 'mcp', 'write ' + area + ' addr ' + args.address + ' = ' + args.value)
+      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, address: reg.startAddress, area, value: args.value, method }) }] }
     })
 
     server.registerTool('create_group', {
@@ -337,7 +339,7 @@ export function apply(ctx: Context, config: Config): void {
         mode: obj.mode,
         is_active: obj.isActive,
         connected: poller.isDeviceConnected(args.device_id),
-        polling: poller.isRunning(),
+        polling: obj.isActive === 1 && !poller.isPaused(args.device_id),
         poll_interval_ms: obj.pollIntervalMs,
         data_retain_seconds: obj.dataRetainSeconds,
         last_sample_time: ts,
@@ -391,8 +393,8 @@ export function apply(ctx: Context, config: Config): void {
 
     // ── 连续采样 + 触发记录 ─────────────────────────
     server.registerTool('start_recording', {
-      title: 'Start recording', description: '连续采样：以 interval_ms 间隔录 duration_ms 毫秒，事后 get_recording 回放（期间临时把设备采样周期调到 interval_ms，结束后恢复）',
-      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), duration_ms: zz.number(), addresses: zz.array(zz.number()).optional() },
+      title: 'Start recording', description: '连续采样：以 interval_ms 间隔录 duration_ms 毫秒，事后 get_recording 回放（期间临时把设备扫描间隔调到 interval_ms，结束后恢复）。addresses 为 {area, address} 数组，缺省=全部',
+      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), duration_ms: zz.number(), addresses: zz.array(zz.object({ area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number() })).optional() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
       if (!Number.isInteger(args.interval_ms) || args.interval_ms < 1) return { content: [{ type: 'text', text: 'interval_ms must be an integer >= 1' }], isError: true }
@@ -403,12 +405,12 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('start_trigger_recording', {
-      title: 'Start trigger recording', description: '触发记录：trigger_address 满足 operator/阈值时，缓存触发前 before_ms + 触发后 after_ms 的采样。operator 支持 > < >= <= == != changed',
-      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), trigger_address: zz.number(), operator: zz.string(), threshold: zz.number().optional(), before_ms: zz.number(), after_ms: zz.number(), addresses: zz.array(zz.number()).optional() },
+      title: 'Start trigger recording', description: '触发记录：trigger_area + trigger_address 满足 operator/阈值时，缓存触发前 before_ms + 触发后 after_ms 的采样。operator 支持 > < >= <= == != changed；addresses 为 {area, address} 数组，缺省=全部',
+      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), trigger_area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), trigger_address: zz.number(), operator: zz.string(), threshold: zz.number().optional(), before_ms: zz.number(), after_ms: zz.number(), addresses: zz.array(zz.object({ area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number() })).optional() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
       if (!Number.isInteger(args.interval_ms) || args.interval_ms < 1) return { content: [{ type: 'text', text: 'interval_ms must be an integer >= 1' }], isError: true }
-      const id = recorder.startTriggerRecording(args.device_id, args.interval_ms, args.trigger_address, args.operator, args.threshold ?? 0, args.before_ms ?? 0, args.after_ms ?? 0, args.addresses)
+      const id = recorder.startTriggerRecording(args.device_id, args.interval_ms, args.trigger_area, args.trigger_address, args.operator, args.threshold ?? 0, args.before_ms ?? 0, args.after_ms ?? 0, args.addresses)
       cfg.log('INFO', 'mcp', 'start trigger recording ' + id + ' (device ' + args.device_id + ', trigger addr ' + args.trigger_address + ' ' + args.operator + ' ' + (args.threshold ?? 0) + ')')
       return { content: [{ type: 'text', text: JSON.stringify({ recording_id: id }) }] }
     })

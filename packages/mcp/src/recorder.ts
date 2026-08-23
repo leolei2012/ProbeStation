@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 /** 一条采样（原始 16 位字 + 时间戳 + 质量）。 */
 export interface RecordingSample {
   ts: string
+  area: string
   address: number
   rawValue: number
   quality: string
@@ -10,6 +11,7 @@ export interface RecordingSample {
 
 /** 触发条件。 */
 export interface RecordingTrigger {
+  area: string
   address: number
   operator: '>' | '<' | '>=' | '<=' | '==' | '!=' | 'changed'
   threshold: number
@@ -23,7 +25,7 @@ export interface RecordingSession {
   deviceId: number
   mode: 'continuous' | 'trigger'
   intervalMs: number
-  addresses: number[] | null
+  addresses: Array<{ area: string; address: number }> | null
   originalPollInterval: number
   status: 'recording' | 'done'
   startedAt: number
@@ -72,7 +74,7 @@ export class Recorder {
   }
 
   /** 连续采样：以 intervalMs 间隔录 durationMs 秒（毫秒）。addresses 缺省 = 全部。 */
-  startRecording(deviceId: number, intervalMs: number, durationMs: number, addresses?: number[]): string {
+  startRecording(deviceId: number, intervalMs: number, durationMs: number, addresses?: Array<{ area: string; address: number }>): string {
     const obj = this.cfg.getObject(deviceId)
     if (!obj) throw new Error('device ' + deviceId + ' not found')
     const session: RecordingSession = {
@@ -97,7 +99,7 @@ export class Recorder {
   }
 
   /** 触发记录：trigger_address 满足 operator/阈值时，缓存触发前 beforeMs + 触发后 afterMs。 */
-  startTriggerRecording(deviceId: number, intervalMs: number, triggerAddress: number, operator: string, threshold: number, beforeMs: number, afterMs: number, addresses?: number[]): string {
+  startTriggerRecording(deviceId: number, intervalMs: number, triggerArea: string, triggerAddress: number, operator: string, threshold: number, beforeMs: number, afterMs: number, addresses?: Array<{ area: string; address: number }>): string {
     const obj = this.cfg.getObject(deviceId)
     if (!obj) throw new Error('device ' + deviceId + ' not found')
     const session: RecordingSession = {
@@ -111,7 +113,7 @@ export class Recorder {
       startedAt: Date.now(),
       finishedAt: null,
       samples: [],
-      trigger: { address: triggerAddress, operator: operator as RecordingTrigger['operator'], threshold, beforeMs, afterMs },
+      trigger: { area: triggerArea, address: triggerAddress, operator: operator as RecordingTrigger['operator'], threshold, beforeMs, afterMs },
       triggered: false,
       lastTriggerValue: null,
     }
@@ -139,23 +141,23 @@ export class Recorder {
     return true
   }
 
-  private onResult(objectId: number, points: Array<{ objectId: number; address: number; timestamp: string; rawValue: number; quality: string }>): void {
+  private onResult(objectId: number, points: Array<{ objectId: number; area: string; address: number; timestamp: string; rawValue: number; quality: string }>): void {
     for (const s of this.sessions.values()) {
       if (s.status !== 'recording' || s.deviceId !== objectId) continue
-      const filtered = s.addresses ? points.filter((p) => s.addresses!.includes(p.address)) : points
-      if (filtered.length === 0) continue
-      for (const p of filtered) s.samples.push({ ts: p.timestamp, address: p.address, rawValue: p.rawValue, quality: p.quality })
+      const matches = (p: any) => !s.addresses || s.addresses.some((a) => a.area === p.area && a.address === p.address)
+      const toRecord = points.filter(matches)
+      for (const p of toRecord) s.samples.push({ ts: p.timestamp, area: p.area, address: p.address, rawValue: p.rawValue, quality: p.quality })
       if (s.mode === 'trigger' && !s.triggered) {
         // 保持 before 窗口有界
         const cutoff = Date.now() - s.trigger!.beforeMs
         s.samples = s.samples.filter((sm) => new Date(sm.ts).getTime() >= cutoff)
-        this.maybeTrigger(s, filtered)
+        this.maybeTrigger(s, points) // 触发检查看全量，不受 addresses 过滤影响
       }
     }
   }
 
-  private maybeTrigger(s: RecordingSession, points: Array<{ address: number; rawValue: number }>): void {
-    const p = points.find((p) => p.address === s.trigger!.address)
+  private maybeTrigger(s: RecordingSession, points: Array<{ area: string; address: number; rawValue: number }>): void {
+    const p = points.find((p) => p.area === s.trigger!.area && p.address === s.trigger!.address)
     if (!p) return
     const v = p.rawValue
     let hit = false

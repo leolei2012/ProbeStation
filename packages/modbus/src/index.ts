@@ -63,6 +63,8 @@ export interface ModbusDriver {
   readInputRegisters(address: number, count: number, slaveId?: number): Promise<number[]>
   writeRegister(address: number, value: number, slaveId?: number): Promise<void>
   writeRegisters(address: number, values: number[], slaveId?: number): Promise<void>
+  writeCoil(address: number, value: boolean, slaveId?: number): Promise<void>
+  writeCoils(address: number, values: boolean[], slaveId?: number): Promise<void>
   /** 统一请求入口；兼容阶段先覆盖现有 FC03/04/06/16，其他功能码按后续阶段逐项实现。 */
   execute(request: ModbusRequest): Promise<ModbusResult>
   /** 返回底层原始 socket（net.Socket / SerialPort），供 OTA 拼 0x41 原始帧直连。 */
@@ -252,6 +254,24 @@ class JsmodbusDriver implements ModbusDriver {
     try {
       const res = await (await this.getClient(slaveId)).writeMultipleRegisters(address, values)
       toValues(res.response.body)
+      this.diagnostics.recordSuccess(Date.now() - started)
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
+  }
+
+  async writeCoil(address: number, value: boolean, slaveId = 1): Promise<void> {
+    const started = Date.now()
+    try {
+      const res = await (await this.getClient(slaveId)).writeSingleCoil(address, value)
+      toBits(res.response.body) // FC05/FC15 响应无数据，仅校验异常
+      this.diagnostics.recordSuccess(Date.now() - started)
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
+  }
+
+  async writeCoils(address: number, values: boolean[], slaveId = 1): Promise<void> {
+    const started = Date.now()
+    try {
+      const res = await (await this.getClient(slaveId)).writeMultipleCoils(address, values)
+      toBits(res.response.body)
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
@@ -448,6 +468,24 @@ export class SerialDriver implements ModbusDriver {
     try {
       const res = await this.getClient(slaveId).writeMultipleRegisters(address, values)
       toValues(res.response.body)
+      this.diagnostics.recordSuccess(Date.now() - started)
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
+  }
+
+  async writeCoil(address: number, value: boolean, slaveId = 1): Promise<void> {
+    const started = Date.now()
+    try {
+      const res = await this.getClient(slaveId).writeSingleCoil(address, value)
+      toBits(res.response.body) // FC05/FC15 响应无数据，仅校验异常
+      this.diagnostics.recordSuccess(Date.now() - started)
+    } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
+  }
+
+  async writeCoils(address: number, values: boolean[], slaveId = 1): Promise<void> {
+    const started = Date.now()
+    try {
+      const res = await this.getClient(slaveId).writeMultipleCoils(address, values)
+      toBits(res.response.body)
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }

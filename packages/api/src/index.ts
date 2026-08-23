@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static'
 import compress from '@fastify/compress'
 import { existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { baseType, encodeRegister, functionCodeForArea, registerWidth, smartParseCsv, smartParseTable, type ModbusArea } from '@probebench/core'
+import { areaForFunction, baseType, encodeRegister, functionCodeForArea, registerWidth, smartParseCsv, smartParseTable, type ModbusArea } from '@probebench/core'
 import ExcelJS from 'exceljs'
 
 /** 把 exceljs 单元格转成字符串（处理公式/数字/文本）。 */
@@ -227,7 +227,8 @@ export function apply(ctx: Context, config: Config): void {
       const requested = b.method === 'single' ? 'single' : 'multiple'
       const method = words.length > 1 ? 'multiple' : requested
       const grp = cfg.getGroup(reg.groupId)
-      await poller.write(reg.objectId, reg.startAddress, words, method, grp?.slaveId ?? 1)
+      const area = areaForFunction(reg.functionCode)
+      await poller.write(reg.objectId, reg.startAddress, words, method, grp?.slaveId ?? 1, area)
       cfg.log('INFO', 'api', 'write register ' + id + ' = ' + String(value) + ' (' + reg.dataType + ', ' + words.length + ' word(s))')
       return { register_id: id, value: String(value), dataType: reg.dataType, method, words }
     })

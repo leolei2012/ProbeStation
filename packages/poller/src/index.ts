@@ -1,6 +1,6 @@
 import type { Context } from 'cordis'
 import z from 'schemastery'
-import { areaForFunction, type ModbusFunctionCode } from '@probebench/core'
+import { areaForFunction, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
 
 export const name = 'poller'
 export const inject = ['config', 'modbus', 'store']
@@ -280,7 +280,7 @@ class PollingEngine {
   }
 
   /** 写寄存器（FC06/FC16）。写期间暂停该通道读取，避免半双工总线冲突。 */
-  async write(objectId: number, address: number, values: number[], method: 'single' | 'multiple' = 'multiple', slaveId = 1): Promise<void> {
+  async write(objectId: number, address: number, values: number[], method: 'single' | 'multiple' = 'multiple', slaveId = 1, area: ModbusArea = 'holding-register'): Promise<void> {
     const obj = this.ctx.config.getObject(objectId)
     if (!obj) throw new Error('object ' + objectId + ' not found')
     const key = this.driverKey(obj)
@@ -289,8 +289,15 @@ class PollingEngine {
       await this.waitInflight(key) // 等当前在途的读完成
       const doWrite = async () => {
         const driver = await this.getDriver(obj)
-        if (method === 'single') await driver.writeRegister(address, values[0] ?? 0, slaveId)
-        else await driver.writeRegisters(address, values, slaveId)
+        if (area === 'coil') {
+          const bits = values.map((v) => v !== 0)
+          if (bits.length === 1) await driver.writeCoil(address, bits[0], slaveId)
+          else await driver.writeCoils(address, bits, slaveId)
+        } else if (method === 'single') {
+          await driver.writeRegister(address, values[0] ?? 0, slaveId)
+        } else {
+          await driver.writeRegisters(address, values, slaveId)
+        }
       }
       if (obj.transport === 'rtu' && obj.serialPath) await this.enqueueRtu(obj.serialPath, doWrite)
       else await doWrite()

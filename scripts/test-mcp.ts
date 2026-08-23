@@ -95,7 +95,7 @@ if (!Array.isArray(JSON.parse((rulesFiltered.content[0] as any).text))) throw ne
 console.log('list_alarm_rules:', JSON.stringify(rulesAll.content))
 
 // P1: query_history 应返回 quality
-const hist = await client.callTool({ name: 'query_history', arguments: { device_id: obj.id, register_id: reg0.id, start: '2000-01-01T00:00:00Z', end: '2100-01-01T00:00:00Z' } })
+const hist = await client.callTool({ name: 'query_history', arguments: { device_id: obj.id, area: 'holding-register', address: reg0.startAddress, start: '2000-01-01T00:00:00Z', end: '2100-01-01T00:00:00Z' } })
 const histArr = JSON.parse((hist.content[0] as any).text)
 if (!Array.isArray(histArr) || histArr.length === 0) throw new Error('query_history empty: ' + JSON.stringify(histArr))
 if (histArr[0].quality !== 'good' || histArr[0].value !== 5555) throw new Error('query_history quality mismatch: ' + JSON.stringify(histArr[0]))

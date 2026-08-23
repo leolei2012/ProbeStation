@@ -25,7 +25,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
   const id = recorder.startRecording(1, 50, 400)
   if (cfg.getObject(1)!.pollIntervalMs !== 50) throw new Error('poll rate not set to 50 during recording')
   for (let i = 0; i < 8; i++) {
-    emit('poller/result', { objectId: 1, points: [{ objectId: 1, address: 0, timestamp: new Date().toISOString(), rawValue: i, quality: 'good' }] })
+    emit('poller/result', { objectId: 1, points: [{ objectId: 1, area: 'holding-register', address: 0, timestamp: new Date().toISOString(), rawValue: i, quality: 'good' }] })
     await sleep(40)
   }
   await sleep(300)
@@ -38,9 +38,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 // 2) 触发记录：trigger addr 0x100，>100 时触发，缓存 before 200ms + after 300ms
 {
-  const id = recorder.startTriggerRecording(1, 50, 0x100, '>', 100, 200, 300)
+  const id = recorder.startTriggerRecording(1, 50, 'holding-register', 0x100, '>', 100, 200, 300)
   for (let v = 0; v <= 150; v += 10) {
-    emit('poller/result', { objectId: 1, points: [{ objectId: 1, address: 0x100, timestamp: new Date().toISOString(), rawValue: v, quality: 'good' }] })
+    emit('poller/result', { objectId: 1, points: [{ objectId: 1, area: 'holding-register', address: 0x100, timestamp: new Date().toISOString(), rawValue: v, quality: 'good' }] })
     await sleep(30)
   }
   await sleep(400)
