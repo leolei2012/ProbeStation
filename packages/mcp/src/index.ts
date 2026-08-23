@@ -176,19 +176,19 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('create_group', {
-      title: 'Create group', description: '新建寄存器分组（名称/从站ID/功能码/起始地址/数量/扫描间隔）',
-      inputSchema: { device_id: zz.number(), name: zz.string(), function_code: zz.number().optional(), start_address: zz.number(), quantity: zz.number(), slave_id: zz.number().optional(), poll_interval_ms: zz.number().optional() },
+      title: 'Create group', description: '新建寄存器分组（名称/从站ID/功能码/起始地址/数量）',
+      inputSchema: { device_id: zz.number(), name: zz.string(), function_code: zz.number().optional(), start_address: zz.number(), quantity: zz.number(), slave_id: zz.number().optional() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
-      const g = cfg.createGroup(args.device_id, args.name, args.function_code ?? 3, args.start_address, args.quantity, 'read', args.slave_id ?? 1, args.poll_interval_ms ?? 1000)
+      const g = cfg.createGroup(args.device_id, args.name, args.function_code ?? 3, args.start_address, args.quantity, 'read', args.slave_id ?? 1)
       for (let i = 0; i < g.quantity; i++) cfg.createRegister(g.id, g.objectId, null, g.functionCode, g.startAddress + i, 'int16')
       cfg.log('INFO', 'mcp', 'create group ' + g.id + ' "' + g.name + '"')
       return { content: [{ type: 'text', text: JSON.stringify(g) }] }
     })
 
     server.registerTool('update_group', {
-      title: 'Update group', description: '更改分组（名称/从站ID/功能码/起始地址/数量/扫描间隔/启停）',
-      inputSchema: { group_id: zz.number(), name: zz.string().optional(), slave_id: zz.number().optional(), function_code: zz.number().optional(), start_address: zz.number().optional(), quantity: zz.number().optional(), poll_interval_ms: zz.number().optional(), is_active: zz.number().optional() },
+      title: 'Update group', description: '更改分组（名称/从站ID/功能码/起始地址/数量/启停）',
+      inputSchema: { group_id: zz.number(), name: zz.string().optional(), slave_id: zz.number().optional(), function_code: zz.number().optional(), start_address: zz.number().optional(), quantity: zz.number().optional(), is_active: zz.number().optional() },
     }, async (args) => {
       if (!cfg.getGroup(args.group_id)) return { content: [{ type: 'text', text: 'group not found' }], isError: true }
       const fields: Record<string, unknown> = {}
@@ -197,7 +197,6 @@ export function apply(ctx: Context, config: Config): void {
       if (args.function_code !== undefined) fields.functionCode = args.function_code
       if (args.start_address !== undefined) fields.startAddress = args.start_address
       if (args.quantity !== undefined) fields.quantity = args.quantity
-      if (args.poll_interval_ms !== undefined) fields.pollIntervalMs = args.poll_interval_ms
       if (args.is_active !== undefined) fields.isActive = args.is_active
       const updated = cfg.updateGroup(args.group_id, fields)
       cfg.log('INFO', 'mcp', 'update group ' + args.group_id)
