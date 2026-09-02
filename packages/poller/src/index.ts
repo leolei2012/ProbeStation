@@ -8,11 +8,15 @@ export const inject = ['config', 'modbus', 'store']
 export interface RegisterGroup { id: number; functionCode: number; startAddress: number; quantity: number; slaveId?: number }
 export interface Device { id: number; host: string; port: number; groups: RegisterGroup[] }
 
-export interface Config { pollIntervalMs: number; connectRetryMs: number; watchdogTimeoutMs: number }
+export interface Config { pollIntervalMs: number; connectRetryMs: number; watchdogTimeoutMs: number; autoResetFailThreshold: number; autoResetCooldownMs: number }
 export const Config: z<Config> = z.object({
   pollIntervalMs: z.number().default(1000),
   connectRetryMs: z.number().default(5000),
   watchdogTimeoutMs: z.number().default(30000),
+  // 连续读失败达阈值即强制重建该通道驱动（重开串口/新建 ModbusRTUClient），
+  // 用于设备侧 TX/RX 断线重接后 jsmodbus 失步无法自愈的场景（0 = 关闭自动重建）。
+  autoResetFailThreshold: z.number().default(3),
+  autoResetCooldownMs: z.number().default(5000),
 })
 
 /**
@@ -32,6 +36,8 @@ class PollingEngine {
   private connectCooldown = new Map<string, number>() // driverKey -> 最近一次连接失败时间戳（冷却期内不重连）
   private lastOutcomeAt = new Map<number, number>() // objectId -> 最近一次有结果/错误的时间戳（看门狗用）
   private deviceConnected = new Map<number, boolean>() // objectId -> 最近一次连接状态（变更时发 device/status）
+  private readFailCount = new Map<string, number>() // driverKey -> 连续读失败次数（累计用于自动重建）
+  private lastAutoResetAt = new Map<string, number>() // driverKey -> 最近一次自动重建时间戳（冷却期内不重复重建）
 
   // 内存缓存 + 到期队列 + round-robin
   private devices: any[] = []
@@ -175,6 +181,7 @@ class PollingEngine {
         const values = await this.readGroup(driver, g)
         const area = areaForFunction(g.functionCode as ModbusFunctionCode)
         this.clearGroupError(d.id, g.id)
+        this.readFailCount.delete(key) // 一次成功说明串口链路当前可用，清零该串口的连续失败
         const points: Array<Record<string, unknown>> = []
         for (let i = 0; i < values.length; i++) {
           points.push({ objectId: d.id, area, address: g.startAddress + i, timestamp: new Date().toISOString(), rawValue: Number(values[i]), quality: 'good' })
@@ -186,6 +193,7 @@ class PollingEngine {
         }
       } catch (e) {
         this.setGroupError(d.id, g.id, this.errMsg(e))
+        this.autoResetOnRepeatedFailures(key, d)
       }
     }
 
@@ -375,6 +383,35 @@ class PollingEngine {
     this.connectCooldown.delete(key)
     const d = this.drivers.get(key)
     if (d) { this.drivers.delete(key); await Promise.resolve(d.disconnect()).catch(() => {}) }
+  }
+
+  /**
+   * 连续读失败达阈值时强制重建该通道驱动（删除 driver → 下轮 getDriver 惰性重建，
+   * 对 RTU 会重开串口并新建 ModbusRTUClient，从而解除 jsmodbus 在设备 TX/RX 断线重接后的失步）。
+   * TCP 下重建等价于断线重连；这里主要价值在 RTU 的失步复位。
+   */
+  private autoResetOnRepeatedFailures(key: string, d: any): void {
+    const threshold = this.config.autoResetFailThreshold ?? 3
+    if (threshold <= 0) { this.readFailCount.delete(key); return }
+    const now = Date.now()
+    const lastReset = this.lastAutoResetAt.get(key) ?? 0
+    const cooldownMs = this.config.autoResetCooldownMs ?? 5000
+    // 一次重建后若仍在失败，须等待冷却结束后才可再次自动重建，避免高频重开串口
+    if (now - lastReset < cooldownMs) return
+    const n = (this.readFailCount.get(key) ?? 0) + 1
+    this.readFailCount.set(key, n)
+    if (n < threshold) return
+
+    this.readFailCount.delete(key)
+    this.lastAutoResetAt.set(key, now)
+    const driver = this.drivers.get(key)
+    if (driver) {
+      this.drivers.delete(key)
+      void Promise.resolve(driver.disconnect()).catch(() => {})
+      this.ctx.logger('poller').warn(
+        'auto-reset driver ' + key + ' after ' + n + ' consecutive read failures (device likely TX/RX flap); re-created next poll',
+      )
+    }
   }
 
   /** 设备被断开/停用：给所有启用分组发「断开」故障，并释放连接。 */

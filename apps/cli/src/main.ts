@@ -23,7 +23,6 @@ await ctx.plugin(ConsoleExporter)
 await ctx.plugin(configPlugin, { dbPath: join(wsDir, 'config.db') })
 await ctx.plugin(storePlugin, { dbPath: join(wsDir, 'poll.duckdb'), flushIntervalMs: 2000, flushBatchSize: 500 })
 await ctx.plugin(modbusPlugin, { defaultTimeoutMs: 3000, defaultUnitId: 1 })
-await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080, staticDir })
 await ctx.plugin(sinkPlugin)
 await ctx.plugin(rulePlugin)
 await ctx.plugin(importerPlugin)
@@ -32,6 +31,9 @@ await ctx.plugin(mcpPlugin)
 await ctx.plugin(slavePlugin, { port: 8502, holdingSize: 5000 })
 await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
 await ctx.plugin(workspacePlugin, { defaultWorkspace: 'data' })
+// api 依赖 store/poller/sink/importer/workspace/ota 等服务，须在上述 provider 之后注册，
+// 否则 api.apply 同步捕获这些 ctx 服务时会是 undefined（会令其端点如导出/点表 404/报错）。
+await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080, staticDir })
 
 // seed demo devices if config empty
 const cfg = ctx.get('config', false)

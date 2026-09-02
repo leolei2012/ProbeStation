@@ -214,6 +214,21 @@ export function apply(ctx: Context, config: Config): void {
       return parseReport ? { ...result, parse: parseReport } : result
     })
 
+    // ── 点表 xlsx（分组=sheet）导出 / 导入 ──────────────────
+    fastify.get('/api/monitor_objects/:id/points/book', async (req: any, reply: any) => {
+      const id = Number((req.params as any).id)
+      const { buffer, filename } = await sink.exportPointSheet(id)
+      reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      reply.header('Content-Disposition', 'attachment; filename=' + encodeURIComponent(filename))
+      return buffer
+    })
+    fastify.post('/api/monitor_objects/:id/points/book', async (req: any, reply: any) => {
+      const id = Number((req.params as any).id)
+      if (!Buffer.isBuffer(req.body)) return reply.code(400).send({ error: 'expected xlsx binary body' })
+      const res = await sink.importPointBook(id, req.body, true)
+      return res
+    })
+
     // ── Write ───────────────────────────────────────────────
     fastify.post('/api/registers/:id/write', async (req: any) => {
       const id = Number((req.params as any).id)
@@ -293,14 +308,16 @@ export function apply(ctx: Context, config: Config): void {
     }
     fastify.get('/api/export/csv', async (req: any, reply: any) => {
       const q = req.query as any
-      const csv = await sink.exportCsv(Number(q.object_id), String(q.start), String(q.end), parseIds(q.register_ids))
+      const tz = Number(q.tz ?? 0)
+      const csv = await sink.exportCsv(Number(q.object_id), String(q.start), String(q.end), parseIds(q.register_ids), Number.isFinite(tz) ? tz : 0)
       reply.header('Content-Type', 'text/csv')
       reply.header('Content-Disposition', 'attachment; filename=export.csv')
       return csv
     })
     fastify.get('/api/export/xlsx', async (req: any, reply: any) => {
       const q = req.query as any
-      const buf = await sink.exportXlsx(Number(q.object_id), String(q.start), String(q.end), parseIds(q.register_ids))
+      const tz = Number(q.tz ?? 0)
+      const buf = await sink.exportXlsx(Number(q.object_id), String(q.start), String(q.end), parseIds(q.register_ids), Number.isFinite(tz) ? tz : 0)
       reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
       reply.header('Content-Disposition', 'attachment; filename=export.xlsx')
       return buf

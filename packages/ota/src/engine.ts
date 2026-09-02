@@ -20,6 +20,17 @@ export interface UpgradeTask {
 /** 默认 IAP 单块数据字节数（对齐设备侧 MB_IAP_MAX_DATA=128）。 */
 export const DEFAULT_CHUNK_SIZE = 128
 
+/** 单次 START/DATA 交换超时（ms）：设备端只是收参数/存一块，秒回即可，太长反而拖慢失败收敛。 */
+export const DEFAULT_EXCHANGE_TIMEOUT = 8000
+
+/**
+ * END/verifying 交换超时（ms）：
+ * END 触发设备端整镜像 CRC 校验 + flash 页写，比 DATA 单块慢。
+ * 实测约 100~150ms（老固件逐位 CRC）、查表 CRC 版约 15ms，叠加整段页写累积——
+ * 此值取 2000ms 提供充足余量，仍能对「设备真不回/跳转」较快判失败。可按需在此调整。
+ */
+export const DEFAULT_END_TIMEOUT = 2000
+
 export class OtaEngine {
   private tasks = new Map<number, UpgradeTask>()
   private busy = new Map<number, Promise<void>>()
@@ -104,10 +115,10 @@ export class OtaEngine {
       task.totalBlocks = totalBlocks
       let txId = 1
 
-      const exchange = async (pdu: Buffer, cmd: number): Promise<{ status: number; nextBlock?: number }> => {
+      const exchange = async (pdu: Buffer, cmd: number, timeoutMs = DEFAULT_EXCHANGE_TIMEOUT): Promise<{ status: number; nextBlock?: number }> => {
         if (task.state === 'aborted') throw new Error('aborted')
         const frame = transport === 'rtu' ? wrapRtu(pdu, slaveId) : wrapTcp(pdu, slaveId, txId++)
-        const respFrame = await rawExchange(socket, frame, expectLen(transport, cmd))
+        const respFrame = await rawExchange(socket, frame, expectLen(transport, cmd), timeoutMs)
         const respPdu = transport === 'rtu' ? unwrapRtu(respFrame) : unwrapTcp(respFrame)
         return parseResponsePdu(respPdu)
       }
@@ -135,9 +146,11 @@ export class OtaEngine {
         }
       }
 
+      // END 触发设备端整镜像 CRC 校验 + flash 页写，会比 DATA 单块慢（实测老固件逐位 CRC
+      // 阶段 ≈100ms，查表版 ≈15ms，叠加页写累积），须给足余量但不至于等太久。
       task.state = 'verifying'
-      const endR = await exchange(buildEndPdu(totalBlocks), CMD_END)
-      if (endR.status !== ST_OK) throw new Error('END failed status=' + endR.status)
+      const endResp = await exchange(buildEndPdu(totalBlocks), CMD_END, DEFAULT_END_TIMEOUT)
+      if (endResp.status !== ST_OK) throw new Error('END failed status=' + endResp.status)
 
       task.state = 'done'
       task.percent = 100

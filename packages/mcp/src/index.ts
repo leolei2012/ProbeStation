@@ -21,7 +21,7 @@ function semanticOf(r: any) {
 }
 
 export const name = 'mcp'
-export const inject = ['config', 'store', 'poller', 'ota']
+export const inject = ['config', 'store', 'poller', 'ota', 'sink']
 
 export interface Config { host: string; port: number }
 export const Config: z<Config> = z.object({
@@ -35,6 +35,7 @@ export function apply(ctx: Context, config: Config): void {
   const store = (ctx as any).store
   const poller = (ctx as any).poller
   const ota = (ctx as any).ota
+  const sink = (ctx as any).sink
   const recorder = new Recorder(ctx as any, cfg)
 
   /** 按设备、数据区和协议地址定位点，四数据区地址空间相互独立。 */
@@ -261,6 +262,25 @@ export function apply(ctx: Context, config: Config): void {
       const report = cfg.importPoints(args.device_id, points)
       cfg.log('INFO', 'mcp', 'import points device ' + args.device_id + ' => ' + JSON.stringify(report))
       return { content: [{ type: 'text', text: JSON.stringify(report) }] }
+    })
+
+    server.registerTool('export_points_xlsx', {
+      title: 'Export point sheet (xlsx)', description: '把一台设备的点位点表导成 xlsx（每个寄存器分组单独一个 sheet），返回 base64 内容（"一个分组一个 sheet，便于查看/交接/回导"）',
+      inputSchema: { device_id: zz.number() },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      const { buffer, filename } = await sink.exportPointSheet(args.device_id)
+      return { content: [{ type: 'text', text: JSON.stringify({ filename, b64: buffer.toString('base64'), bytes: buffer.length }) }] }
+    })
+    server.registerTool('import_points_xlsx', {
+      title: 'Import point sheet (xlsx)', description: '把 export_points_xlsx 导出的、或手工整理成相同布局（每分组一个 sheet）的 xlsx 点表导回到设备：会重建该设备的全部分组/寄存器（同一位点全量覆盖）。传 content_b64',
+      inputSchema: { device_id: zz.number(), content_b64: zz.string() },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      const buf = Buffer.from(args.content_b64, 'base64')
+      const res = await sink.importPointBook(args.device_id, buf, true)
+      cfg.log('INFO', 'mcp', 'import points xlsx device ' + args.device_id + ' => ' + JSON.stringify(res))
+      return { content: [{ type: 'text', text: JSON.stringify(res) }] }
     })
 
     server.registerTool('create_register', {

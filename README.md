@@ -22,7 +22,7 @@
 | 0–4 | 脚手架 → 采集/持久化 → API/前端 → 全部功能（slave/importer/sink/rule/logs/写/CRUD/MCP） | ✅ |
 | 5 | 降采样、AI 调试语义层 | ⬜ |
 
-**已实现**：Modbus TCP/RTU 轮询、DuckDB 时序、REST+WS（心跳、断线重连、REST 兜底）、React 仪表盘（DSH 风格）、写寄存器、CRUD、从站模拟、告警、MBS/MBP 导入、CSV/XLSX 导出、日志、工作区、按设备轮询速率、数据保留、连续/触发录制、29 个 MCP 工具、OTA 固件升级（0x41 IAP，TCP/RTU）。
+**已实现**：Modbus TCP/RTU 轮询、DuckDB 时序、REST+WS（心跳、断线重连、REST 兜底）、React 仪表盘（DSH 风格）、写寄存器、CRUD、从站模拟、告警、MBS/MBP 导入、CSV/XLSX 导出、**点位表 xlsx 导出/导入（分组=sheet）**、日志、工作区、按设备轮询速率、数据保留、连续/触发录制、33 个 MCP 工具、OTA 固件升级（0x41 IAP，TCP/RTU）。
 **未实现**：时序降采样、AI 调试语义层（语义清单/DSH skill）、FC05/FC15 线圈写入及后续完整从站能力。
 
 ---
@@ -63,6 +63,8 @@ npx tsx scripts/test-store-area-migration.ts # 时序表 area 结构升级与四
 npx tsx scripts/test-crud.ts      # 写寄存器 + CRUD
 npx tsx scripts/test-ws.ts        # WebSocket
 npx tsx scripts/test-rule.ts      # 告警
-npx tsx scripts/test-mcp.ts       # MCP 29 个工具
+npx tsx scripts/test-mcp.ts       # MCP 33 个工具
+npx tsx scripts/test-pointsheet.ts # 点位表 xlsx 导出/导入（分组=sheet）往返
+npx tsx scripts/test-rtu-recover.ts # RTU TX/RX 断线重接自动恢复
 # ... 全部见 docs/03 §2
 ```

@@ -1,0 +1,14 @@
+点位表 xlsx 模板示例（详见 docs/product/10-点位表xlsx规范与模板.md）
+
+用途：这是一张“分组=sheet”的可导回点表模板。
+- sheet「设备信息」：参考用，导入会忽略。
+- sheet「SYS」：一个分组示例；第一行=分组名，第二行=分组头(从站/功能码/起始/数量)，
+  第三行留空，第四行=列头(别名|数据类型|单位|系数|偏移|枚举|功能码|起始地址|数量)，
+  第五行起每行一个寄存器(点)。增行=加点，删行删点。
+
+多分组：多建几个 sheet(名字=你们分段名，如 RO/RW/MT/TEST)，每个 sheet 用同样前三行+列头+点。
+
+导回：让设备里该点的分组/寄存器全量被这个文件重建。
+- Web：设备 实时数据 → ⬆ 导入点表.xlsx
+- REST：POST /api/monitor_objects/:id/points/book  (body=xlsx 二进制)
+- MCP：import_points_xlsx(device_id, content_b64)

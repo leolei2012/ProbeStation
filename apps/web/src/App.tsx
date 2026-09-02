@@ -27,7 +27,7 @@ const I18N: Record<Lang, Record<string, string>> = {
   zh: {
     brand: 'ProbeStation',
     brandSub: '设备观测与测试',
-    newDevice: '＋ 新建设备',
+    newDevice: '新建设备',
     devices: '设备',
     noDevices: '暂无设备，点上方新建',
     workspace: '工作区',
@@ -58,7 +58,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
     tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件', histTable: '表格',
     groupCount: '{n} 组',
-    newGroup: '新建分组', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', edit: '编辑', save: '保存', fcReadCoils: '读线圈', fcReadDiscrete: '读离散输入', fcReadHolding: '读保持寄存器', fcReadInput: '读输入寄存器',
+    newGroup: '新建分组', importPointBook: '导入点位', exportPointBook: '导出点位', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', edit: '编辑', save: '保存', fcReadCoils: '读线圈', fcReadDiscrete: '读离散输入', fcReadHolding: '读保持寄存器', fcReadInput: '读输入寄存器',
     histHint: '最近 1 小时数据', histStart: '开始时间', histEnd: '结束时间', histQuery: '查询', histLoading: '查询中…', histPrev: '上一页', histNext: '下一页', histTotal: '共 {n} 条', histPage: '第 {x}/{y} 页', noHistory: '暂无历史数据', colTime: '时间', histTruncated: '结果较多，仅显示最近 {n} 条', histIdle: '选择时间范围后点击「查询」', histEmpty: '该时间段暂无历史数据', histError: '查询失败', histRangeInvalid: '开始时间必须早于结束时间', histLast1h: '最近 1 小时', histLast6h: '最近 6 小时', histLast24h: '最近 24 小时', histToday: '今天', histQuick: '快捷', selectRegisters: '选择寄存器', selectAll: '全选', clearAll: '清空', histNoRegs: '未选择任何寄存器', curveHint: '最近 1 小时曲线', curveReset: '重置缩放', curveZoomHint: '框选放大：左上→右下拖拽；恢复：右下→左上拖拽', firmwareHint: '暂无固件，请先上传', fwUpload: '上传固件', fwAbort: '中止升级', fwState: '状态', fwUpgrade: '升级', fwUploaded: '固件已上传', fwUploadErr: '上传失败', fwStarted: '升级已发起', fwUpgradeErr: '升级发起失败', fwDelete: '删除', fwDeleted: '固件已删除', fwDeleteErr: '删除失败', confirmDeleteFirmware: '确定删除固件 {name} 吗？',
     appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
@@ -71,7 +71,7 @@ const I18N: Record<Lang, Record<string, string>> = {
   en: {
     brand: 'ProbeStation',
     brandSub: 'Device observation & testing',
-    newDevice: '＋ New Device',
+    newDevice: 'New Device',
     devices: 'Devices',
     noDevices: 'No devices, create one above',
     workspace: 'Workspace',
@@ -102,7 +102,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
     tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware', histTable: 'Table',
     groupCount: '{n} groups',
-    newGroup: 'New Group', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', edit: 'Edit', save: 'Save', fcReadCoils: 'Read Coils', fcReadDiscrete: 'Read Discrete Inputs', fcReadHolding: 'Read Holding', fcReadInput: 'Read Input',
+    newGroup: 'New Group', importPointBook: 'Import points', exportPointBook: 'Export points', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', edit: 'Edit', save: 'Save', fcReadCoils: 'Read Coils', fcReadDiscrete: 'Read Discrete Inputs', fcReadHolding: 'Read Holding', fcReadInput: 'Read Input',
     histHint: 'Last 1 hour', histStart: 'Start', histEnd: 'End', histQuery: 'Query', histLoading: 'Loading…', histPrev: 'Prev', histNext: 'Next', histTotal: '{n} rows', histPage: 'Page {x}/{y}', noHistory: 'No history data', colTime: 'Time', histTruncated: 'Too many rows, showing latest {n}', histIdle: 'Select a time range and click Query', histEmpty: 'No history data in this range', histError: 'Query failed', histRangeInvalid: 'Start time must be before end time', histLast1h: 'Last 1h', histLast6h: 'Last 6h', histLast24h: 'Last 24h', histToday: 'Today', histQuick: 'Quick', selectRegisters: 'Select registers', selectAll: 'Select all', clearAll: 'Clear', histNoRegs: 'No registers selected', curveHint: 'Last 1 hour', curveReset: 'Reset zoom', curveZoomHint: 'Drag top-left→bottom-right to zoom in; drag back to reset', firmwareHint: 'No firmware uploaded yet', fwUpload: 'Upload firmware', fwAbort: 'Abort', fwState: 'State', fwUpgrade: 'Upgrade', fwUploaded: 'Firmware uploaded', fwUploadErr: 'Upload failed', fwStarted: 'Upgrade started', fwUpgradeErr: 'Upgrade failed', fwDelete: 'Delete', fwDeleted: 'Firmware deleted', fwDeleteErr: 'Delete failed', confirmDeleteFirmware: 'Delete firmware {name}?',
     appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
@@ -146,6 +146,19 @@ function formatDateTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+}
+
+/** 把 UTC ISO 时间戳转成浏览器本地时区的 YYYY-MM-DD HH:mm:ss 字面字符串（带秒），用于历史/数据库展示。 */
+function formatLocalTs(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso || ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
+}
+
+/** 浏览器本地时区相对 UTC 的偏移分钟数（东八区为 -480），导出时传给后端做本地化。 */
+function localTzOffsetMin(): number {
+  return -new Date().getTimezoneOffset()
 }
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
@@ -493,48 +506,20 @@ export default function App() {
         </div>
         {!collapsed && (
           <>
-            <button className="new-workspace-btn" onClick={() => setShowWorkspace(true)}>
-              <span className="ico">＋</span>
-              <span>{t('newWorkspace')}</span>
-            </button>
-            <div className="sidebar-section">{t('workspace')}</div>
-            <div className="ws-list">
-              {(workspace?.recent ?? []).map((w) => {
-                const isCurrent = w.path === workspace?.current
-                const isExpanded = isCurrent && wsExpanded
-                return (
-                  <div key={w.path} className="ws-group">
-                    <WorkspaceRow
-                      w={w}
-                      isCurrent={isCurrent}
-                      isExpanded={isExpanded}
-                      deviceCount={devices.length}
-                      onToggle={() => setWsExpanded(!wsExpanded)}
-                      onSwitch={() => switchWorkspace(w.path)}
-                      onAdd={() => setShowAdd(true)}
-                      t={t}
-                    />
-                    {isExpanded && (
-                      <div className="ws-children">
-                        <div className="device-list">
-                          <button className="btn new-device-btn" onClick={() => setShowAdd(true)}>{t('newDevice')}</button>
-                          {devices.map((d) => (
-                            <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => { setSelectedId(d.id); setView('monitor') }}>
-                              <span className={'device-dot' + (deviceConnected[d.id] === true ? ' on' : '')} />
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div className="device-name">{d.name}</div>
-                                <div className="device-sub">{d.transport === 'rtu' ? (d.serialPath || 'RTU') : (d.ip + ':' + d.port)}</div>
-                              </div>
-                              <button className="device-del" onClick={(e) => { e.stopPropagation(); deleteDevice(d.id) }}>×</button>
-                            </div>
-                          ))}
-                          {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
-                        </div>
-                      </div>
-                    )}
+            <button className="btn new-device-btn" onClick={() => setShowAdd(true)}>＋ {t('newDevice')}</button>
+            <div className="sidebar-section">设备</div>
+            <div className="device-list">
+              {devices.map((d) => (
+                <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => { setSelectedId(d.id); setView('monitor') }}>
+                  <span className={'device-dot' + (deviceConnected[d.id] === true ? ' on' : '')} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="device-name">{d.name}</div>
+                    <div className="device-sub">{d.transport === 'rtu' ? (d.serialPath || 'RTU') : (d.ip + ':' + d.port)}</div>
                   </div>
-                )
-              })}
+                  <button className="device-del" onClick={(e) => { e.stopPropagation(); deleteDevice(d.id) }}>×</button>
+                </div>
+              ))}
+              {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
             </div>
           </>
         )}
@@ -563,7 +548,7 @@ export default function App() {
 }
 
 function EmptyState({ t, onAdd }: { t: T; onAdd: () => void }) {
-  return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div><button className="btn primary" onClick={onAdd}>{t('newDevice')}</button></div>
+  return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div><button className="btn primary" onClick={onAdd}>＋ {t('newDevice')}</button></div>
 }
 
 function GlobalTabBar({ t, view, onChange }: { t: T; view: 'monitor' | 'database'; onChange: (v: 'monitor' | 'database') => void }) {
@@ -577,8 +562,7 @@ function GlobalTabBar({ t, view, onChange }: { t: T; view: 'monitor' | 'database
 
 function fmtTs(s: string | null | undefined): string {
   if (!s) return '—'
-  const t = String(s).replace('T', ' ')
-  return t.length >= 16 ? t.slice(0, 16) : t
+  return formatLocalTs(s)
 }
 
 function fmtBytes(n: number | null | undefined): string {
@@ -724,7 +708,6 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
   t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; onRefresh: () => void
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
-  const [importOpen, setImportOpen] = useState(false)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -736,13 +719,30 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
   const toggleGroupPause = async (id: number) => {
     try { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() } catch { /* 忽略 */ }
   }
+  const bookInputRef = useRef<HTMLInputElement>(null)
+  const uploadBook = async (e: any) => {
+    const file = e?.target?.files?.[0]
+    if (!file || !device) return
+    try {
+      const r = await fetch('/api/monitor_objects/' + device.id + '/points/book', { method: 'POST', body: file })
+      if (!r.ok) throw new Error('HTTP ' + r.status)
+      const res = await r.json()
+      onRefresh()
+      alert('已导入点表：' + (res.groups ?? 0) + ' 组 / ' + (res.registers ?? 0) + ' 点' + ((res.errors?.length ? '\n' + res.errors.join('\n') : '')))
+    } catch (err: any) {
+      alert('导入失败：' + (err?.message ?? String(err)))
+    } finally {
+      bookInputRef.current && (bookInputRef.current.value = '')
+    }
+  }
   const views = buildRegViews(groups, latest, device.id)
   return (
     <div>
       <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
-        <button className="btn" onClick={() => setImportOpen(true)}>⤓ {t('importPoints')}</button>
-        {importOpen && <ImportPointsModal t={t} device={device} onClose={() => setImportOpen(false)} onDone={onRefresh} />}
+        <button className="btn" onClick={() => bookInputRef.current?.click()}>⬆ {t('importPointBook')}</button>
+        <button className="btn" onClick={() => window.open('/api/monitor_objects/' + device.id + '/points/book')}>⬇ {t('exportPointBook')}</button>
+        <input ref={bookInputRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={(e) => void uploadBook(e)} />
       </div>
       {groups.map((g) => (
         <div key={g.id} className="group-block">
@@ -910,88 +910,6 @@ function TypeCell({ t, reg, available, disabled, onRefresh }: { t: T; reg: Regis
   )
 }
 
-function ImportPointsModal({ t, device, onClose, onDone }: { t: T; device: Device; onClose: () => void; onDone: () => void }) {
-  const [text, setText] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const [result, setResult] = useState<any>(null)
-
-  const apply = async (body: any) => {
-    setBusy(true); setErr(null); setResult(null)
-    try {
-      const res = await api.post('/api/monitor_objects/' + device.id + '/points/import', body)
-      if (res && res.error) { setErr(res.error); return }
-      setResult(res)
-      onDone()
-    } catch (e) { setErr((e as any)?.message ?? String(e)) }
-    finally { setBusy(false) }
-  }
-
-  const submitPaste = async () => {
-    const s = text.trim()
-    if (!s) { setErr(t('importEmpty')); return }
-    if (s.startsWith('[')) {
-      let arr: any
-      try { arr = JSON.parse(s) } catch { setErr(t('impBadJson')); return }
-      if (!Array.isArray(arr)) { setErr(t('impBadJson')); return }
-      await apply(arr)
-    } else {
-      await apply({ csv: text })
-    }
-  }
-
-  const onFile = async (e: any) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setBusy(true); setErr(null); setResult(null)
-    try {
-      const name = file.name.toLowerCase()
-      if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
-        const buf = await file.arrayBuffer()
-        const res = await api.post('/api/monitor_objects/' + device.id + '/points/import', { xlsx: arrayBufferToBase64(buf) })
-        if (res && res.error) { setErr(res.error); return }
-        setResult(res); onDone()
-      } else {
-        const txt = await file.text()
-        const res = await api.post('/api/monitor_objects/' + device.id + '/points/import', { csv: txt })
-        if (res && res.error) { setErr(res.error); return }
-        setResult(res); onDone()
-      }
-    } catch (e) { setErr((e as any)?.message ?? String(e)) }
-    finally { setBusy(false); e.target.value = '' }
-  }
-
-  return (
-    <div className="modal-mask" onClick={onClose}>
-      <div className="modal import-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <span>{t('importTitle')}</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
-        </div>
-        <div className="kv" style={{ marginBottom: 10 }}>{t('importHint')}</div>
-        <textarea className="import-text" value={text} onChange={(e) => setText(e.target.value)} placeholder={t('importPh')} rows={8} />
-        <div className="modal-actions" style={{ marginBottom: 10 }}>
-          <label className="btn">{t('importFile')}<input type="file" accept=".csv,.txt,.xlsx,.xls" style={{ display: 'none' }} onChange={onFile} disabled={busy} /></label>
-          <div style={{ flex: 1 }} />
-          <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" onClick={submitPaste} disabled={busy}>{t('importDo')}</button>
-        </div>
-        {err && <div className="write-msg error">{err}</div>}
-        {result && (
-          <div className="import-result">
-            <div className="import-line ok">{t('importUpdated').replace('{n}', String(result.updated ?? 0))} · {t('importSkipped').replace('{n}', String(result.skipped ?? 0))}</div>
-            {result.parse && (
-              <div className="import-line">{t('importColumns')}: {Object.entries(result.parse.columns as Record<string, string>).map(([k, v]) => k + '→' + v).join(', ')}</div>
-            )}
-            {Array.isArray(result.errors) && result.errors.length > 0 && (
-              <div className="import-line warn">{t('importErrors')}: {result.errors.slice(0, 8).join('; ')}{result.errors.length > 8 ? ' …' : ''}</div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 function useRegisterSelection(deviceId: number, registers: Register[]): [Set<number>, (s: Set<number>) => void] {
   const key = 'ps-regs-' + deviceId
@@ -1143,7 +1061,7 @@ function HistoryView({ t, device, groups, registers }: { t: T; device: Device; g
   const doExport = (fmt: 'csv' | 'xlsx') => {
     if (!canQuery) return
     const ids = selectedRegisters.map(r => r.id).join(',')
-    window.open('/api/export/' + fmt + '?object_id=' + device.id + '&start=' + new Date(start).toISOString() + '&end=' + new Date(end).toISOString() + (ids ? '&register_ids=' + ids : ''))
+    window.open('/api/export/' + fmt + '?object_id=' + device.id + '&start=' + new Date(start).toISOString() + '&end=' + new Date(end).toISOString() + '&tz=' + localTzOffsetMin() + (ids ? '&register_ids=' + ids : ''))
   }
 
   return (
@@ -1200,7 +1118,7 @@ function HistoryTableBody({ t, rows, selectedRegisters, status, error }: { t: T;
             <thead><tr><th>{t('colTime')}</th>{selectedRegisters.map(r => <th key={r.id}>{r.alias ?? r.id}</th>)}</tr></thead>
             <tbody>
               {shown.map((row, i) => (
-                <tr key={i}><td className="kv">{row.ts}</td>{selectedRegisters.map(r => <td key={r.id} className="value">{row.values[r.id] ?? '—'}</td>)}</tr>
+                <tr key={i}><td className="kv" title={row.ts}>{formatLocalTs(row.ts)}</td>{selectedRegisters.map(r => <td key={r.id} className="value">{row.values[r.id] ?? '—'}</td>)}</tr>
               ))}
             </tbody>
           </table>
