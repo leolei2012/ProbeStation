@@ -48,6 +48,56 @@ export function apply(ctx: Context, config: Config): void {
       title: 'List devices', description: '列出所有监控设备（id、名称、IP、端口、启停状态）', inputSchema: {},
     }, async () => ({ content: [{ type: 'text', text: JSON.stringify(cfg.listObjects()) }] }))
 
+    server.registerTool('create_device', {
+      title: 'Create device', description: '新增一台监控设备（连接参数：TCP 填 ip/port，RTU 填 serial_path 及串口参数；slave 从站号、扫描间隔可选）。创建后该设备接入轮询（可在其下再 create_group/create_register 建点位）',
+      inputSchema: {
+        name: zz.string(),
+        transport: zz.enum(['tcp', 'rtu']).optional(),
+        ip: zz.string().optional(),
+        port: zz.number().optional(),
+        serial_path: zz.string().optional(),
+        baud_rate: zz.number().optional(),
+        parity: zz.string().optional(),
+        stop_bits: zz.number().optional(),
+        data_bits: zz.number().optional(),
+        flow_control: zz.string().optional(),
+        slave_id: zz.number().optional(),
+        poll_interval_ms: zz.number().optional(),
+        data_retain_seconds: zz.number().optional().nullable(),
+      },
+    }, async (args) => {
+      const transport = args.transport ?? 'tcp'
+      const name = String(args.name ?? '').trim()
+      if (!name) return { content: [{ type: 'text', text: 'device name required' }], isError: true }
+      // 连接参数基本校验（与 Web/API 新建一致）
+      if (cfg.listObjects().some((o: any) => o.name === name)) return { content: [{ type: 'text', text: 'device name already exists: ' + name }], isError: true }
+      const conn: any = {
+        transport,
+        slaveId: args.slave_id ?? 1,
+        pollIntervalMs: args.poll_interval_ms ?? 1000,
+        dataRetainSeconds: args.data_retain_seconds ?? null,
+      }
+      let ip = ''
+      let port = 502
+      if (transport === 'rtu') {
+        if (!args.serial_path) return { content: [{ type: 'text', text: 'rtu device requires serial_path' }], isError: true }
+        conn.serialPath = args.serial_path
+        conn.baudRate = args.baud_rate ?? 9600
+        conn.parity = args.parity ?? 'even'
+        conn.stopBits = args.stop_bits ?? 1
+        conn.dataBits = args.data_bits ?? 8
+        conn.flowControl = args.flow_control ?? 'none'
+      } else {
+        if (!args.ip) return { content: [{ type: 'text', text: 'tcp device requires ip' }], isError: true }
+        ip = args.ip
+        port = args.port ?? 8899
+      }
+      const obj = cfg.createObject(name, ip, port, 'master', conn)
+      cfg.log('INFO', 'mcp', 'create device ' + obj.id + ' ' + name)
+      // createObject 已 emit config/changed，poller 若在跑会自动 refreshSchedule 纳入该设备
+      return { content: [{ type: 'text', text: JSON.stringify(obj) }] }
+    })
+
     server.registerTool('list_registers', {
       title: 'List registers', description: '列出某设备的寄存器定义（id、别名、地址、类型）',
       inputSchema: { device_id: zz.number() },
