@@ -218,6 +218,33 @@ export class DuckDBStore {
     return rows.map(r => ({ ts: String(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
   }
 
+  /** 单设备数据统计：总行数 / 时间跨度 / 按数据区分布 / 待落盘缓冲（供数据 tab 只显示当前设备）。 */
+  async statsByObject(objectId: number): Promise<{
+    totalRows: number
+    oldestTs: string | null
+    newestTs: string | null
+    byArea: Array<{ area: string; rows: number }>
+    bufferPending: number
+    retention: { retention_seconds: number }
+  }> {
+    const conn = await this.ready
+    const num = (v: unknown): number => Number(v ?? 0)
+    const str = (v: unknown): string | null => (v == null ? null : String(v))
+    const countRows = (await conn.runAndReadAll('SELECT COUNT(*) AS c FROM poll_data WHERE object_id = $objectId', { objectId })).getRowObjects()
+    const totalRows = num(countRows[0]?.c)
+    const spanRows = (await conn.runAndReadAll('SELECT MIN(ts) AS mn, MAX(ts) AS mx FROM poll_data WHERE object_id = $objectId', { objectId })).getRowObjects()
+    const span = spanRows[0]
+    const byAreaRows = (await conn.runAndReadAll('SELECT area, COUNT(*) AS c FROM poll_data WHERE object_id = $objectId GROUP BY area ORDER BY c DESC', { objectId })).getRowObjects()
+    return {
+      totalRows,
+      oldestTs: str(span?.mn),
+      newestTs: str(span?.mx),
+      byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
+      bufferPending: this.buffer.length,
+      retention: { retention_seconds: this.getRetentionSeconds() },
+    }
+  }
+
   /** 数据量统计：总行数 / 时间跨度 / 按设备与数据区分布 / 待落盘缓冲。 */
   async stats(): Promise<{
     totalRows: number

@@ -9,18 +9,18 @@ export const name = 'config'
 export interface Config { dbPath: string }
 export const Config: z<Config> = z.object({ dbPath: z.string() })
 
-export interface DeviceRecord { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; dataRetainSeconds: number | null }
+export interface DeviceRecord { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number; dataRetainSeconds: number | null }
 export interface GroupRecord { id: number; objectId: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; mode: string; isActive: number }
 export interface RegisterRecord { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; quantity: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null }
 export interface RuleRecord { id: number; registerId: number; operator: string; threshold: number; message: string | null }
 export interface LogRecord { id: number; ts: string; level: string; source: string | null; message: string | null }
 export interface FirmwareRecord { id: number; name: string; version: string | null; size: number; crc32: number; filePath: string | null; createdAt: string | null }
 
-const OBJECT_SELECT = 'SELECT id, name, ip, port, mode, is_active AS isActive, transport, serial_path AS serialPath, baud_rate AS baudRate, parity, stop_bits AS stopBits, data_bits AS dataBits, flow_control AS flowControl, slave_id AS slaveId, poll_interval_ms AS pollIntervalMs, data_retain_seconds AS dataRetainSeconds FROM monitor_objects'
+const OBJECT_SELECT = 'SELECT id, name, ip, port, mode, is_active AS isActive, transport, serial_path AS serialPath, baud_rate AS baudRate, parity, stop_bits AS stopBits, data_bits AS dataBits, flow_control AS flowControl, slave_id AS slaveId, poll_interval_ms AS pollIntervalMs, timeout_ms AS timeoutMs, data_retain_seconds AS dataRetainSeconds FROM monitor_objects'
 const GROUP_SELECT = 'SELECT id, object_id AS objectId, name, slave_id AS slaveId, function_code AS functionCode, start_address AS startAddress, quantity, mode, is_active AS isActive FROM register_groups'
 const REGISTER_SELECT = 'SELECT id, group_id AS groupId, object_id AS objectId, alias, function_code AS functionCode, start_address AS startAddress, quantity, data_type AS dataType, unit, factor, offset, enum_json AS enumJson FROM registers'
 
-const OBJECT_MAP: Record<string, string> = { name: 'name', ip: 'ip', port: 'port', mode: 'mode', isActive: 'is_active', transport: 'transport', serialPath: 'serial_path', baudRate: 'baud_rate', parity: 'parity', stopBits: 'stop_bits', dataBits: 'data_bits', flowControl: 'flow_control', slaveId: 'slave_id', pollIntervalMs: 'poll_interval_ms', dataRetainSeconds: 'data_retain_seconds' }
+const OBJECT_MAP: Record<string, string> = { name: 'name', ip: 'ip', port: 'port', mode: 'mode', isActive: 'is_active', transport: 'transport', serialPath: 'serial_path', baudRate: 'baud_rate', parity: 'parity', stopBits: 'stop_bits', dataBits: 'data_bits', flowControl: 'flow_control', slaveId: 'slave_id', pollIntervalMs: 'poll_interval_ms', timeoutMs: 'timeout_ms', dataRetainSeconds: 'data_retain_seconds' }
 const GROUP_MAP: Record<string, string> = { name: 'name', slaveId: 'slave_id', functionCode: 'function_code', startAddress: 'start_address', quantity: 'quantity', mode: 'mode', isActive: 'is_active' }
 const REGISTER_MAP: Record<string, string> = { alias: 'alias', functionCode: 'function_code', startAddress: 'start_address', dataType: 'data_type', unit: 'unit', factor: 'factor', offset: 'offset', enumJson: 'enum_json' }
 
@@ -59,6 +59,7 @@ export class ConfigStore {
       ['flow_control', "TEXT DEFAULT 'none'"],
       ['slave_id', 'INTEGER DEFAULT 1'],
       ['poll_interval_ms', 'INTEGER DEFAULT 1000'],
+      ['timeout_ms', 'INTEGER DEFAULT 3000'],
       ['data_retain_seconds', 'INTEGER'],
     ]
     for (const [col, ddl] of cols) {
@@ -95,7 +96,7 @@ export class ConfigStore {
         baud_rate INTEGER DEFAULT 9600, parity TEXT DEFAULT 'even',
         stop_bits INTEGER DEFAULT 1, data_bits INTEGER DEFAULT 8,
         flow_control TEXT DEFAULT 'none', slave_id INTEGER DEFAULT 1,
-        poll_interval_ms INTEGER DEFAULT 1000, data_retain_seconds INTEGER
+        poll_interval_ms INTEGER DEFAULT 1000, timeout_ms INTEGER DEFAULT 3000, data_retain_seconds INTEGER
       );
       CREATE TABLE IF NOT EXISTS register_groups (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,7 +131,7 @@ export class ConfigStore {
 
   listObjects(): DeviceRecord[] { return this.db.prepare(OBJECT_SELECT + ' ORDER BY id').all() as unknown as DeviceRecord[] }
   getObject(id: number): DeviceRecord | undefined { return this.db.prepare(OBJECT_SELECT + ' WHERE id = ?').get(id) as unknown as DeviceRecord | undefined }
-  createObject(name: string, ip: string, port: number, mode = 'master', extra?: Partial<Pick<DeviceRecord, 'transport' | 'serialPath' | 'baudRate' | 'parity' | 'stopBits' | 'dataBits' | 'flowControl' | 'slaveId' | 'pollIntervalMs' | 'dataRetainSeconds'>>): DeviceRecord {
+  createObject(name: string, ip: string, port: number, mode = 'master', extra?: Partial<Pick<DeviceRecord, 'transport' | 'serialPath' | 'baudRate' | 'parity' | 'stopBits' | 'dataBits' | 'flowControl' | 'slaveId' | 'pollIntervalMs' | 'timeoutMs' | 'dataRetainSeconds'>>): DeviceRecord {
     const transport = extra?.transport ?? 'tcp'
     const serialPath = extra?.serialPath ?? null
     const baudRate = extra?.baudRate ?? 9600
@@ -140,8 +141,9 @@ export class ConfigStore {
     const flowControl = extra?.flowControl ?? 'none'
     const slaveId = extra?.slaveId ?? 1
     const pollIntervalMs = extra?.pollIntervalMs ?? 1000
+    const timeoutMs = extra?.timeoutMs ?? 3000
     const dataRetainSeconds = extra?.dataRetainSeconds ?? null
-    const res = this.db.prepare('INSERT INTO monitor_objects (name, ip, port, mode, transport, serial_path, baud_rate, parity, stop_bits, data_bits, flow_control, slave_id, poll_interval_ms, data_retain_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(name, ip, port, mode, transport, serialPath, baudRate, parity, stopBits, dataBits, flowControl, slaveId, pollIntervalMs, dataRetainSeconds)
+    const res = this.db.prepare('INSERT INTO monitor_objects (name, ip, port, mode, transport, serial_path, baud_rate, parity, stop_bits, data_bits, flow_control, slave_id, poll_interval_ms, timeout_ms, data_retain_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(name, ip, port, mode, transport, serialPath, baudRate, parity, stopBits, dataBits, flowControl, slaveId, pollIntervalMs, timeoutMs, dataRetainSeconds)
     const id = Number(res.lastInsertRowid)
     this.notify('object', id)
     return this.getObject(id)!

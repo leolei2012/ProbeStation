@@ -83,10 +83,9 @@ function makeEngine(transport: 'tcp' | 'rtu', respond: (f: Buffer) => Buffer, co
   const socket = makeFakeSocket(respond)
   const fakeCtx: any = {
     config: cfg,
-    workspace: { getCurrent: () => fwDir },
     poller: { pauseObject: () => {}, resumeObject: () => {}, reconnectDevice: () => {}, getRawSocket: async () => socket },
   }
-  return { engine: new OtaEngine(fakeCtx), cfg, core }
+  return { engine: new OtaEngine(fakeCtx, fwDir), cfg, core }
 }
 
 const FW = Buffer.alloc(300)

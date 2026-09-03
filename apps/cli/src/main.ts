@@ -2,6 +2,7 @@ import { Context } from 'cordis'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ConsoleExporter from '@cordisjs/plugin-logger-console'
+import { DATA_DIR } from '@probebench/core'
 import * as configPlugin from '@probebench/config'
 import * as storePlugin from '@probebench/store'
 import * as modbusPlugin from '@probebench/modbus'
@@ -12,28 +13,27 @@ import * as rulePlugin from '@probebench/rule'
 import * as importerPlugin from '@probebench/importer'
 import * as mcpPlugin from '@probebench/mcp'
 import * as slavePlugin from '@probebench/slave'
-import * as workspacePlugin from '@probebench/workspace'
 import * as otaPlugin from '@probebench/ota'
 
 const ctx = new Context()
-const wsDir = workspacePlugin.resolveInitialWorkspace('data')
+// 单一数据目录（已去除工作区抽象）：config.db / poll.duckdb / firmware 都固定在此。
+const dataDir = DATA_DIR
 // 前端静态目录用源码位置解析成绝对路径，避免 cwd 不同（npm run dev 时 cwd=apps/cli）导致 404
 const staticDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../web/dist')
 await ctx.plugin(ConsoleExporter)
-await ctx.plugin(configPlugin, { dbPath: join(wsDir, 'config.db') })
-await ctx.plugin(storePlugin, { dbPath: join(wsDir, 'poll.duckdb'), flushIntervalMs: 2000, flushBatchSize: 500 })
+await ctx.plugin(configPlugin, { dbPath: join(dataDir, 'config.db') })
+await ctx.plugin(storePlugin, { dbPath: join(dataDir, 'poll.duckdb'), flushIntervalMs: 2000, flushBatchSize: 500 })
 await ctx.plugin(modbusPlugin, { defaultTimeoutMs: 3000, defaultUnitId: 1 })
 await ctx.plugin(sinkPlugin)
 await ctx.plugin(rulePlugin)
 await ctx.plugin(importerPlugin)
-await ctx.plugin(otaPlugin)
+await ctx.plugin(otaPlugin, { dataDir })
 await ctx.plugin(mcpPlugin)
 await ctx.plugin(slavePlugin, { port: 8502, holdingSize: 5000 })
 await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
-await ctx.plugin(workspacePlugin, { defaultWorkspace: 'data' })
-// api 依赖 store/poller/sink/importer/workspace/ota 等服务，须在上述 provider 之后注册，
+// api 依赖 store/poller/sink/importer/ota 等服务，须在上述 provider 之后注册，
 // 否则 api.apply 同步捕获这些 ctx 服务时会是 undefined（会令其端点如导出/点表 404/报错）。
-await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080, staticDir })
+await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080, staticDir, dataDir })
 
 // seed demo devices if config empty
 const cfg = ctx.get('config', false)

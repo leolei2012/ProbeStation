@@ -60,7 +60,8 @@ class PollingEngine {
       const points: Array<Record<string, unknown>> = []
       const cycleTs = new Date().toISOString()
       for (const g of device.groups) {
-        const values = await this.readGroup(driver, g)
+        const gapMs = (device as any).pollIntervalMs ?? 0
+        const values = await this.readGroup(driver, g, gapMs, (device as any).timeoutMs)
         const area = areaForFunction(g.functionCode as ModbusFunctionCode)
         for (let i = 0; i < values.length; i++) {
           points.push({ objectId: device.id, area, address: g.startAddress + i, timestamp: cycleTs, rawValue: Number(values[i]), quality: 'good' })
@@ -178,7 +179,8 @@ class PollingEngine {
         return
       }
       try {
-        const values = await this.readGroup(driver, g)
+        const gapMs = d.pollIntervalMs ?? this.config.pollIntervalMs ?? 0
+        const values = await this.readGroup(driver, g, gapMs, d.timeoutMs)
         const area = areaForFunction(g.functionCode as ModbusFunctionCode)
         this.clearGroupError(d.id, g.id)
         this.readFailCount.delete(key) // 一次成功说明串口链路当前可用，清零该串口的连续失败
@@ -297,14 +299,15 @@ class PollingEngine {
       await this.waitInflight(key) // 等当前在途的读完成
       const doWrite = async () => {
         const driver = await this.getDriver(obj)
+        const timeoutMs = obj.timeoutMs
         if (area === 'coil') {
           const bits = values.map((v) => v !== 0)
-          if (bits.length === 1) await driver.writeCoil(address, bits[0], slaveId)
-          else await driver.writeCoils(address, bits, slaveId)
+          if (bits.length === 1) await driver.writeCoil(address, bits[0], slaveId, timeoutMs)
+          else await driver.writeCoils(address, bits, slaveId, timeoutMs)
         } else if (method === 'single') {
-          await driver.writeRegister(address, values[0] ?? 0, slaveId)
+          await driver.writeRegister(address, values[0] ?? 0, slaveId, timeoutMs)
         } else {
-          await driver.writeRegisters(address, values, slaveId)
+          await driver.writeRegisters(address, values, slaveId, timeoutMs)
         }
       }
       if (obj.transport === 'rtu' && obj.serialPath) await this.enqueueRtu(obj.serialPath, doWrite)
@@ -321,14 +324,35 @@ class PollingEngine {
     }
   }
 
-  private async readGroup(driver: any, group: any): Promise<Array<number | boolean>> {
+  /**
+   * 读一个分组。当 quantity 超过该 FC 的 Modbus 单请求上限时自动分批读再拼接：
+   *   FC01/02（位）→ 每批 ≤2000；FC03/04（寄存器）→ 每批 ≤125。
+   * 相邻两批之间暂停 gapMs（扫描间隔；A 方案：为了不过度挤压自/串口从站）再发下一批。
+   * 返回数组顺序与地址连续一致（各批顺序拼接）。
+   */
+  private async readGroup(driver: any, group: any, gapMs = 0, timeoutMs?: number): Promise<Array<number | boolean>> {
     const slaveId = group.slaveId ?? 1
-    switch (group.functionCode) {
-      case 1: return driver.readCoils(group.startAddress, group.quantity, slaveId)
-      case 2: return driver.readDiscreteInputs(group.startAddress, group.quantity, slaveId)
-      case 4: return driver.readInputRegisters(group.startAddress, group.quantity, slaveId)
-      default: return driver.readHoldingRegisters(group.startAddress, group.quantity, slaveId)
+    const fc = group.functionCode
+    const perChunk = (fc === 1 || fc === 2) ? 2000 : (fc === 3 || fc === 4 ? 125 : 1)
+    const single = async (start: number, want: number): Promise<Array<number | boolean>> => {
+      switch (fc) {
+        case 1: return driver.readCoils(start, want, slaveId, timeoutMs)
+        case 2: return driver.readDiscreteInputs(start, want, slaveId, timeoutMs)
+        case 4: return driver.readInputRegisters(start, want, slaveId, timeoutMs)
+        default: return driver.readHoldingRegisters(start, want, slaveId, timeoutMs)
+      }
     }
+    if (group.quantity <= perChunk) return single(group.startAddress, group.quantity)
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)))
+    const out: Array<number | boolean> = []
+    for (let offset = 0; offset < group.quantity; offset += perChunk) {
+      // 除第一批外，每批前先停一个扫描间隔（A 方案）
+      if (offset > 0 && gapMs > 0) await sleep(gapMs)
+      const want = Math.min(perChunk, group.quantity - offset)
+      const part = await single(group.startAddress + offset, want)
+      out.push(...(part as Array<number | boolean>))
+    }
+    return out
   }
 
   private errMsg(e: any): string {

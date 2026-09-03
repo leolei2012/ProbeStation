@@ -34,14 +34,22 @@ export const DEFAULT_END_TIMEOUT = 2000
 export class OtaEngine {
   private tasks = new Map<number, UpgradeTask>()
   private busy = new Map<number, Promise<void>>()
+  private readonly dataDir: string
 
-  constructor(private ctx: any) {}
+  constructor(private ctx: any, dataDir?: string) {
+    this.dataDir = resolve(dataDir ?? 'data')
+  }
 
-  /** 工作区 firmware 目录（随工作区自包含）。 */
+  /** 固件目录：固定 <dataDir>/firmware。 */
   private firmwareDir(): string {
-    const dir = resolve(this.ctx.workspace.getCurrent(), 'firmware')
+    const dir = join(this.dataDir, 'firmware')
     mkdirSync(dir, { recursive: true })
     return dir
+  }
+
+  /** 依据落盘的相对 filePath（通常 'firmware/firmware_<id>.bin'）解析绝对路径。 */
+  private resolveFirmwarePath(rec: any, id: number): string {
+    return rec.filePath ? resolve(this.dataDir, rec.filePath) : join(this.firmwareDir(), 'firmware_' + id + '.bin')
   }
 
   /** 上传固件：落盘 + 记录 + 算 CRC32。返回 { firmware_id, size, crc32 }。 */
@@ -61,9 +69,7 @@ export class OtaEngine {
   deleteFirmware(firmwareId: number): { ok: boolean } {
     const rec = this.ctx.config.getFirmware(firmwareId)
     if (!rec) return { ok: false }
-    const abs = rec.filePath
-      ? resolve(this.ctx.workspace.getCurrent(), rec.filePath)
-      : join(this.firmwareDir(), 'firmware_' + rec.id + '.bin')
+    const abs = this.resolveFirmwarePath(rec, firmwareId)
     try { unlinkSync(abs) } catch { /* 文件可能已不存在 */ }
     this.ctx.config.deleteFirmware(firmwareId)
     return { ok: true }
@@ -73,9 +79,7 @@ export class OtaEngine {
   private readFirmware(firmwareId: number): { content: Buffer; rec: any } {
     const rec = this.ctx.config.getFirmware(firmwareId)
     if (!rec) throw new Error('firmware not found')
-    const abs = rec.filePath
-      ? resolve(this.ctx.workspace.getCurrent(), rec.filePath)
-      : join(this.firmwareDir(), 'firmware_' + rec.id + '.bin')
+    const abs = this.resolveFirmwarePath(rec, firmwareId)
     return { content: readFileSync(abs), rec }
   }
 

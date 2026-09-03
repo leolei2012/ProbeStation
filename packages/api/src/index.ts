@@ -36,13 +36,14 @@ async function readXlsxRows(buffer: Buffer): Promise<string[][]> {
 }
 
 export const name = 'api'
-export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'workspace', 'ota']
+export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'ota']
 
-export interface Config { host: string; port: number; staticDir?: string }
+export interface Config { host: string; port: number; staticDir?: string; dataDir?: string }
 export const Config: z<Config> = z.object({
   host: z.string().default('0.0.0.0'),
   port: z.number().default(8080),
   staticDir: z.string(),
+  dataDir: z.string().default('data'),
 })
 
 /** REST + WebSocket API over Fastify, mirroring the legacy Monitor endpoints. */
@@ -53,8 +54,8 @@ export function apply(ctx: Context, config: Config): void {
   const poller = (ctx as any).poller
   const sink = (ctx as any).sink
   const importer = (ctx as any).importer
-  const workspace = (ctx as any).workspace
   const ota = (ctx as any).ota
+  const dataDir = config.dataDir ?? 'data'
 
   const sockets = new Set<any>()
   const lastSeen = new Map<any, number>()
@@ -99,15 +100,6 @@ export function apply(ctx: Context, config: Config): void {
     fastify.post('/api/ota/upgrade', async (req: any) => ota.startUpgrade((req.body as any).device_id, (req.body as any).firmware_id, (req.body as any).chunk_size))
     fastify.post('/api/ota/abort', async (req: any) => ota.abort((req.body as any).device_id))
 
-    // ── Workspace ───────────────────────────────────────────
-    fastify.get('/api/workspace', async () => workspace.list())
-    fastify.get('/api/workspace/browse', async (req: any) => workspace.browse(String((req.query as any).path ?? '')))
-    fastify.post('/api/workspace/switch', async (req: any) => {
-      const b = req.body as any
-      await workspace.switchTo(b.path)
-      return workspace.list()
-    })
-
     // ── Objects ─────────────────────────────────────────────
     fastify.get('/api/monitor_objects', async () => {
       const objects = cfg.listObjects()
@@ -119,7 +111,7 @@ export function apply(ctx: Context, config: Config): void {
       return cfg.createObject(b.name, b.ip, b.port, b.mode ?? 'master', {
         transport: b.transport, serialPath: b.serialPath, baudRate: b.baudRate,
         parity: b.parity, stopBits: b.stopBits, dataBits: b.dataBits, flowControl: b.flowControl,
-        slaveId: b.slaveId, pollIntervalMs: b.pollIntervalMs, dataRetainSeconds: b.dataRetainSeconds,
+        slaveId: b.slaveId, pollIntervalMs: b.pollIntervalMs, timeoutMs: b.timeoutMs, dataRetainSeconds: b.dataRetainSeconds,
       })
     })
     fastify.put('/api/monitor_objects/:id', async (req: any) => {
@@ -287,17 +279,17 @@ export function apply(ctx: Context, config: Config): void {
         ...history,
         byDevice: history.byDevice.map((d: any) => ({ ...d, name: nameById.get(d.objectId) ?? ('#' + d.objectId) })),
       }
-      const wsDir = workspace.getCurrent()
+      const dataRoot = resolve(dataDir)
       return {
         history: enriched,
         metadata: cfg.metadataStats(),
         retention: { retention_seconds: store.getRetentionSeconds() },
         files: {
-          config_db: fileSize(resolve(wsDir, 'config.db')),
-          poll_duckdb: fileSize(resolve(wsDir, 'poll.duckdb')),
-          poll_duckdb_wal: fileSize(resolve(wsDir, 'poll.duckdb.wal')),
+          config_db: fileSize(resolve(dataRoot, 'config.db')),
+          poll_duckdb: fileSize(resolve(dataRoot, 'poll.duckdb')),
+          poll_duckdb_wal: fileSize(resolve(dataRoot, 'poll.duckdb.wal')),
         },
-        workspace: wsDir,
+        workspace: dataRoot,
       }
     })
 
@@ -325,6 +317,7 @@ export function apply(ctx: Context, config: Config): void {
 
     // ── Data ────────────────────────────────────────────────
     fastify.get('/api/monitor_objects/:id/latest', async (req: any) => store.getLatestByObjectAll(Number((req.params as any).id)))
+    fastify.get('/api/monitor_objects/:id/stats', async (req: any) => store.statsByObject(Number((req.params as any).id)))
     fastify.get('/api/data/query', async (req: any, reply: any) => {
       const q = req.query as any
       const area = String(q.area ?? '')
@@ -382,10 +375,6 @@ export function apply(ctx: Context, config: Config): void {
   })
   ctx.on('poller/group-ok', (payload: any) => {
     const msg = JSON.stringify({ type: 'group-ok', ...payload })
-    broadcast(msg)
-  })
-  ctx.on('workspace/changed', (payload: any) => {
-    const msg = JSON.stringify({ type: 'workspace/changed', ...payload })
     broadcast(msg)
   })
   ctx.on('config/changed', (payload: any) => {

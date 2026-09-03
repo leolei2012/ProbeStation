@@ -163,8 +163,8 @@ class JsmodbusDriver implements ModbusDriver {
 
   private readonly diagnostics: ModbusDiagnostics
 
-  constructor(private readonly config: Config, identity: DiagnosticsIdentity = {}) {
-    this.diagnostics = new ModbusDiagnostics('tcp', config.frameBufferSize ?? 2000, identity)
+  constructor(private readonly config: Config, identity: DiagnosticsIdentity = {}, diagnostics?: ModbusDiagnostics) {
+    this.diagnostics = diagnostics ?? new ModbusDiagnostics('tcp', config.frameBufferSize ?? 2000, identity)
   }
 
   async connect(opts: ConnectOptions): Promise<void> {
@@ -187,12 +187,12 @@ class JsmodbusDriver implements ModbusDriver {
     return false
   }
 
-  private async getClient(slaveId: number): Promise<ModbusTCPClient> {
+  private async getClient(slaveId: number, timeoutMs?: number): Promise<ModbusTCPClient> {
     const existing = this.clients.get(slaveId)
     if (existing && !existing.socket.destroyed && existing.socket.writable) return existing.client
     const socket = new net.Socket()
     attachFrameCapture(socket, this.diagnostics)
-    const client = new ModbusTCPClient(socket, slaveId, this.config.defaultTimeoutMs)
+    const client = new ModbusTCPClient(socket, slaveId, timeoutMs ?? this.config.defaultTimeoutMs)
     const drop = () => {
       const cur = this.clients.get(slaveId)
       if (cur && cur.socket === socket) this.clients.delete(slaveId)
@@ -208,69 +208,69 @@ class JsmodbusDriver implements ModbusDriver {
     return client
   }
 
-  async readCoils(address: number, count: number, slaveId = 1): Promise<boolean[]> {
+  async readCoils(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<boolean[]> {
     const started = Date.now()
     try {
-      const res = await (await this.getClient(slaveId)).readCoils(address, count)
+      const res = await (await this.getClient(slaveId, timeoutMs)).readCoils(address, count)
       const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async readDiscreteInputs(address: number, count: number, slaveId = 1): Promise<boolean[]> {
+  async readDiscreteInputs(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<boolean[]> {
     const started = Date.now()
     try {
-      const res = await (await this.getClient(slaveId)).readDiscreteInputs(address, count)
+      const res = await (await this.getClient(slaveId, timeoutMs)).readDiscreteInputs(address, count)
       const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async readHoldingRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+  async readHoldingRegisters(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<number[]> {
     const started = Date.now()
     try {
-      const res = await (await this.getClient(slaveId)).readHoldingRegisters(address, count)
+      const res = await (await this.getClient(slaveId, timeoutMs)).readHoldingRegisters(address, count)
       const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async readInputRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+  async readInputRegisters(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<number[]> {
     const started = Date.now()
     try {
-      const res = await (await this.getClient(slaveId)).readInputRegisters(address, count)
+      const res = await (await this.getClient(slaveId, timeoutMs)).readInputRegisters(address, count)
       const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async writeRegister(address: number, value: number, slaveId = 1): Promise<void> {
+  async writeRegister(address: number, value: number, slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
     try {
-      const res = await (await this.getClient(slaveId)).writeSingleRegister(address, value)
+      const res = await (await this.getClient(slaveId, timeoutMs)).writeSingleRegister(address, value)
       toValues(res.response.body)
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async writeRegisters(address: number, values: number[], slaveId = 1): Promise<void> {
+  async writeRegisters(address: number, values: number[], slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
     try {
-      const res = await (await this.getClient(slaveId)).writeMultipleRegisters(address, values)
+      const res = await (await this.getClient(slaveId, timeoutMs)).writeMultipleRegisters(address, values)
       toValues(res.response.body)
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async writeCoil(address: number, value: boolean, slaveId = 1): Promise<void> {
+  async writeCoil(address: number, value: boolean, slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
     try {
-      const res = await (await this.getClient(slaveId)).writeSingleCoil(address, value)
+      const res = await (await this.getClient(slaveId, timeoutMs)).writeSingleCoil(address, value)
       toBits(res.response.body) // FC05/FC15 响应无数据，仅校验异常
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async writeCoils(address: number, values: boolean[], slaveId = 1): Promise<void> {
+  async writeCoils(address: number, values: boolean[], slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
     try {
-      const res = await (await this.getClient(slaveId)).writeMultipleCoils(address, values)
+      const res = await (await this.getClient(slaveId, timeoutMs)).writeMultipleCoils(address, values)
       toBits(res.response.body)
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
@@ -311,7 +311,8 @@ export class SerialDriver implements ModbusDriver {
     private readonly portCtor: any = SerialPort,
     private readonly onWarn: (msg: string) => void = (msg) => console.warn('[modbus]', msg),
     identity: DiagnosticsIdentity = {},
-  ) { this.diagnostics = new ModbusDiagnostics('rtu', config.frameBufferSize ?? 2000, identity) }
+    diagnostics?: ModbusDiagnostics,
+  ) { this.diagnostics = diagnostics ?? new ModbusDiagnostics('rtu', config.frameBufferSize ?? 2000, identity) }
 
   async connect(opts: ConnectOptions): Promise<void> {
     await this.disconnect()
@@ -413,78 +414,78 @@ export class SerialDriver implements ModbusDriver {
 
   isConnected(): boolean { return this.ready }
 
-  private getClient(slaveId: number): ModbusRTUClient {
+  private getClient(slaveId: number, timeoutMs?: number): ModbusRTUClient {
     const existing = this.clients.get(slaveId)
     if (existing) return existing
     if (!this.serialPort) throw new Error('serial port not connected')
-    const client = new ModbusRTUClient(this.serialPort as any, slaveId, this.config.defaultTimeoutMs)
+    const client = new ModbusRTUClient(this.serialPort as any, slaveId, timeoutMs ?? this.config.defaultTimeoutMs)
     this.clients.set(slaveId, client)
     return client
   }
 
-  async readCoils(address: number, count: number, slaveId = 1): Promise<boolean[]> {
+  async readCoils(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<boolean[]> {
     const started = Date.now()
     try {
-      const res = await this.getClient(slaveId).readCoils(address, count)
+      const res = await this.getClient(slaveId, timeoutMs).readCoils(address, count)
       const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async readDiscreteInputs(address: number, count: number, slaveId = 1): Promise<boolean[]> {
+  async readDiscreteInputs(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<boolean[]> {
     const started = Date.now()
     try {
-      const res = await this.getClient(slaveId).readDiscreteInputs(address, count)
+      const res = await this.getClient(slaveId, timeoutMs).readDiscreteInputs(address, count)
       const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async readHoldingRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+  async readHoldingRegisters(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<number[]> {
     const started = Date.now()
     try {
-      const res = await this.getClient(slaveId).readHoldingRegisters(address, count)
+      const res = await this.getClient(slaveId, timeoutMs).readHoldingRegisters(address, count)
       const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async readInputRegisters(address: number, count: number, slaveId = 1): Promise<number[]> {
+  async readInputRegisters(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<number[]> {
     const started = Date.now()
     try {
-      const res = await this.getClient(slaveId).readInputRegisters(address, count)
+      const res = await this.getClient(slaveId, timeoutMs).readInputRegisters(address, count)
       const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async writeRegister(address: number, value: number, slaveId = 1): Promise<void> {
+  async writeRegister(address: number, value: number, slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
     try {
-      const res = await this.getClient(slaveId).writeSingleRegister(address, value)
+      const res = await this.getClient(slaveId, timeoutMs).writeSingleRegister(address, value)
       toValues(res.response.body)
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async writeRegisters(address: number, values: number[], slaveId = 1): Promise<void> {
+  async writeRegisters(address: number, values: number[], slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
     try {
-      const res = await this.getClient(slaveId).writeMultipleRegisters(address, values)
+      const res = await this.getClient(slaveId, timeoutMs).writeMultipleRegisters(address, values)
       toValues(res.response.body)
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async writeCoil(address: number, value: boolean, slaveId = 1): Promise<void> {
+  async writeCoil(address: number, value: boolean, slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
     try {
-      const res = await this.getClient(slaveId).writeSingleCoil(address, value)
+      const res = await this.getClient(slaveId, timeoutMs).writeSingleCoil(address, value)
       toBits(res.response.body) // FC05/FC15 响应无数据，仅校验异常
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
   }
 
-  async writeCoils(address: number, values: boolean[], slaveId = 1): Promise<void> {
+  async writeCoils(address: number, values: boolean[], slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
     try {
-      const res = await this.getClient(slaveId).writeMultipleCoils(address, values)
+      const res = await this.getClient(slaveId, timeoutMs).writeMultipleCoils(address, values)
       toBits(res.response.body)
       this.diagnostics.recordSuccess(Date.now() - started)
     } catch (e) { const error = normalizeError(e); this.diagnostics.recordError(error, Date.now() - started); throw error }
@@ -502,13 +503,21 @@ export class SerialDriver implements ModbusDriver {
 }
 
 export function apply(ctx: Context, config: Config): void {
+  // 通道级诊断复用：driver 因 autoReset/重连被重建时，帧缓冲不丢（跨 driver 存续），通讯中断也能持续看到 TX/RX。
+  const diagCache = new Map<string, ModbusDiagnostics>()
+  const diagFor = (transport: 'tcp' | 'rtu', identity: DiagnosticsIdentity): ModbusDiagnostics => {
+    const key = identity.channelKey ?? ('device:' + (identity.deviceId ?? 'unknown'))
+    let d = diagCache.get(key)
+    if (!d) { d = new ModbusDiagnostics(transport, config.frameBufferSize ?? 2000, identity); diagCache.set(key, d) }
+    return d
+  }
   ctx.provide('modbus', {
     createDriver(transport = 'tcp', identity: DiagnosticsIdentity = {}): ModbusDriver {
       if (transport === 'rtu') {
         const logger = ctx.logger('modbus')
-        return new SerialDriver(config, SerialPort, (msg) => logger.warn(msg), identity)
+        return new SerialDriver(config, SerialPort, (msg) => logger.warn(msg), identity, diagFor('rtu', identity))
       }
-      return new JsmodbusDriver(config, identity)
+      return new JsmodbusDriver(config, identity, diagFor('tcp', identity))
     },
   })
 }

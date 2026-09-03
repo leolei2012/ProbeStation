@@ -5,7 +5,6 @@ import * as configPlugin from '../packages/config/src/index.ts'
 import * as storePlugin from '../packages/store/src/index.ts'
 import * as modbusPlugin from '../packages/modbus/src/index.ts'
 import * as pollerPlugin from '../packages/poller/src/index.ts'
-import * as workspacePlugin from '../packages/workspace/src/index.ts'
 import * as otaPlugin from '../packages/ota/src/index.ts'
 import * as mcpPlugin from '../packages/mcp/src/index.ts'
 
@@ -14,7 +13,6 @@ await ctx.plugin(configPlugin, { dbPath: ':memory:' })
 await ctx.plugin(storePlugin, { dbPath: ':memory:' })
 await ctx.plugin(modbusPlugin, {})
 await ctx.plugin(pollerPlugin, {})
-await ctx.plugin(workspacePlugin, { defaultWorkspace: 'test-ws-mcp', registryPath: 'test-ws-mcp/registry.json' })
 await ctx.plugin(otaPlugin)
 await ctx.plugin(mcpPlugin, { host: '127.0.0.1', port: 18081 })
 
