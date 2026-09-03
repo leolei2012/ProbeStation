@@ -11,12 +11,11 @@ const TYPE_GROUPS = [
   { key: 'grp64LE', types: ['int64-LE', 'uint64-LE', 'float64-LE', 'hex64-LE', 'bin64-LE'] },
 ]
 
-interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; dataRetainSeconds: number | null; connected: boolean }
-type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number }
+interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number; dataRetainSeconds: number | null; connected: boolean }
+type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number; registers: Register[] }
 interface LatestValue { rawValue: number; quality: string; timestamp: string }
-interface WorkspaceInfo { current: string; currentTitle: string; recent: { path: string; title: string; lastUsedAt: string; createdAt: string }[] }
 
 type Lang = 'zh' | 'en'
 type Theme = 'light' | 'dark' | 'system'
@@ -56,7 +55,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     write: '写', valuePh: '值', writeErrEmpty: '请输入值', writeErrNaN: '请输入有效数字', writeOk: '已写入',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
-    tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件', histTable: '表格',
+    tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件', tabRaw: '原始数据', histTable: '表格',
     groupCount: '{n} 组',
     newGroup: '新建分组', importPointBook: '导入点位', exportPointBook: '导出点位', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', edit: '编辑', save: '保存', fcReadCoils: '读线圈', fcReadDiscrete: '读离散输入', fcReadHolding: '读保持寄存器', fcReadInput: '读输入寄存器',
     histHint: '最近 1 小时数据', histStart: '开始时间', histEnd: '结束时间', histQuery: '查询', histLoading: '查询中…', histPrev: '上一页', histNext: '下一页', histTotal: '共 {n} 条', histPage: '第 {x}/{y} 页', noHistory: '暂无历史数据', colTime: '时间', histTruncated: '结果较多，仅显示最近 {n} 条', histIdle: '选择时间范围后点击「查询」', histEmpty: '该时间段暂无历史数据', histError: '查询失败', histRangeInvalid: '开始时间必须早于结束时间', histLast1h: '最近 1 小时', histLast6h: '最近 6 小时', histLast24h: '最近 24 小时', histToday: '今天', histQuick: '快捷', selectRegisters: '选择寄存器', selectAll: '全选', clearAll: '清空', histNoRegs: '未选择任何寄存器', curveHint: '最近 1 小时曲线', curveReset: '重置缩放', curveZoomHint: '框选放大：左上→右下拖拽；恢复：右下→左上拖拽', firmwareHint: '暂无固件，请先上传', fwUpload: '上传固件', fwAbort: '中止升级', fwState: '状态', fwUpgrade: '升级', fwUploaded: '固件已上传', fwUploadErr: '上传失败', fwStarted: '升级已发起', fwUpgradeErr: '升级发起失败', fwDelete: '删除', fwDeleted: '固件已删除', fwDeleteErr: '删除失败', confirmDeleteFirmware: '确定删除固件 {name} 吗？',
@@ -64,7 +63,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     language: '语言',
     appInfo: '应用信息', version: '版本', arch: '架构', persistence: '持久化',
     dataMgmt: '数据管理', runLogs: '运行日志', clearLogs: '清空日志', logsCleared: '日志已清空', retentionLabel: '历史保留', retentionSaved: '保留时长已保存', retentionForever: '永久',
-    newDeviceTitle: '新建设备', editDeviceTitle: '编辑设备', name: '名称', ip: 'IP 地址', port: '端口', transport: '连接方式', transportTcp: 'TCP 网口', transportRtu: 'RTU 串口', serialPath: '串口路径', baudRate: '波特率', parity: '校验位', stopBits: '停止位', dataBits: '数据位', flowControl: '流控', slaveIdLabel: '从站地址', pollIntervalLabel: '扫描间隔(ms)', pollIntervalHint: '按分组轮流轮询，每个分组约每「间隔 × 分组数」刷新一次', cancel: '取消', add: '添加',
+    newDeviceTitle: '新建设备', editDeviceTitle: '编辑设备', name: '名称', ip: 'IP 地址', port: '端口', transport: '连接方式', transportTcp: 'TCP 网口', transportRtu: 'RTU 串口', serialPath: '串口路径', baudRate: '波特率', parity: '校验位', stopBits: '停止位', dataBits: '数据位', flowControl: '流控', slaveIdLabel: '从站地址', pollIntervalLabel: '扫描间隔(ms)', pollIntervalHint: '按分组轮流轮询，每个分组约每「间隔 × 分组数」刷新一次', timeoutLabel: '读写超时(ms)', timeoutHint: '读/写寄存器请求的超时，默认 3000 毫秒（超过判失败）', cancel: '取消', add: '添加',
     importPoints: '导入点表', importTitle: '智能导入点表', importHint: '粘贴 CSV（首行表头含 地址/名称/类型/枚举 等列），或上传 CSV/XLSX 文件；也支持 JSON 数组。', importPh: '粘贴点表 CSV（首行表头：地址,名称,类型,枚举）', importFile: '上传文件', importDo: '导入', importEmpty: '请输入内容或选择文件', impBadJson: '无法解析 JSON 数组', importUpdated: '更新 {n} 个', importSkipped: '跳过 {n} 个', importErrors: '错误', importColumns: '识别列',
     tabMonitor: '设备观测', tabDatabase: '数据库', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
@@ -100,7 +99,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     write: 'Write', valuePh: 'value', writeErrEmpty: 'Enter a value', writeErrNaN: 'Enter a valid number', writeOk: 'Written',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
-    tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware', histTable: 'Table',
+    tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware', tabRaw: 'Raw', histTable: 'Table',
     groupCount: '{n} groups',
     newGroup: 'New Group', importPointBook: 'Import points', exportPointBook: 'Export points', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', edit: 'Edit', save: 'Save', fcReadCoils: 'Read Coils', fcReadDiscrete: 'Read Discrete Inputs', fcReadHolding: 'Read Holding', fcReadInput: 'Read Input',
     histHint: 'Last 1 hour', histStart: 'Start', histEnd: 'End', histQuery: 'Query', histLoading: 'Loading…', histPrev: 'Prev', histNext: 'Next', histTotal: '{n} rows', histPage: 'Page {x}/{y}', noHistory: 'No history data', colTime: 'Time', histTruncated: 'Too many rows, showing latest {n}', histIdle: 'Select a time range and click Query', histEmpty: 'No history data in this range', histError: 'Query failed', histRangeInvalid: 'Start time must be before end time', histLast1h: 'Last 1h', histLast6h: 'Last 6h', histLast24h: 'Last 24h', histToday: 'Today', histQuick: 'Quick', selectRegisters: 'Select registers', selectAll: 'Select all', clearAll: 'Clear', histNoRegs: 'No registers selected', curveHint: 'Last 1 hour', curveReset: 'Reset zoom', curveZoomHint: 'Drag top-left→bottom-right to zoom in; drag back to reset', firmwareHint: 'No firmware uploaded yet', fwUpload: 'Upload firmware', fwAbort: 'Abort', fwState: 'State', fwUpgrade: 'Upgrade', fwUploaded: 'Firmware uploaded', fwUploadErr: 'Upload failed', fwStarted: 'Upgrade started', fwUpgradeErr: 'Upgrade failed', fwDelete: 'Delete', fwDeleted: 'Firmware deleted', fwDeleteErr: 'Delete failed', confirmDeleteFirmware: 'Delete firmware {name}?',
@@ -108,7 +107,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     language: 'Language',
     appInfo: 'App info', version: 'Version', arch: 'Architecture', persistence: 'Persistence',
     dataMgmt: 'Data management', runLogs: 'Runtime logs', clearLogs: 'Clear logs', logsCleared: 'Logs cleared', retentionLabel: 'Data retention', retentionSaved: 'Retention saved', retentionForever: 'Forever',
-    newDeviceTitle: 'New device', editDeviceTitle: 'Edit device', name: 'Name', ip: 'IP address', port: 'Port', transport: 'Transport', transportTcp: 'TCP', transportRtu: 'RTU serial', serialPath: 'Serial path', baudRate: 'Baud rate', parity: 'Parity', stopBits: 'Stop bits', dataBits: 'Data bits', flowControl: 'Flow control', slaveIdLabel: 'Slave ID', pollIntervalLabel: 'Scan interval (ms)', pollIntervalHint: 'Groups poll round-robin; each refreshes roughly every interval × group count', cancel: 'Cancel', add: 'Add',
+    newDeviceTitle: 'New device', editDeviceTitle: 'Edit device', name: 'Name', ip: 'IP address', port: 'Port', transport: 'Transport', transportTcp: 'TCP', transportRtu: 'RTU serial', serialPath: 'Serial path', baudRate: 'Baud rate', parity: 'Parity', stopBits: 'Stop bits', dataBits: 'Data bits', flowControl: 'Flow control', slaveIdLabel: 'Slave ID', pollIntervalLabel: 'Scan interval (ms)', pollIntervalHint: 'Groups poll round-robin; each refreshes roughly every interval × group count', timeoutLabel: 'Timeout (ms)', timeoutHint: 'Read/write request timeout, default 3000 ms', cancel: 'Cancel', add: 'Add',
     importPoints: 'Import points', importTitle: 'Smart point import', importHint: 'Paste CSV (header columns like addr/name/type/enum), or upload CSV/XLSX; JSON array is also accepted.', importPh: 'Paste point-table CSV (header: addr,name,type,enum)', importFile: 'Upload file', importDo: 'Import', importEmpty: 'Enter content or choose a file', impBadJson: 'Cannot parse JSON array', importUpdated: '{n} updated', importSkipped: '{n} skipped', importErrors: 'Errors', importColumns: 'Detected columns',
     tabMonitor: 'Monitor', tabDatabase: 'Database', dbHistory: 'History data', dbTotalRows: 'Total samples', dbTimeSpan: 'Time span', dbDiskUsage: 'Disk usage', dbPerDevice: 'Per device', dbMetadata: 'Metadata', dbRetention: 'Retention', dbRefresh: 'Refresh', dbNoData: 'No history data yet', dbBufferHint: '{n} buffered rows pending flush', dbDevices: 'Devices', dbGroups: 'Groups', dbRegisters: 'Registers', dbRules: 'Alarm rules', dbFirmwares: 'Firmware', dbLogs: 'Logs', dbRetentionForever: 'Forever', dbRetentionDays: '{n} days',
   },
@@ -129,16 +128,6 @@ const api = {
   post: (url: string, body?: unknown) => request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) }),
   put: (url: string, body: unknown) => request(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   del: (url: string) => request(url, { method: 'DELETE' }),
-}
-
-function FolderIcon({ open }: { open: boolean }) {
-  return (
-    <svg className="ws-folder-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      {open
-        ? <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
-        : <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />}
-    </svg>
-  )
 }
 
 function formatDateTime(iso: string): string {
@@ -172,50 +161,6 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 function toLocalInput(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0')
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes())
-}
-
-function WorkspaceRow({ w, isCurrent, isExpanded, deviceCount, onToggle, onSwitch, onAdd, t }: {
-  w: { path: string; title: string; createdAt: string }
-  isCurrent: boolean
-  isExpanded: boolean
-  deviceCount: number
-  onToggle: () => void
-  onSwitch: () => void
-  onAdd: () => void
-  t: T
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
-  const show = () => {
-    const el = ref.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    setPos({ x: r.right + 10, y: r.top + r.height / 2 })
-  }
-  return (
-    <>
-      <div
-        ref={ref}
-        className={'ws-row' + (isCurrent ? ' current' : '')}
-        onClick={isCurrent ? onToggle : onSwitch}
-        onMouseEnter={show}
-        onMouseLeave={() => setPos(null)}
-      >
-        <FolderIcon open={isExpanded} />
-        <span className="ws-chevron">{isExpanded ? '▾' : '▸'}</span>
-        <span className="ws-title">{w.title}</span>
-        {isCurrent && <span className="ws-count">{deviceCount}</span>}
-        {isCurrent && <button className="ws-row-add" onClick={(e) => { e.stopPropagation(); onAdd() }} title={t('newDevice')} aria-label={t('newDevice')}>＋</button>}
-      </div>
-      {pos && (
-        <div className="ws-hover-card" style={{ left: pos.x, top: pos.y }}>
-          <div className="ws-hover-title">{w.title}</div>
-          <div className="ws-hover-path">{w.path}</div>
-          {w.createdAt && <div className="ws-hover-time">{t('createdAt')} {formatDateTime(w.createdAt)}</div>}
-        </div>
-      )}
-    </>
-  )
 }
 
 interface RegView { value: string; label: string | null; covered: boolean; invalid: boolean; writable: boolean }
@@ -294,13 +239,10 @@ export default function App() {
   const [groups, setGroups] = useState<DeviceGroup[]>([])
   const [latest, setLatest] = useState<Record<string, LatestValue>>({})
   const [groupErrors, setGroupErrors] = useState<Record<number, string>>({})
-  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null)
-  const [showWorkspace, setShowWorkspace] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
-  const [wsExpanded, setWsExpanded] = useState(true)
   const [realtime, setRealtime] = useState<{ status: RealtimeStatus; attempt: number }>({ status: 'connecting', attempt: 0 })
   const [deviceConnected, setDeviceConnected] = useState<Record<number, boolean>>({})
-  const [view, setView] = useState<'monitor' | 'database'>('monitor')
+  const [view, setView] = useState<'monitor' | 'database' | 'raw'>('monitor')
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const selectedIdRef = useRef<number | null>(selectedId)
@@ -328,7 +270,6 @@ export default function App() {
       setDeviceConnected(map)
     }).catch(() => {})
   }, [])
-  const refreshWorkspace = useCallback(() => { api.get('/api/workspace').then(setWorkspace).catch(() => {}) }, [])
   const refreshRegisters = useCallback((id: number) => {
     api.get('/api/monitor_objects/' + id + '/groups').then(async (gs: Array<{ id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number }>) => {
       const out: DeviceGroup[] = []
@@ -340,7 +281,7 @@ export default function App() {
     }).catch(() => {})
   }, [])
 
-  useEffect(() => { refreshDevices(); refreshWorkspace() }, [refreshDevices, refreshWorkspace])
+  useEffect(() => { refreshDevices() }, [refreshDevices])
   useEffect(() => { if (selectedId != null) refreshRegisters(selectedId) }, [selectedId, refreshRegisters])
   useEffect(() => {
     const HEARTBEAT_MS = 10_000
@@ -393,7 +334,6 @@ export default function App() {
       }
       else if (msg.type === 'group-error') setGroupErrors((prev) => ({ ...prev, [msg.groupId]: msg.error }))
       else if (msg.type === 'group-ok') setGroupErrors((prev) => { const next = { ...prev }; delete next[msg.groupId]; return next })
-      else if (msg.type === 'workspace/changed') { setSelectedId(null); setLatest({}); setGroupErrors({}); refreshDevices(); refreshWorkspace() }
       else if (msg.type === 'config/changed') { refreshDevices(); if (selectedIdRef.current != null) refreshRegisters(selectedIdRef.current) }
       else if (msg.type === 'device/status') {
         if (Array.isArray(msg.states)) {
@@ -454,7 +394,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisible)
       if (ws) { const old = ws; ws = null; old.close() }
     }
-  }, [refreshDevices, refreshRegisters, refreshWorkspace])
+  }, [refreshDevices, refreshRegisters])
 
   const addDevice = useCallback(async (f: DeviceFields) => {
     if (!f.name || (f.transport !== 'rtu' && !f.ip)) return
@@ -476,17 +416,6 @@ export default function App() {
       refreshDevices()
     } catch { /* 忽略，避免未处理 rejection */ }
   }, [selectedId, refreshDevices, devices, t])
-
-  const switchWorkspace = useCallback(async (path: string) => {
-    await api.post('/api/workspace/switch', { path })
-    setShowWorkspace(false)
-    setWsExpanded(true)
-    setSelectedId(null)
-    setLatest({})
-    setGroupErrors({})
-    refreshDevices()
-    refreshWorkspace()
-  }, [refreshDevices, refreshWorkspace])
 
   const selected = devices.find((d) => d.id === selectedId) ?? null
 
@@ -534,14 +463,15 @@ export default function App() {
       <main className="main">
         <GlobalTabBar t={t} view={view} onChange={setView} />
         {view === 'database'
-          ? <DatabaseView t={t} />
-          : (selected
-            ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
-            : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
+          ? <DatabaseView t={t} device={selected} />
+          : view === 'raw'
+            ? <RawDataView t={t} device={selected} />
+            : (selected
+              ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+              : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
       </main>
 
       {showAdd && <DeviceModal t={t} initial={null} onClose={() => setShowAdd(false)} onSave={addDevice} />}
-      {showWorkspace && <WorkspaceModal t={t} workspace={workspace} onClose={() => setShowWorkspace(false)} onSwitch={switchWorkspace} />}
       {showSettings && <SettingsModal t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} onClose={() => setShowSettings(false)} />}
     </div>
   )
@@ -551,11 +481,12 @@ function EmptyState({ t, onAdd }: { t: T; onAdd: () => void }) {
   return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div><button className="btn primary" onClick={onAdd}>＋ {t('newDevice')}</button></div>
 }
 
-function GlobalTabBar({ t, view, onChange }: { t: T; view: 'monitor' | 'database'; onChange: (v: 'monitor' | 'database') => void }) {
+function GlobalTabBar({ t, view, onChange }: { t: T; view: 'monitor' | 'database' | 'raw'; onChange: (v: 'monitor' | 'database' | 'raw') => void }) {
   return (
     <div className="global-tab-bar">
       <button className={'global-tab' + (view === 'monitor' ? ' active' : '')} onClick={() => onChange('monitor')}>{t('tabMonitor')}</button>
       <button className={'global-tab' + (view === 'database' ? ' active' : '')} onClick={() => onChange('database')}>{t('tabDatabase')}</button>
+      <button className={'global-tab' + (view === 'raw' ? ' active' : '')} onClick={() => onChange('raw')}>{t('tabRaw')}</button>
     </div>
   )
 }
@@ -575,30 +506,31 @@ function fmtBytes(n: number | null | undefined): string {
   return v.toFixed(1) + ' ' + units[i]
 }
 
-function DatabaseView({ t }: { t: T }) {
+function DatabaseView({ t, device }: { t: T; device: Device | null }) {
   const [stats, setStats] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const load = useCallback(async () => {
+    if (!device) { setStats(null); setErr(null); return }
     setLoading(true); setErr(null)
-    try { setStats(await api.get('/api/stats')) } catch (e: any) { setErr(e?.message ?? String(e)) }
+    try { setStats(await api.get('/api/monitor_objects/' + device.id + '/stats')) } catch (e: any) { setErr(e?.message ?? String(e)) }
     finally { setLoading(false) }
-  }, [])
+  }, [device])
   useEffect(() => { void load() }, [load])
 
-  const hist = stats?.history
-  const meta = stats?.metadata
-  const files = stats?.files
   const retention = stats?.retention?.retention_seconds
-  const diskTotal = files ? (files.poll_duckdb ?? 0) + (files.poll_duckdb_wal ?? 0) + (files.config_db ?? 0) : null
   const retentionText = retention === 0 ? t('dbRetentionForever') : (retention != null ? t('dbRetentionDays').replace('{n}', String(Math.round(retention / 86400))) : '—')
+
+  if (!device) {
+    return <div className="db-view"><div className="hist-empty">{t('emptyHint')}</div></div>
+  }
 
   return (
     <div className="db-view">
       <div className="db-head">
         <div>
           <div className="db-title">{t('tabDatabase')}</div>
-          <div className="kv" style={{ wordBreak: 'break-all' }}>{stats?.workspace ?? ''}</div>
+          <div className="kv" style={{ wordBreak: 'break-all' }}>{device.name} · {device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · 超时 {device.timeoutMs ?? 3000}ms</div>
         </div>
         <div style={{ flex: 1 }} />
         <button className="btn" onClick={() => void load()} disabled={loading}>{loading ? '…' : t('dbRefresh')}</button>
@@ -608,49 +540,16 @@ function DatabaseView({ t }: { t: T }) {
       <div className="db-cards">
         <div className="db-card">
           <div className="db-card-title">{t('dbHistory')}</div>
-          <div className="db-big">{hist ? Number(hist.totalRows).toLocaleString() : '—'}</div>
+          <div className="db-big">{stats ? Number(stats.totalRows).toLocaleString() : '—'}</div>
           <div className="kv">{t('dbTotalRows')}</div>
         </div>
         <div className="db-card">
           <div className="db-card-title">{t('dbTimeSpan')}</div>
-          <div className="db-big" style={{ fontSize: 20, lineHeight: 1.4 }}>{hist ? fmtTs(hist.oldestTs) + ' → ' + fmtTs(hist.newestTs) : '—'}</div>
-        </div>
-        <div className="db-card">
-          <div className="db-card-title">{t('dbDiskUsage')}</div>
-          <div className="db-big">{fmtBytes(diskTotal)}</div>
-          <div className="kv">poll.duckdb {fmtBytes(files?.poll_duckdb)} · wal {fmtBytes(files?.poll_duckdb_wal)} · config.db {fmtBytes(files?.config_db)}</div>
+          <div className="db-big" style={{ fontSize: 20, lineHeight: 1.4 }}>{stats ? fmtTs(stats.oldestTs) + ' → ' + fmtTs(stats.newestTs) : '—'}</div>
         </div>
       </div>
 
-      {hist && hist.bufferPending > 0 && <div className="kv" style={{ marginBottom: 14 }}>{t('dbBufferHint').replace('{n}', String(hist.bufferPending))}</div>}
-
-      <div className="db-section">
-        <div className="db-section-title">{t('dbPerDevice')}</div>
-        {!hist || !Array.isArray(hist.byDevice) || hist.byDevice.length === 0 ? (
-          <div className="kv">{t('dbNoData')}</div>
-        ) : (
-          <table className="reg">
-            <thead><tr><th>{t('dbDevices')}</th><th>{t('dbTotalRows')}</th><th>{t('dbTimeSpan')}</th></tr></thead>
-            <tbody>
-              {hist.byDevice.map((d: any) => (
-                <tr key={d.objectId}><td>{d.name}</td><td className="value">{Number(d.rows).toLocaleString()}</td><td className="kv">{fmtTs(d.oldestTs)} → {fmtTs(d.newestTs)}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <div className="db-section">
-        <div className="db-section-title">{t('dbMetadata')}</div>
-        <div className="db-meta">
-          <span className="db-meta-item">{t('dbDevices')} <b>{meta?.devices ?? 0}</b></span>
-          <span className="db-meta-item">{t('dbGroups')} <b>{meta?.groups ?? 0}</b></span>
-          <span className="db-meta-item">{t('dbRegisters')} <b>{meta?.registers ?? 0}</b></span>
-          <span className="db-meta-item">{t('dbRules')} <b>{meta?.rules ?? 0}</b></span>
-          <span className="db-meta-item">{t('dbFirmwares')} <b>{meta?.firmwares ?? 0}</b></span>
-          <span className="db-meta-item">{t('dbLogs')} <b>{meta?.logs ?? 0}</b></span>
-        </div>
-      </div>
+      {stats && stats.bufferPending > 0 && <div className="kv" style={{ marginBottom: 14 }}>{t('dbBufferHint').replace('{n}', String(stats.bufferPending))}</div>}
 
       <div className="db-section">
         <div className="db-section-title">{t('dbRetention')}</div>
@@ -1337,6 +1236,56 @@ function ChartBody({ t, registers, selected, pts, status, error }: { t: T; regis
   )
 }
 
+function RawDataView({ t, device }: { t: T; device: Device | null }) {
+  const [frames, setFrames] = useState<any[]>([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [limit, setLimit] = useState(200)
+  const clampLimit = (v: number) => Math.max(1, Math.min(2000, Math.trunc(v) || 200))
+  const load = useCallback(async () => {
+    if (!device) { setFrames([]); setErr(null); return }
+    setBusy(true); setErr(null)
+    try { setFrames(await api.get('/api/monitor_objects/' + device.id + '/frames?limit=' + clampLimit(limit))) }
+    catch (e: any) { setErr(e?.message ?? String(e)) }
+    finally { setBusy(false) }
+  }, [device, limit])
+  useEffect(() => { void load(); const id = setInterval(() => { void load() }, 1000); return () => clearInterval(id) }, [load])
+  const clear = async () => { if (!device) return; try { await api.post('/api/monitor_objects/' + device.id + '/frames/clear', {}); await load() } catch { /* */ } }
+  const dir = (d: string) => d === 'tx' ? 'TX' : 'RX'
+  if (!device) return <div className="db-view"><div className="hist-empty">{t('emptyHint')}</div></div>
+  return (
+    <div>
+      <div className="toolbar">
+        <span className="kv">串口/TCP 原始报文（自动刷新 1s）</span>
+        <label className="kv">显示帧数
+          <input type="number" min={1} max={2000} value={limit}
+            style={{ width: 70, marginLeft: 6 }}
+            onChange={(e) => setLimit(clampLimit(Number(e.target.value)))}
+            onBlur={(e) => { const v = clampLimit(Number(e.target.value)); setLimit(v); void load() }} />
+        </label>
+        <div style={{ flex: 1 }} />
+        <button className="btn" onClick={() => void load()} disabled={busy}>{busy ? '…' : '刷新'}</button>
+        <button className="btn" onClick={() => void clear()}>清空</button>
+      </div>
+      {err && <div className="write-msg error">{err}</div>}
+      <div style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, maxHeight: '60vh', overflow: 'auto', background: 'var(--bg-2, #111)', color: 'var(--text-1, #eee)', borderRadius: 6, padding: 8 }}>
+        {frames.length === 0 ? <div className="kv">暂无原始帧（确认设备已连接并轮询）</div> : (
+          frames.map((f) => (
+            <div key={f.id} style={{ display: 'flex', gap: 10, padding: '1px 0', borderBottom: '1px solid var(--border-1, #222)' }}>
+              <span style={{ color: 'var(--text-3, #888)', minWidth: 72 }}>{formatLocalTs(f.timestamp).slice(11)}</span>
+              <span style={{ color: f.direction === 'tx' ? '#5fd7ff' : '#7ce08a', minWidth: 28, fontWeight: 600 }}>{dir(f.direction)}</span>
+              <span style={{ minWidth: 40, color: 'var(--text-2, #bbb)' }}>{f.slaveId != null ? 'slave ' + f.slaveId : ''}</span>
+              <span style={{ minWidth: 44, color: 'var(--text-2, #bbb)' }}>FC{f.functionCode ?? '?'}{f.isException ? ' (err ' + f.exceptionCode + ')' : ''}</span>
+              <span style={{ color: 'var(--text-3, #999)', minWidth: 40 }}>{f.byteLength}B</span>
+              <span style={{ wordBreak: 'break-all' }}>{f.hex ? f.hex.replace(/(..)/g, '$1 ').replace(/\s+$/, '') : ''}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 function FirmwareView({ t, device }: { t: T; device: Device }) {
   const [firmwares, setFirmwares] = useState<any[]>([])
   const [status, setStatus] = useState<any>({ state: 'idle' })
@@ -1510,7 +1459,8 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
   const [flowControl, setFlowControl] = useState(initial?.flowControl ?? 'none')
   const [slaveId, setSlaveId] = useState(initial ? String(initial.slaveId ?? 1) : '1')
   const [pollInterval, setPollInterval] = useState(initial ? String(initial.pollIntervalMs ?? 1000) : '1000')
-  const save = () => onSave({ name, ip, port: Number(port), transport, serialPath: transport === 'rtu' ? serialPath : '', baudRate: Number(baudRate) || 9600, parity, stopBits: Number(stopBits) || 1, dataBits: 8, flowControl, slaveId: Number(slaveId) || 1, pollIntervalMs: Number(pollInterval) || 1000 })
+  const [timeout, setTimeout_] = useState(initial ? String(initial.timeoutMs ?? 3000) : '3000')
+  const save = () => onSave({ name, ip, port: Number(port), transport, serialPath: transport === 'rtu' ? serialPath : '', baudRate: Number(baudRate) || 9600, parity, stopBits: Number(stopBits) || 1, dataBits: 8, flowControl, slaveId: Number(slaveId) || 1, pollIntervalMs: Number(pollInterval) || 1000, timeoutMs: Number(timeout) || 3000 })
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -1527,6 +1477,9 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
         <label>{t('pollIntervalLabel')}</label>
         <input value={pollInterval} onChange={(e) => setPollInterval(e.target.value)} placeholder="1000" />
         <div className="kv" style={{ marginBottom: 10 }}>{t('pollIntervalHint')}</div>
+        <label>{t('timeoutLabel')}</label>
+        <input value={timeout} onChange={(e) => setTimeout_(e.target.value)} placeholder="3000" />
+        <div className="kv" style={{ marginBottom: 10 }}>{t('timeoutHint')}</div>
         {transport === 'tcp' ? (
           <>
             <label>{t('ip')}</label>
@@ -1570,48 +1523,3 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
   )
 }
 
-function WorkspaceModal({ t, workspace, onClose, onSwitch }: {
-  t: T; workspace: WorkspaceInfo | null; onClose: () => void; onSwitch: (path: string) => void
-}) {
-  const [path, setPath] = useState(workspace?.current ?? '')
-  const [browse, setBrowse] = useState<{ path: string; parent: string | null; dirs: string[] } | null>(null)
-  const browseTo = async (p: string) => {
-    const b = await api.get('/api/workspace/browse?path=' + encodeURIComponent(p))
-    setBrowse(b)
-    setPath(b.path)
-  }
-  useEffect(() => { if (workspace?.current) void browseTo(workspace.current) }, [])
-  return (
-    <div className="modal-mask" onClick={onClose}>
-      <div className="modal ws-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <span>{t('switchWorkspace')}</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
-        </div>
-        <label>{t('wsPath')}</label>
-        <input value={path} onChange={(e) => setPath(e.target.value)} />
-        <div className="ws-browse">
-          {browse?.parent != null && <button className="btn ws-dir" onClick={() => void browseTo(browse.parent!)}>↑ {t('upFolder')}</button>}
-          {browse?.dirs.map((d) => (
-            <button key={d} className="btn ws-dir" onClick={() => void browseTo(browse.path + '/' + d)}>📁 {d}</button>
-          ))}
-        </div>
-        {workspace && workspace.recent.length > 0 && (
-          <>
-            <div className="sidebar-section">{t('recentWs')}</div>
-            {workspace.recent.map((r) => (
-              <div key={r.path} className="ws-recent" onClick={() => { setPath(r.path); void browseTo(r.path) }}>
-                <span className="ws-recent-title">{r.title}</span>
-                <span className="ws-recent-path">{r.path}</span>
-              </div>
-            ))}
-          </>
-        )}
-        <div className="modal-actions">
-          <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" onClick={() => onSwitch(path)}>{t('selectFolder')}</button>
-        </div>
-      </div>
-    </div>
-  )
-}

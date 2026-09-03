@@ -63,6 +63,7 @@ export function apply(ctx: Context, config: Config): void {
         flow_control: zz.string().optional(),
         slave_id: zz.number().optional(),
         poll_interval_ms: zz.number().optional(),
+        timeout_ms: zz.number().optional(),
         data_retain_seconds: zz.number().optional().nullable(),
       },
     }, async (args) => {
@@ -75,6 +76,7 @@ export function apply(ctx: Context, config: Config): void {
         transport,
         slaveId: args.slave_id ?? 1,
         pollIntervalMs: args.poll_interval_ms ?? 1000,
+        timeoutMs: args.timeout_ms ?? 3000,
         dataRetainSeconds: args.data_retain_seconds ?? null,
       }
       let ip = ''
@@ -96,6 +98,71 @@ export function apply(ctx: Context, config: Config): void {
       cfg.log('INFO', 'mcp', 'create device ' + obj.id + ' ' + name)
       // createObject 已 emit config/changed，poller 若在跑会自动 refreshSchedule 纳入该设备
       return { content: [{ type: 'text', text: JSON.stringify(obj) }] }
+    })
+
+    server.registerTool('update_device', {
+      title: 'Update device', description: '改设备连接/超时等字段（name/ip/port/serial_path/baud_rate/parity/slave_id/poll_interval_ms/timeout_ms…）；改完会重连该设备',
+      inputSchema: {
+        device_id: zz.number(),
+        name: zz.string().optional(),
+        ip: zz.string().optional(),
+        port: zz.number().optional(),
+        serial_path: zz.string().optional(),
+        baud_rate: zz.number().optional(),
+        parity: zz.string().optional(),
+        stop_bits: zz.number().optional(),
+        data_bits: zz.number().optional(),
+        flow_control: zz.string().optional(),
+        slave_id: zz.number().optional(),
+        poll_interval_ms: zz.number().optional(),
+        timeout_ms: zz.number().optional(),
+      },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      const fields: Record<string, unknown> = {}
+      const snake2camel: Record<string, string> = {
+        name: 'name', ip: 'ip', port: 'port', transport: 'transport',
+        serial_path: 'serialPath', baud_rate: 'baudRate', parity: 'parity', stop_bits: 'stopBits',
+        data_bits: 'dataBits', flow_control: 'flowControl', slave_id: 'slaveId',
+        poll_interval_ms: 'pollIntervalMs', timeout_ms: 'timeoutMs',
+      }
+      for (const [k, v] of Object.entries(args)) {
+        if (k === 'device_id' || v === undefined) continue
+        const mapped = snake2camel[k]
+        if (mapped) fields[mapped] = v
+      }
+      const updated = cfg.updateObject(args.device_id, fields)
+      try { await poller.reconnectDevice(args.device_id) } catch { /* 忽略 */ }
+      cfg.log('INFO', 'mcp', 'update device ' + args.device_id)
+      return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
+    })
+
+    server.registerTool('get_raw_frames', {
+      title: 'Get raw frames', description: '查设备串口/TCP 的原始 TX/RX 报文（最近 limit 帧，默认 200，上限 2000）：含时间/方向/slave/FC/hex',
+      inputSchema: { device_id: zz.number(), limit: zz.number().optional() },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      const limit = args.limit != null ? Math.max(0, Math.min(2000, Math.trunc(args.limit))) : 200
+      const frames = poller.getDeviceFrames?.(args.device_id, limit) ?? []
+      return { content: [{ type: 'text', text: JSON.stringify(frames) }] }
+    })
+
+    server.registerTool('clear_raw_frames', {
+      title: 'Clear raw frames', description: '清空设备的原始报文诊断缓冲（TX/RX 帧与统计）',
+      inputSchema: { device_id: zz.number() },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      poller.clearDeviceDiagnostics?.(args.device_id)
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, device_id: args.device_id }) }] }
+    })
+
+    server.registerTool('get_device_stats', {
+      title: 'Get device stats', description: '查单设备的历史采样统计：总行数 / 时间跨度 / 按数据区行数 / 保留时长',
+      inputSchema: { device_id: zz.number() },
+    }, async (args) => {
+      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      const s = await store.statsByObject(args.device_id)
+      return { content: [{ type: 'text', text: JSON.stringify(s) }] }
     })
 
     server.registerTool('list_registers', {
