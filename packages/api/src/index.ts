@@ -87,6 +87,7 @@ export function apply(ctx: Context, config: Config): void {
 
     // ── 固件上传（OTA，PRD 07）──────────────────────────────
     fastify.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req: any, body: any, done: any) => done(null, body))
+    fastify.addContentTypeParser('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', { parseAs: 'buffer' }, (_req: any, body: any, done: any) => done(null, body))
     fastify.get('/api/firmwares', async () => ota.listFirmwares())
     fastify.delete('/api/firmwares/:id', async (req: any) => ota.deleteFirmware(Number((req.params as any).id)))
     fastify.post('/api/firmware/upload', async (req: any, reply: any) => {
@@ -322,11 +323,26 @@ export function apply(ctx: Context, config: Config): void {
       const q = req.query as any
       const area = String(q.area ?? '')
       if (!['coil', 'discrete-input', 'holding-register', 'input-register'].includes(area)) return reply.code(400).send({ error: 'area is required' })
-      return store.query(Number(q.object_id), Number(q.address), String(q.start), String(q.end), area)
+      const limit = Number(q.limit ?? 0)
+      return store.query(Number(q.object_id), Number(q.address), String(q.start), String(q.end), area, limit > 0 ? limit : undefined)
     })
     fastify.get('/api/data/object', async (req: any) => {
       const q = req.query as any
-      return store.queryObject(Number(q.object_id), String(q.start), String(q.end))
+      const limit = Number(q.limit ?? 0)
+      return store.queryObject(Number(q.object_id), String(q.start), String(q.end), limit > 0 ? limit : undefined)
+    })
+    // 分页版：按时间戳分页，返回 { points, total, page, pageSize, hasMore }
+    fastify.get('/api/data/object/page', async (req: any) => {
+      const q = req.query as any
+      const page = Number(q.page ?? 0)
+      const pageSize = Number(q.page_size ?? 200)
+      return store.queryObjectPage(Number(q.object_id), String(q.start), String(q.end), Number.isFinite(page) ? page : 0, Number.isFinite(pageSize) ? pageSize : 200)
+    })
+    // 曲线版：整个时间范围降采样成 max_points 个时间桶（每桶每地址取最新值）
+    fastify.get('/api/data/object/curve', async (req: any) => {
+      const q = req.query as any
+      const mp = Number(q.max_points ?? 1000)
+      return store.queryObjectCurve(Number(q.object_id), String(q.start), String(q.end), Number.isFinite(mp) ? mp : 1000)
     })
 
     // ── WebSocket ───────────────────────────────────────────

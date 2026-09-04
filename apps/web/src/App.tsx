@@ -58,7 +58,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件', tabRaw: '原始数据', histTable: '表格',
     groupCount: '{n} 组',
     newGroup: '新建分组', importPointBook: '导入点位', exportPointBook: '导出点位', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', edit: '编辑', save: '保存', fcReadCoils: '读线圈', fcReadDiscrete: '读离散输入', fcReadHolding: '读保持寄存器', fcReadInput: '读输入寄存器',
-    histHint: '最近 1 小时数据', histStart: '开始时间', histEnd: '结束时间', histQuery: '查询', histLoading: '查询中…', histPrev: '上一页', histNext: '下一页', histTotal: '共 {n} 条', histPage: '第 {x}/{y} 页', noHistory: '暂无历史数据', colTime: '时间', histTruncated: '结果较多，仅显示最近 {n} 条', histIdle: '选择时间范围后点击「查询」', histEmpty: '该时间段暂无历史数据', histError: '查询失败', histRangeInvalid: '开始时间必须早于结束时间', histLast1h: '最近 1 小时', histLast6h: '最近 6 小时', histLast24h: '最近 24 小时', histToday: '今天', histQuick: '快捷', selectRegisters: '选择寄存器', selectAll: '全选', clearAll: '清空', histNoRegs: '未选择任何寄存器', curveHint: '最近 1 小时曲线', curveReset: '重置缩放', curveZoomHint: '框选放大：左上→右下拖拽；恢复：右下→左上拖拽', firmwareHint: '暂无固件，请先上传', fwUpload: '上传固件', fwAbort: '中止升级', fwState: '状态', fwUpgrade: '升级', fwUploaded: '固件已上传', fwUploadErr: '上传失败', fwStarted: '升级已发起', fwUpgradeErr: '升级发起失败', fwDelete: '删除', fwDeleted: '固件已删除', fwDeleteErr: '删除失败', confirmDeleteFirmware: '确定删除固件 {name} 吗？',
+    histHint: '最近 1 小时数据', histStart: '开始时间', histEnd: '结束时间', histQuery: '查询', histLoading: '查询中…', histPrev: '上一页', histNext: '下一页', histFirst: '首页', histLast: '末页', histTotal: '共 {n} 条', histPage: '第 {x}/{y} 页', noHistory: '暂无历史数据', colTime: '时间', histTruncated: '结果较多，仅显示最近 {n} 条', histIdle: '选择时间范围后点击「查询」', histEmpty: '该时间段暂无历史数据', histError: '查询失败', histRangeInvalid: '开始时间必须早于结束时间', histLast1h: '最近 1 小时', histLast6h: '最近 6 小时', histLast24h: '最近 24 小时', histToday: '今天', histQuick: '快捷', selectRegisters: '选择寄存器', selectAll: '全选', clearAll: '清空', histNoRegs: '未选择任何寄存器', curveHint: '最近 1 小时曲线', curveReset: '重置缩放', curveZoomHint: '框选放大：左上→右下拖拽；恢复：右下→左上拖拽', firmwareHint: '暂无固件，请先上传', fwUpload: '上传固件', fwAbort: '中止升级', fwState: '状态', fwUpgrade: '升级', fwUploaded: '固件已上传', fwUploadErr: '上传失败', fwStarted: '升级已发起', fwUpgradeErr: '升级发起失败', fwDelete: '删除', fwDeleted: '固件已删除', fwDeleteErr: '删除失败', confirmDeleteFirmware: '确定删除固件 {name} 吗？',
     appearance: '外观', themeLabel: '主题', light: '浅色', dark: '深色', system: '跟随系统',
     language: '语言',
     appInfo: '应用信息', version: '版本', arch: '架构', persistence: '持久化',
@@ -102,7 +102,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware', tabRaw: 'Raw', histTable: 'Table',
     groupCount: '{n} groups',
     newGroup: 'New Group', importPointBook: 'Import points', exportPointBook: 'Export points', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', edit: 'Edit', save: 'Save', fcReadCoils: 'Read Coils', fcReadDiscrete: 'Read Discrete Inputs', fcReadHolding: 'Read Holding', fcReadInput: 'Read Input',
-    histHint: 'Last 1 hour', histStart: 'Start', histEnd: 'End', histQuery: 'Query', histLoading: 'Loading…', histPrev: 'Prev', histNext: 'Next', histTotal: '{n} rows', histPage: 'Page {x}/{y}', noHistory: 'No history data', colTime: 'Time', histTruncated: 'Too many rows, showing latest {n}', histIdle: 'Select a time range and click Query', histEmpty: 'No history data in this range', histError: 'Query failed', histRangeInvalid: 'Start time must be before end time', histLast1h: 'Last 1h', histLast6h: 'Last 6h', histLast24h: 'Last 24h', histToday: 'Today', histQuick: 'Quick', selectRegisters: 'Select registers', selectAll: 'Select all', clearAll: 'Clear', histNoRegs: 'No registers selected', curveHint: 'Last 1 hour', curveReset: 'Reset zoom', curveZoomHint: 'Drag top-left→bottom-right to zoom in; drag back to reset', firmwareHint: 'No firmware uploaded yet', fwUpload: 'Upload firmware', fwAbort: 'Abort', fwState: 'State', fwUpgrade: 'Upgrade', fwUploaded: 'Firmware uploaded', fwUploadErr: 'Upload failed', fwStarted: 'Upgrade started', fwUpgradeErr: 'Upgrade failed', fwDelete: 'Delete', fwDeleted: 'Firmware deleted', fwDeleteErr: 'Delete failed', confirmDeleteFirmware: 'Delete firmware {name}?',
+    histHint: 'Last 1 hour', histStart: 'Start', histEnd: 'End', histQuery: 'Query', histLoading: 'Loading…', histPrev: 'Prev', histNext: 'Next', histFirst: 'First', histLast: 'Last', histTotal: '{n} rows', histPage: 'Page {x}/{y}', noHistory: 'No history data', colTime: 'Time', histTruncated: 'Too many rows, showing latest {n}', histIdle: 'Select a time range and click Query', histEmpty: 'No history data in this range', histError: 'Query failed', histRangeInvalid: 'Start time must be before end time', histLast1h: 'Last 1h', histLast6h: 'Last 6h', histLast24h: 'Last 24h', histToday: 'Today', histQuick: 'Quick', selectRegisters: 'Select registers', selectAll: 'Select all', clearAll: 'Clear', histNoRegs: 'No registers selected', curveHint: 'Last 1 hour', curveReset: 'Reset zoom', curveZoomHint: 'Drag top-left→bottom-right to zoom in; drag back to reset', firmwareHint: 'No firmware uploaded yet', fwUpload: 'Upload firmware', fwAbort: 'Abort', fwState: 'State', fwUpgrade: 'Upgrade', fwUploaded: 'Firmware uploaded', fwUploadErr: 'Upload failed', fwStarted: 'Upgrade started', fwUpgradeErr: 'Upgrade failed', fwDelete: 'Delete', fwDeleted: 'Firmware deleted', fwDeleteErr: 'Delete failed', confirmDeleteFirmware: 'Delete firmware {name}?',
     appearance: 'Appearance', themeLabel: 'Theme', light: 'Light', dark: 'Dark', system: 'System',
     language: 'Language',
     appInfo: 'App info', version: 'Version', arch: 'Architecture', persistence: 'Persistence',
@@ -623,7 +623,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
     const file = e?.target?.files?.[0]
     if (!file || !device) return
     try {
-      const r = await fetch('/api/monitor_objects/' + device.id + '/points/book', { method: 'POST', body: file })
+      const r = await fetch('/api/monitor_objects/' + device.id + '/points/book', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file })
       if (!r.ok) throw new Error('HTTP ' + r.status)
       const res = await r.json()
       onRefresh()
@@ -920,6 +920,11 @@ function HistoryView({ t, device, groups, registers }: { t: T; device: Device; g
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [showExport, setShowExport] = useState(false)
+  const [page, setPage] = useState(0)
+  const [curvePts, setCurvePts] = useState<Array<{ ts: string; area: string; address: number; rawValue: number }>>([])
+  const [curveLoading, setCurveLoading] = useState(false)
+  const [total, setTotal] = useState(0)
+  const [pageSize, setPageSize] = useState(200)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
   const selectedRegisters = registers.filter(r => selected.has(r.id))
 
@@ -928,6 +933,7 @@ function HistoryView({ t, device, groups, registers }: { t: T; device: Device; g
     setStart(toLocalInput(new Date(now.getTime() - 3600_000)))
     setEnd(toLocalInput(now))
     setPts([]); setRows([]); setStatus('idle'); setError(null)
+    setPage(0); setTotal(0)
   }, [device.id])
 
   const rangeInvalid = Boolean(start && end) && new Date(start) >= new Date(end)
@@ -941,19 +947,40 @@ function HistoryView({ t, device, groups, registers }: { t: T; device: Device; g
     setStart(toLocalInput(s)); setEnd(toLocalInput(now))
   }
 
-  const query = async () => {
+  const query = async (targetPage?: number) => {
     if (!canQuery) return
     setStatus('loading')
     try {
       const startIso = new Date(start).toISOString()
       const endIso = new Date(end).toISOString()
-      const data: Array<{ ts: string; area: string; address: number; rawValue: number }> = await api.get('/api/data/object?object_id=' + device.id + '&start=' + startIso + '&end=' + endIso)
+      const pg = targetPage ?? page
+      const res = await api.get('/api/data/object/page?object_id=' + device.id + '&start=' + startIso + '&end=' + endIso + '&page=' + pg + '&page_size=' + pageSize)
+      const data: Array<{ ts: string; area: string; address: number; rawValue: number }> = res.points ?? res
       setPts(data)
       setRows(deriveHistoryRows(data, registers, selectedRegisters))
+      setPage(pg)
+      setTotal(res.total ?? data.length)
       setStatus('done')
+      setError(null)
     } catch (e) {
       setError((e as any)?.message ?? String(e))
       setStatus('error')
+    }
+  }
+
+  // 曲线独立拉取整个时间范围的降采样数据（不受表格分页影响）
+  const loadCurve = async () => {
+    if (!canQuery) return
+    setCurveLoading(true)
+    try {
+      const startIso = new Date(start).toISOString()
+      const endIso = new Date(end).toISOString()
+      const data: Array<{ ts: string; area: string; address: number; rawValue: number }> = await api.get('/api/data/object/curve?object_id=' + device.id + '&start=' + startIso + '&end=' + endIso + '&max_points=1200')
+      setCurvePts(data)
+    } catch (e) {
+      setError((e as any)?.message ?? String(e))
+    } finally {
+      setCurveLoading(false)
     }
   }
 
@@ -970,11 +997,11 @@ function HistoryView({ t, device, groups, registers }: { t: T; device: Device; g
         <input className="hist-input" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
         <label className="hist-label">{t('histEnd')}</label>
         <input className="hist-input" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} />
-        <button className="btn primary" onClick={() => query()} disabled={status === 'loading' || !canQuery}>{status === 'loading' ? t('histLoading') : t('histQuery')}</button>
+        <button className="btn primary" onClick={() => { setPage(0); query(0); void loadCurve() }} disabled={status === 'loading' || !canQuery}>{status === 'loading' ? t('histLoading') : t('histQuery')}</button>
         <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
         <div className="seg seg-small">
           <button className={mode === 'table' ? 'selected' : ''} onClick={() => setMode('table')}>{t('histTable')}</button>
-          <button className={mode === 'chart' ? 'selected' : ''} onClick={() => setMode('chart')}>{t('tabCurve')}</button>
+          <button className={mode === 'chart' ? 'selected' : ''} onClick={() => { setMode('chart'); void loadCurve() }}>{t('tabCurve')}</button>
         </div>
         <div style={{ flex: 1 }} />
         <button className="btn" onClick={() => setShowExport(true)} disabled={!canQuery}>{t('export')}</button>
@@ -990,19 +1017,16 @@ function HistoryView({ t, device, groups, registers }: { t: T; device: Device; g
       </div>
       {showExport && <ExportModal t={t} onClose={() => setShowExport(false)} onPick={(fmt) => { doExport(fmt); setShowExport(false) }} />}
       {rangeInvalid && <div className="hist-empty warn">{t('histRangeInvalid')}</div>}
-      {!rangeInvalid && mode === 'table' && <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={status} error={error} />}
-      {!rangeInvalid && mode === 'chart' && <ChartBody t={t} registers={registers} selected={selected} pts={pts} status={status} error={error} />}
+      {!rangeInvalid && mode === 'table' && <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={status} error={error} page={page} total={total} pageSize={pageSize} onPageChange={(pg) => query(pg)} />}
+      {!rangeInvalid && mode === 'chart' && <ChartBody t={t} registers={registers} selected={selected} pts={curvePts} loading={curveLoading} status={status} error={error} />}
     </div>
   )
 }
 
-function HistoryTableBody({ t, rows, selectedRegisters, status, error }: { t: T; rows: Array<{ ts: string; values: Record<number, string> }>; selectedRegisters: Register[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null }) {
-  const [page, setPage] = useState(1)
-  useEffect(() => { setPage(1) }, [rows])
-  const PAGE_SIZE = 200
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
-  const currentPage = Math.min(Math.max(1, page), totalPages)
-  const shown = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+function HistoryTableBody({ t, rows, selectedRegisters, status, error, page, total, pageSize, onPageChange }: { t: T; rows: Array<{ ts: string; values: Record<number, string> }>; selectedRegisters: Register[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null; page: number; total: number; pageSize: number; onPageChange: (page: number) => void }) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const currentPage = Math.min(Math.max(0, page), totalPages - 1)
+  const shown = rows
 
   return (
     <>
@@ -1022,10 +1046,12 @@ function HistoryTableBody({ t, rows, selectedRegisters, status, error }: { t: T;
             </tbody>
           </table>
           <div className="pager">
-            <span className="kv">{t('histTotal').replace('{n}', String(rows.length))}</span>
-            <button className="btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>{t('histPrev')}</button>
-            <span className="kv">{t('histPage').replace('{x}', String(currentPage)).replace('{y}', String(totalPages))}</span>
-            <button className="btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>{t('histNext')}</button>
+            <span className="kv">{t('histTotal').replace('{n}', String(total))}</span>
+            <button className="btn" onClick={() => onPageChange(0)} disabled={currentPage <= 0}>{t('histFirst')}</button>
+            <button className="btn" onClick={() => onPageChange(currentPage - 1)} disabled={currentPage <= 0}>{t('histPrev')}</button>
+            <span className="kv">{t('histPage').replace('{x}', String(currentPage + 1)).replace('{y}', String(totalPages))}</span>
+            <button className="btn" onClick={() => onPageChange(currentPage + 1)} disabled={currentPage >= totalPages - 1}>{t('histNext')}</button>
+            <button className="btn" onClick={() => onPageChange(totalPages - 1)} disabled={currentPage >= totalPages - 1}>{t('histLast')}</button>
           </div>
         </>
       ))}
@@ -1093,11 +1119,13 @@ function tickTime(ts: number, span: number): string {
 }
 
 
-function ChartBody({ t, registers, selected, pts, status, error }: { t: T; registers: Register[]; selected: Set<number>; pts: Array<{ ts: string; area: string; address: number; rawValue: number }>; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null }) {
+function ChartBody({ t, registers, selected, pts, loading, status, error }: { t: T; registers: Register[]; selected: Set<number>; pts: Array<{ ts: string; area: string; address: number; rawValue: number }>; loading?: boolean; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null }) {
   const [view, setView] = useState<{ t0: number; t1: number; v0: number; v1: number } | null>(null)
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
-  const [size, setSize] = useState({ w: 900, h: 320 })
+  const [size, setSize] = useState({ w: 900, h: 420 })
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const plotRef = useRef<HTMLDivElement | null>(null)
+  const roRef = useRef<ResizeObserver | null>(null)
 
   const hasData = pts.length > 0
   const showChart = hasData && selected.size > 0
@@ -1105,19 +1133,24 @@ function ChartBody({ t, registers, selected, pts, status, error }: { t: T; regis
   // 新查询数据到达时重置框选缩放
   useEffect(() => { setView(null) }, [pts])
 
-  useEffect(() => {
-    if (!showChart) return
-    const el = svgRef.current
+  // unmount 时断开 ResizeObserver
+  useEffect(() => () => { roRef.current?.disconnect() }, [])
+
+  // 用 callback ref：在 .chart-plot 真正挂载时测量，避免因 loading/status 提前 return 导致 ref 为空的时机问题
+  const setPlotRef = useCallback((el: HTMLDivElement | null) => {
+    plotRef.current = el
+    roRef.current?.disconnect()
     if (!el) return
     const measure = () => {
       const r = el.getBoundingClientRect()
-      if (r.width > 10 && r.height > 10) setSize({ w: r.width, h: r.height })
+      const w = Math.round(r.width), h = Math.round(r.height)
+      if (w > 10 && h > 10) setSize({ w, h })
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
-    return () => ro.disconnect()
-  }, [showChart])
+    roRef.current = ro
+  }, [])
 
   const W = size.w, H = size.h
   const L = 60, R = 14, T = 12, B = 28 // 四周留白：左=Y 轴标签，下=X 轴标签
@@ -1159,12 +1192,14 @@ function ChartBody({ t, registers, selected, pts, status, error }: { t: T; regis
   const y = (v: number) => H - B - (vMax === vMin ? 0 : (v - vMin) / (vMax - vMin)) * plotH
   const path = (arr: Array<[number, number]>) => arr.map(([ts, v], i) => (i === 0 ? 'M' : 'L') + x(ts).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ')
 
-  const yTickCount = Math.max(4, Math.min(16, Math.round(plotH / 36)))
-  const xTickCount = Math.max(4, Math.min(20, Math.round(plotW / 72)))
+  // 刻度数量随容器尺寸自适应：X 轴每 ~80px 一个，Y 轴每 ~36px 一个
+  const xTickCount = Math.max(3, Math.min(30, Math.round(plotW / 80)))
+  const yTickCount = Math.max(3, Math.min(20, Math.round(plotH / 36)))
   const yTickVals = hasSeries ? yTicks(vMin, vMax, yTickCount) : []
   const xTickVals = hasSeries ? timeTicks(tMin, tMax, xTickCount) : []
   const span = tMax - tMin
 
+  // SVG 无 viewBox，用户坐标 = CSS 像素，鼠标位置直接减矩形左上角
   const toSvg = (clientX: number, clientY: number) => {
     const rect = svgRef.current?.getBoundingClientRect()
     if (!rect) return { x: 0, y: 0 }
@@ -1173,22 +1208,23 @@ function ChartBody({ t, registers, selected, pts, status, error }: { t: T; regis
 
   if (status === 'idle') return <div className="hist-empty">{t('histIdle')}</div>
   if (status === 'error') return <div className="hist-empty warn">{t('histError')} {error}</div>
-  if (status === 'loading') return null
+  if (status === 'loading' || loading) return null
   if (!hasData) return <div className="hist-empty">{t('histEmpty')}</div>
   if (selected.size === 0) return <div className="hist-empty">{t('histNoRegs')}</div>
   return (
     <div className="chart-wrap">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             <div className="chart-hint" style={{ marginBottom: 0 }}>{t('curveZoomHint')}</div>
             <div style={{ flex: 1 }} />
             {view && <button className="btn" onClick={() => setView(null)}>{t('curveReset')}</button>}
           </div>
-          <svg
-            ref={svgRef}
-            viewBox={'0 0 ' + W + ' ' + H}
-            preserveAspectRatio="none"
-            style={{ width: '100%', height: 'max(200px, calc(100vh - 280px))', display: 'block', cursor: 'crosshair', userSelect: 'none', WebkitUserSelect: 'none' }}
-            onMouseDown={(e) => { if (!hasSeries) return; const p = toSvg(e.clientX, e.clientY); setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }) }}
+          <div className="chart-plot" ref={setPlotRef} style={{ width: '100%', height: 'calc(100vh - 330px)', minHeight: 260 }}>
+            <svg
+              ref={svgRef}
+              width={W}
+              height={H}
+              style={{ display: 'block', cursor: 'crosshair', userSelect: 'none', WebkitUserSelect: 'none' }}
+              onMouseDown={(e) => { if (!hasSeries) return; const p = toSvg(e.clientX, e.clientY); setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }) }}
             onMouseMove={(e) => { if (!drag) return; const p = toSvg(e.clientX, e.clientY); setDrag({ ...drag, x1: p.x, y1: p.y }) }}
             onMouseUp={() => {
               if (!drag) return
@@ -1228,7 +1264,8 @@ function ChartBody({ t, registers, selected, pts, status, error }: { t: T; regis
             {drag && (
               <rect x={Math.min(drag.x0, drag.x1)} y={Math.min(drag.y0, drag.y1)} width={Math.abs(drag.x1 - drag.x0)} height={Math.abs(drag.y1 - drag.y0)} className="zoom-box" />
             )}
-          </svg>
+            </svg>
+          </div>
           <div className="legend">
             {series.map(s => { const r = registers.find(rr => rr.id === s.id); return <span key={s.id} className="legend-item"><span className="legend-swatch" style={{ background: s.color }} />{r?.alias ?? s.id}</span> })}
           </div>

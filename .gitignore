@@ -17,3 +17,10 @@ test-ws-*/
 # DSH 会话备份
 dsh-session-*.zip
 
+# 调试临时脚本 / esbuild 误写产物
+/_*.mjs
+/_*.cjs
+/_*.ts
+/NUL.css
+/NUL
+

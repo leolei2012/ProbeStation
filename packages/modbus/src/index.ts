@@ -39,6 +39,50 @@ export const Config: z<Config> = z.object({
 
 const EXC_MSG: Record<number, string> = { 1: 'Illegal Function', 2: 'Illegal Data Address', 3: 'Illegal Data Value', 4: 'Slave Device Failure', 5: 'Acknowledge', 6: 'Slave Device Busy', 8: 'Memory Parity Error', 10: 'Gateway Path Unavailable', 11: 'Gateway Target Failed to Respond' }
 
+/** Modbus RTU CRC16（poly 0xA001，init 0xFFFF），返回 uint16。 */
+function crc16(buf: Buffer): number {
+  let crc = 0xffff
+  for (let i = 0; i < buf.length; i++) {
+    crc ^= buf[i]
+    for (let j = 0; j < 8; j++) crc = (crc & 1) ? (crc >> 1) ^ 0xa001 : crc >> 1
+  }
+  return crc & 0xffff
+}
+
+/**
+ * 按功能码重建「即将发送」的请求帧（用于驱动层自记录 TX，不依赖 jsmodbus 内部 write）：
+ * 读 FC01/02/03/04 用 (start, count)；写 FC05/06/15/16 用 (start, values)。
+ * TCP 返回完整 MBAP；RTU 返回 addr + PDU + crc16。
+ */
+function buildRequestFrame(transport: 'tcp' | 'rtu', fc: number, slaveId: number, start: number, count: number, values?: number[] | boolean[]): Buffer {
+  const u16 = (n: number) => Buffer.from([(n >> 8) & 0xff, n & 0xff])
+  let pdu = Buffer.from([fc, (start >> 8) & 0xff, start & 0xff])
+  if (fc >= 1 && fc <= 4) {
+    pdu = Buffer.concat([pdu, u16(count)])
+  } else if (fc === 5 || fc === 6) {
+    const bits: number[] = values ? values.map((v) => Number(Boolean(v))) : [0]
+    pdu = Buffer.concat([pdu, Buffer.from([(bits[0] ? 0xff : 0x00), 0x00])])
+  } else if (fc === 15 || fc === 16) {
+    if (fc === 15) {
+      const bits = (values ?? []).map((v) => Boolean(v))
+      const byteCount = Math.ceil(bits.length / 8)
+      const data = Buffer.alloc(byteCount)
+      bits.forEach((b, i) => { if (b) data[i >> 3] |= (1 << (i & 7)) })
+      pdu = Buffer.concat([pdu, u16(bits.length), Buffer.from([byteCount]), data])
+    } else {
+      const regs = (values ?? []).map((v) => Number(v))
+      pdu = Buffer.concat([pdu, u16(regs.length), Buffer.from([regs.length * 2]), Buffer.concat(regs.map((v) => u16(v & 0xffff)))])
+    }
+  }
+  if (transport === 'tcp') {
+    const len = 1 + pdu.length
+    return Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), u16(len), Buffer.from([slaveId]), pdu])
+  }
+  const body = Buffer.concat([Buffer.from([slaveId]), pdu])
+  const c = crc16(body)
+  return Buffer.concat([body, Buffer.from([c & 0xff, (c >> 8) & 0xff])])
+}
+
 /** 连接参数：TCP 用 ip/port，RTU 用 serialPath + 串口参数。 */
 export interface ConnectOptions {
   transport?: string
@@ -167,6 +211,12 @@ class JsmodbusDriver implements ModbusDriver {
     this.diagnostics = diagnostics ?? new ModbusDiagnostics('tcp', config.frameBufferSize ?? 2000, identity)
   }
 
+  /** 驱动层自记录 TX（TCP 请求；不依赖 jsmodbus 内部 write）。 */
+  private recordTx(fc: number, slaveId: number, start: number, count: number, values?: number[] | boolean[]): void {
+    const frame = buildRequestFrame('tcp', fc, slaveId, start, count, values)
+    this.diagnostics.recordFrame('tx', frame)
+  }
+
   async connect(opts: ConnectOptions): Promise<void> {
     this.host = opts.ip ?? ''
     this.port = opts.port ?? 502
@@ -210,6 +260,7 @@ class JsmodbusDriver implements ModbusDriver {
 
   async readCoils(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<boolean[]> {
     const started = Date.now()
+    this.recordTx(1, slaveId, address, count)
     try {
       const res = await (await this.getClient(slaveId, timeoutMs)).readCoils(address, count)
       const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
@@ -218,6 +269,7 @@ class JsmodbusDriver implements ModbusDriver {
 
   async readDiscreteInputs(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<boolean[]> {
     const started = Date.now()
+    this.recordTx(2, slaveId, address, count)
     try {
       const res = await (await this.getClient(slaveId, timeoutMs)).readDiscreteInputs(address, count)
       const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
@@ -226,6 +278,7 @@ class JsmodbusDriver implements ModbusDriver {
 
   async readHoldingRegisters(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<number[]> {
     const started = Date.now()
+    this.recordTx(3, slaveId, address, count)
     try {
       const res = await (await this.getClient(slaveId, timeoutMs)).readHoldingRegisters(address, count)
       const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
@@ -234,6 +287,7 @@ class JsmodbusDriver implements ModbusDriver {
 
   async readInputRegisters(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<number[]> {
     const started = Date.now()
+    this.recordTx(4, slaveId, address, count)
     try {
       const res = await (await this.getClient(slaveId, timeoutMs)).readInputRegisters(address, count)
       const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
@@ -242,6 +296,7 @@ class JsmodbusDriver implements ModbusDriver {
 
   async writeRegister(address: number, value: number, slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
+    this.recordTx(6, slaveId, address, 1, [value])
     try {
       const res = await (await this.getClient(slaveId, timeoutMs)).writeSingleRegister(address, value)
       toValues(res.response.body)
@@ -251,6 +306,7 @@ class JsmodbusDriver implements ModbusDriver {
 
   async writeRegisters(address: number, values: number[], slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
+    this.recordTx(16, slaveId, address, values.length, values)
     try {
       const res = await (await this.getClient(slaveId, timeoutMs)).writeMultipleRegisters(address, values)
       toValues(res.response.body)
@@ -260,6 +316,7 @@ class JsmodbusDriver implements ModbusDriver {
 
   async writeCoil(address: number, value: boolean, slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
+    this.recordTx(5, slaveId, address, 1, [value])
     try {
       const res = await (await this.getClient(slaveId, timeoutMs)).writeSingleCoil(address, value)
       toBits(res.response.body) // FC05/FC15 响应无数据，仅校验异常
@@ -269,6 +326,7 @@ class JsmodbusDriver implements ModbusDriver {
 
   async writeCoils(address: number, values: boolean[], slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
+    this.recordTx(15, slaveId, address, values.length, values)
     try {
       const res = await (await this.getClient(slaveId, timeoutMs)).writeMultipleCoils(address, values)
       toBits(res.response.body)
@@ -313,6 +371,12 @@ export class SerialDriver implements ModbusDriver {
     identity: DiagnosticsIdentity = {},
     diagnostics?: ModbusDiagnostics,
   ) { this.diagnostics = diagnostics ?? new ModbusDiagnostics('rtu', config.frameBufferSize ?? 2000, identity) }
+
+  /** 驱动层自记录 TX（RTU 请求；addr + PDU + crc16）。 */
+  private recordTx(fc: number, slaveId: number, start: number, count: number, values?: number[] | boolean[]): void {
+    const frame = buildRequestFrame('rtu', fc, slaveId, start, count, values)
+    this.diagnostics.recordFrame('tx', frame)
+  }
 
   async connect(opts: ConnectOptions): Promise<void> {
     await this.disconnect()
@@ -425,6 +489,7 @@ export class SerialDriver implements ModbusDriver {
 
   async readCoils(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<boolean[]> {
     const started = Date.now()
+    this.recordTx(1, slaveId, address, count)
     try {
       const res = await this.getClient(slaveId, timeoutMs).readCoils(address, count)
       const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
@@ -433,6 +498,7 @@ export class SerialDriver implements ModbusDriver {
 
   async readDiscreteInputs(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<boolean[]> {
     const started = Date.now()
+    this.recordTx(2, slaveId, address, count)
     try {
       const res = await this.getClient(slaveId, timeoutMs).readDiscreteInputs(address, count)
       const values = toBits(res.response.body).slice(0, count); this.diagnostics.recordSuccess(Date.now() - started); return values
@@ -441,6 +507,7 @@ export class SerialDriver implements ModbusDriver {
 
   async readHoldingRegisters(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<number[]> {
     const started = Date.now()
+    this.recordTx(3, slaveId, address, count)
     try {
       const res = await this.getClient(slaveId, timeoutMs).readHoldingRegisters(address, count)
       const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
@@ -449,6 +516,7 @@ export class SerialDriver implements ModbusDriver {
 
   async readInputRegisters(address: number, count: number, slaveId = 1, timeoutMs?: number): Promise<number[]> {
     const started = Date.now()
+    this.recordTx(4, slaveId, address, count)
     try {
       const res = await this.getClient(slaveId, timeoutMs).readInputRegisters(address, count)
       const values = toValues(res.response.body); this.diagnostics.recordSuccess(Date.now() - started); return values
@@ -457,6 +525,7 @@ export class SerialDriver implements ModbusDriver {
 
   async writeRegister(address: number, value: number, slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
+    this.recordTx(6, slaveId, address, 1, [value])
     try {
       const res = await this.getClient(slaveId, timeoutMs).writeSingleRegister(address, value)
       toValues(res.response.body)
@@ -466,6 +535,7 @@ export class SerialDriver implements ModbusDriver {
 
   async writeRegisters(address: number, values: number[], slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
+    this.recordTx(16, slaveId, address, values.length, values)
     try {
       const res = await this.getClient(slaveId, timeoutMs).writeMultipleRegisters(address, values)
       toValues(res.response.body)
@@ -475,6 +545,7 @@ export class SerialDriver implements ModbusDriver {
 
   async writeCoil(address: number, value: boolean, slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
+    this.recordTx(5, slaveId, address, 1, [value])
     try {
       const res = await this.getClient(slaveId, timeoutMs).writeSingleCoil(address, value)
       toBits(res.response.body) // FC05/FC15 响应无数据，仅校验异常
@@ -484,6 +555,7 @@ export class SerialDriver implements ModbusDriver {
 
   async writeCoils(address: number, values: boolean[], slaveId = 1, timeoutMs?: number): Promise<void> {
     const started = Date.now()
+    this.recordTx(15, slaveId, address, values.length, values)
     try {
       const res = await this.getClient(slaveId, timeoutMs).writeMultipleCoils(address, values)
       toBits(res.response.body)

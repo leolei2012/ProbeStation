@@ -1,7 +1,7 @@
 import type { Context } from 'cordis'
 import z from 'schemastery'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
-import type { ModbusArea } from '@probebench/core'
+import { localTs, type ModbusArea } from '@probebench/core'
 
 /** Cordis plugin name. */
 export const name = 'store'
@@ -78,6 +78,8 @@ export class DuckDBStore {
     // 迁移：旧表用 register_id 列
     try { await conn.run(`ALTER TABLE poll_data RENAME COLUMN register_id TO address`) } catch { /* 已是 address 或表刚建 */ }
     try { await conn.run(`ALTER TABLE poll_data ADD COLUMN area VARCHAR DEFAULT 'holding-register'`) } catch { /* 已迁移或新表 */ }
+    // 历史查询按 (object_id, ts) 过滤排序，建索引避免大表全表扫描拖慢实时/查询
+    try { await conn.run(`CREATE INDEX IF NOT EXISTS idx_poll_object_ts ON poll_data(object_id, ts)`) } catch { /* 索引创建失败不阻断启动 */ }
     return conn
   }
 
@@ -160,62 +162,192 @@ export class DuckDBStore {
   }
 
   /** Query the cold tier for all addresses of one object over a time range. */
+  /** 把外部传入的 start/end（可能带 Z 的 UTC，或无时区的本地时间）归一成 UTC ISO，供 SQL 比较。 */
+  private normalizeToUtc(s: string): string {
+    if (!s) return ''
+    const d = new Date(s)
+    if (Number.isNaN(d.getTime())) return s
+    // 无时区后缀视为服务器本地时间 → 转 UTC；带 Z/±offset 由 Date 直接解析为绝对时刻
+    return d.toISOString()
+  }
+
   async queryObject(
-    objectId: number, start: string, end: string,
+    objectId: number, start: string, end: string, limit?: number,
   ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string }>> {
     const conn = await this.ready
+    const startUtc = this.normalizeToUtc(start)
+    const endUtc = this.normalizeToUtc(end)
+    const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
     const reader = await conn.runAndReadAll(
       `SELECT ts, area, address, raw_value, quality FROM poll_data
        WHERE object_id = $objectId AND ts >= $start AND ts <= $end
-       ORDER BY ts`,
-      { objectId, start, end },
+       ORDER BY ts
+       LIMIT $limit`,
+      { objectId, start: startUtc, end: endUtc, limit: limitClamped },
     )
     const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown }>
-    return rows.map(r => ({ ts: String(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
+    return rows.map(r => ({ ts: localTs(String(r.ts)), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
   }
 
-  /** 全局快照键统一为 objectId:area:address。 */
+  /** 全局快照键统一为 objectId:area:address。timestamp 输出为服务器本地时间。 */
   getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string }> {
     const out: Record<string, { rawValue: number; quality: string; timestamp: string }> = {}
-    for (const [k, v] of this.latest) out[k] = v
+    for (const [k, v] of this.latest) out[k] = { ...v, timestamp: localTs(v.timestamp) }
     return out
   }
 
-  /** 单设备、单数据区的最新快照（按地址键控）。 */
+  /** 单设备、单数据区的最新快照（按地址键控）。timestamp 输出为服务器本地时间。 */
   getLatestByObject(objectId: number, area: ModbusArea): Record<number, { rawValue: number; quality: string; timestamp: string }> {
     const out: Record<number, { rawValue: number; quality: string; timestamp: string }> = {}
     const prefix = `${objectId}:${area}:`
     for (const [k, v] of this.latest) {
-      if (k.startsWith(prefix)) out[Number(k.slice(prefix.length))] = v
+      if (k.startsWith(prefix)) out[Number(k.slice(prefix.length))] = { ...v, timestamp: localTs(v.timestamp) }
     }
     return out
   }
 
-  /** 单设备四数据区快照，键统一为 area:address。 */
+  /** 单设备四数据区快照，键统一为 area:address。timestamp 输出为服务器本地时间。 */
   getLatestByObjectAll(objectId: number): Record<string, { rawValue: number; quality: string; timestamp: string }> {
     const out: Record<string, { rawValue: number; quality: string; timestamp: string }> = {}
     const prefix = objectId + ':'
     for (const [k, v] of this.latest) {
       if (!k.startsWith(prefix)) continue
       const key = k.slice(prefix.length)
-      out[key] = v
+      out[key] = { ...v, timestamp: localTs(v.timestamp) }
     }
     return out
   }
 
+  /**
+   * 按「时间戳」分页查询单设备历史原始点（冷层）。原始点每地址一行，同一时间戳下会有多条；
+   * 这里先按时间戳去重分页，再取该页时间戳对应的全部原始点，避免固定 limit 卡在窗口最开头的几行。
+   * 返回 { points, total, page, pageSize, hasMore }。points 的 ts 已转服务器本地时间。
+   */
+  async queryObjectPage(
+    objectId: number, start: string, end: string, page = 0, pageSize = 200,
+  ): Promise<{ points: Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string }>; total: number; page: number; pageSize: number; hasMore: boolean }> {
+    const conn = await this.ready
+    const startUtc = this.normalizeToUtc(start)
+    const endUtc = this.normalizeToUtc(end)
+    const size = Math.max(1, Math.min(10000, Math.trunc(pageSize) || 200))
+    const p = Math.max(0, Math.trunc(page) || 0)
+
+    // 1) 时间戳去重偏移分页（升序，最早的在前）
+    const tsReader = await conn.runAndReadAll(
+      `SELECT DISTINCT ts FROM poll_data
+       WHERE object_id = $objectId AND ts >= $start AND ts <= $end
+       ORDER BY ts ASC
+       LIMIT $size OFFSET $offset`,
+      { objectId, start: startUtc, end: endUtc, size, offset: p * size },
+    )
+    const tsRows = tsReader.getRowObjects() as Array<{ ts: unknown }>
+    const pageTs = tsRows.map(r => String(r.ts))
+
+    // 2) 总数（去重时间戳数）
+    const cntReader = await conn.runAndReadAll(
+      `SELECT COUNT(DISTINCT ts) AS c FROM poll_data
+       WHERE object_id = $objectId AND ts >= $start AND ts <= $end`,
+      { objectId, start: startUtc, end: endUtc },
+    )
+    const total = Number(cntReader.getRowObjects()[0]?.c ?? 0)
+
+    if (pageTs.length === 0) return { points: [], total, page: p, pageSize: size, hasMore: false }
+
+    // 3) 取该页时间戳对应的全部原始点
+    const ptsReader = await conn.runAndReadAll(
+      `SELECT ts, area, address, raw_value, quality FROM poll_data
+       WHERE object_id = $objectId AND ts >= $lo AND ts <= $hi
+       ORDER BY ts ASC, address ASC`,
+      { objectId, lo: pageTs[0], hi: pageTs[pageTs.length - 1] },
+    )
+    const rows = ptsReader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown }>
+    const points = rows.map(r => ({
+      ts: localTs(String(r.ts)),
+      area: String(r.area ?? 'holding-register') as ModbusArea,
+      address: Number(r.address),
+      rawValue: Number(r.raw_value),
+      quality: String(r.quality ?? ''),
+    }))
+    return { points, total, page: p, pageSize: size, hasMore: p * size + pageTs.length < total }
+  }
+
   /** Query the cold tier for a single address over a time range. */
   async query(
-    objectId: number, address: number, start: string, end: string, area: ModbusArea,
+    objectId: number, address: number, start: string, end: string, area: ModbusArea, limit?: number,
   ): Promise<Array<{ ts: string; rawValue: number; quality: string }>> {
     const conn = await this.ready
+    const startUtc = this.normalizeToUtc(start)
+    const endUtc = this.normalizeToUtc(end)
+    const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
     const reader = await conn.runAndReadAll(
       `SELECT ts, raw_value, quality FROM poll_data
        WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
-       ORDER BY ts`,
-      { objectId, area, address, start, end },
+       ORDER BY ts
+       LIMIT $limit`,
+      { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped },
     )
     const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown }>
-    return rows.map(r => ({ ts: String(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
+    return rows.map(r => ({ ts: localTs(String(r.ts)), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
+  }
+
+  /** 单地址查询 + offset 分页（升序，最早的在前），供 MCP 等需要翻完整大时间范围的场景。 */
+  async queryWithOffset(
+    objectId: number, address: number, start: string, end: string, area: ModbusArea, limit: number, offset = 0,
+  ): Promise<Array<{ ts: string; rawValue: number; quality: string }>> {
+    const conn = await this.ready
+    const startUtc = this.normalizeToUtc(start)
+    const endUtc = this.normalizeToUtc(end)
+    const limitClamped = Math.max(1, Math.min(200000, Math.trunc(limit)))
+    const off = Math.max(0, Math.trunc(offset) || 0)
+    const reader = await conn.runAndReadAll(
+      `SELECT ts, raw_value, quality FROM poll_data
+       WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
+       ORDER BY ts
+       LIMIT $limit OFFSET $off`,
+      { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped, off },
+    )
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown }>
+    return rows.map(r => ({ ts: localTs(String(r.ts)), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
+  }
+
+  /**
+   * 曲线降采样：把整个时间范围按 maxPoints 个时间桶聚合，每桶每地址取「桶内最新」的原始字。
+   * 用于曲线展示，避免把几十万原始点全拉到前端；返回点数 ≈ maxPoints 桶 × 地址数。
+   */
+  async queryObjectCurve(
+    objectId: number, start: string, end: string, maxPoints = 1000,
+  ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number }>> {
+    const conn = await this.ready
+    const startUtc = this.normalizeToUtc(start)
+    const endUtc = this.normalizeToUtc(end)
+    const sMs = Date.parse(startUtc)
+    const eMs = Date.parse(endUtc)
+    const spanMs = Number.isFinite(sMs) && Number.isFinite(eMs) ? Math.max(1, eMs - sMs) : 3600_000
+    const bucketMs = Math.max(1, Math.ceil(spanMs / Math.max(1, Math.trunc(maxPoints) || 1000)))
+    // 用 date_diff('millisecond', DATE '1970-01-01', ts) 得到 ts 的正确 UTC 相对毫秒（epoch_ms 会把无时区 TIMESTAMP 当作本地时区，产生 8 小时偏移）。
+    // 桶号作为桶的 UTC epoch 毫秒返回（bucketMs 列），在 JS 侧转 ISO/local，绕开 to_timestamp 的时区歧义。
+    const reader = await conn.runAndReadAll(
+      `SELECT
+         (floor(date_diff('millisecond', DATE '1970-01-01', ts) / $bucketMs) * $bucketMs) AS bucket_ms,
+         area, address,
+         arg_max(raw_value, ts) AS raw_value
+       FROM poll_data
+       WHERE object_id = $objectId AND ts >= $start AND ts <= $end
+       GROUP BY floor(date_diff('millisecond', DATE '1970-01-01', ts) / $bucketMs), area, address
+       ORDER BY bucket_ms, address`,
+      { objectId, start: startUtc, end: endUtc, bucketMs: Number(bucketMs) },
+    )
+    const rows = reader.getRowObjects() as Array<{ bucket_ms: unknown; area: unknown; address: unknown; raw_value: unknown }>
+    return rows.map(r => {
+      const bm = Number(r.bucket_ms)
+      const iso = Number.isFinite(bm) ? new Date(bm).toISOString() : ''
+      return {
+        ts: localTs(iso),
+        area: String(r.area ?? 'holding-register') as ModbusArea,
+        address: Number(r.address),
+        rawValue: Number(r.raw_value),
+      }
+    })
   }
 
   /** 单设备数据统计：总行数 / 时间跨度 / 按数据区分布 / 待落盘缓冲（供数据 tab 只显示当前设备）。 */
@@ -237,8 +369,8 @@ export class DuckDBStore {
     const byAreaRows = (await conn.runAndReadAll('SELECT area, COUNT(*) AS c FROM poll_data WHERE object_id = $objectId GROUP BY area ORDER BY c DESC', { objectId })).getRowObjects()
     return {
       totalRows,
-      oldestTs: str(span?.mn),
-      newestTs: str(span?.mx),
+      oldestTs: span?.mn == null ? null : localTs(String(span.mn)),
+      newestTs: span?.mx == null ? null : localTs(String(span.mx)),
       byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
       bufferPending: this.buffer.length,
       retention: { retention_seconds: this.getRetentionSeconds() },
@@ -265,9 +397,9 @@ export class DuckDBStore {
     const byAreaRows = (await conn.runAndReadAll('SELECT area, COUNT(*) AS c FROM poll_data GROUP BY area ORDER BY c DESC')).getRowObjects()
     return {
       totalRows,
-      oldestTs: str(span?.mn),
-      newestTs: str(span?.mx),
-      byDevice: byDeviceRows.map((r: any) => ({ objectId: num(r.object_id), rows: num(r.c), oldestTs: str(r.mn), newestTs: str(r.mx) })),
+      oldestTs: span?.mn == null ? null : localTs(String(span.mn)),
+      newestTs: span?.mx == null ? null : localTs(String(span.mx)),
+      byDevice: byDeviceRows.map((r: any) => ({ objectId: num(r.object_id), rows: num(r.c), oldestTs: r.mn == null ? null : localTs(String(r.mn)), newestTs: r.mx == null ? null : localTs(String(r.mx)) })),
       byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
       bufferPending: this.buffer.length,
     }

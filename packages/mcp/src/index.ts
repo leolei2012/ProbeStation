@@ -266,33 +266,31 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('query_history', {
-      title: 'Query history', description: '查某寄存器的时间范围历史时序（按 area+address 定位，含语义翻译）',
-      inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number(), start: zz.string(), end: zz.string() },
+      title: 'Query history', description: '查某寄存器的时间范围历史时序（按 area+address 定位）。返回每条含原始 16 位字 raw_value 与语义值 value（×factor+offset 或枚举 label）；limit 可选（默认 2000，上限 200000），分页用 offset 前移',
+      inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number(), start: zz.string(), end: zz.string(), limit: zz.number().optional(), offset: zz.number().optional() },
     }, async (args) => {
       const reg = findRegisterByAddress(args.device_id, args.area, args.address)
       if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
-      const points = await store.queryObject(args.device_id, args.start, args.end)
-      const rawByTs = new Map<string, Record<number, number>>()
-      const qualByTs = new Map<string, string>()
-      for (const p of points) {
-        if (p.area !== args.area) continue
-        if (!rawByTs.has(p.ts)) rawByTs.set(p.ts, {})
-        rawByTs.get(p.ts)![p.address] = p.rawValue
-        if (p.address === reg.startAddress) qualByTs.set(p.ts, p.quality)
-      }
-      const out: Array<{ ts: string; value: number | string | null; unit: string | null; label: string | null; quality: string | null }> = []
-      for (const [ts, rawByAddr] of rawByTs) {
-        const v = decodeRawByAddr([reg], rawByAddr).get(reg.id) ?? null
-        let value: number | string | null = v === null ? null : (typeof v === 'bigint' ? String(v) : v)
+      const limit = args.limit != null ? Math.max(1, Math.min(200000, Math.trunc(args.limit))) : 2000
+      const offset = args.offset != null ? Math.max(0, Math.trunc(args.offset)) : 0
+      // 单地址精确查询（走 (object_id, ts) 索引 + area/address 过滤），并支持 offset 分页，超大范围也能翻页取全。
+      const points = await store.queryWithOffset(args.device_id, args.address, args.start, args.end, args.area, limit, offset)
+      const sem = semanticOf(reg)
+      const width = registerWidth(reg.dataType ?? 'int16')
+      const out = points.map((p: { ts: string; rawValue: number; quality: string }) => {
+        // 单字类型直接解码；多字类型（width>1）需相邻地址，此处只返回起始地址的原始字，由消费端按 register_width 组合
+        let decoded: number | bigint | null = null
+        if (width === 1) decoded = decodeRawByAddr([reg], { [reg.startAddress]: p.rawValue }).get(reg.id) ?? null
+        let value: number | string | null = decoded === null ? null : (typeof decoded === 'bigint' ? String(decoded) : decoded)
         let unit: string | null = null
         let label: string | null = null
-        if (v != null && typeof v !== 'bigint') {
-          const s = resolveSemantic(semanticOf(reg), v)
+        if (decoded != null && typeof decoded !== 'bigint') {
+          const s = resolveSemantic(sem, decoded)
           value = s.value; unit = s.unit; label = s.label
         }
-        out.push({ ts, value, unit, label, quality: qualByTs.get(ts) ?? null })
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(out) }] }
+        return { ts: p.ts, raw_value: p.rawValue, value, unit, label, quality: p.quality, data_type: reg.dataType ?? 'int16', register_width: width, factor: sem.factor, offset: sem.offset }
+      })
+      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, alias: reg.alias, area: args.area, address: reg.startAddress, register_width: width, count: points.length, offset, points: out }) }] }
     })
 
     server.registerTool('write_register', {
