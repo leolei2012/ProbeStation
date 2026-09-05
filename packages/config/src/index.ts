@@ -174,7 +174,29 @@ export class ConfigStore {
     return this.getGroup(id)!
   }
   updateGroup(id: number, fields: Record<string, unknown>): GroupRecord | undefined {
+    const before = this.getGroup(id)
     this.update('register_groups', id, fields, GROUP_MAP)
+    const after = this.getGroup(id)
+    // quantity 变化时同步寄存器数量：缩小删除多余的（按 start_address 排序保留前 N 个），扩大补建缺失（int16 无别名）
+    if (before && after && typeof fields.quantity === 'number' && before.quantity !== after.quantity) {
+      const newQty = Math.max(0, Math.trunc(after.quantity))
+      const regs = this.db.prepare('SELECT id, start_address FROM registers WHERE group_id = ? ORDER BY start_address').all(id) as Array<{ id: number; start_address: number }>
+      if (regs.length > newQty) {
+        // 缩小：删除排序后超出前 newQty 个的寄存器（走 deleteRegister 以触发 register 事件）
+        for (const r of regs.slice(newQty)) this.deleteRegister(r.id)
+      } else if (regs.length < newQty) {
+        // 扩大：从分组起始地址起补建缺失地址，直到凑够 newQty 个
+        const existing = new Set(regs.map(r => r.start_address))
+        let addr = after.startAddress
+        while (existing.size < newQty) {
+          if (!existing.has(addr)) {
+            this.createRegister(id, after.objectId, null, after.functionCode, addr, 'int16')
+            existing.add(addr)
+          }
+          addr++
+        }
+      }
+    }
     this.notify('group', id)
     return this.getGroup(id)
   }
