@@ -190,30 +190,30 @@ export class DuckDBStore {
   }
 
   /** 全局快照键统一为 objectId:area:address。timestamp 输出为服务器本地时间。 */
-  getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string }> {
-    const out: Record<string, { rawValue: number; quality: string; timestamp: string }> = {}
-    for (const [k, v] of this.latest) out[k] = { ...v, timestamp: localTs(v.timestamp) }
+  getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> {
+    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> = {}
+    for (const [k, v] of this.latest) out[k] = { ...v, timestamp: localTs(v.timestamp), timestampMs: Date.parse(v.timestamp) }
     return out
   }
 
   /** 单设备、单数据区的最新快照（按地址键控）。timestamp 输出为服务器本地时间。 */
-  getLatestByObject(objectId: number, area: ModbusArea): Record<number, { rawValue: number; quality: string; timestamp: string }> {
-    const out: Record<number, { rawValue: number; quality: string; timestamp: string }> = {}
+  getLatestByObject(objectId: number, area: ModbusArea): Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> {
+    const out: Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> = {}
     const prefix = `${objectId}:${area}:`
     for (const [k, v] of this.latest) {
-      if (k.startsWith(prefix)) out[Number(k.slice(prefix.length))] = { ...v, timestamp: localTs(v.timestamp) }
+      if (k.startsWith(prefix)) out[Number(k.slice(prefix.length))] = { ...v, timestamp: localTs(v.timestamp), timestampMs: Date.parse(v.timestamp) }
     }
     return out
   }
 
   /** 单设备四数据区快照，键统一为 area:address。timestamp 输出为服务器本地时间。 */
-  getLatestByObjectAll(objectId: number): Record<string, { rawValue: number; quality: string; timestamp: string }> {
-    const out: Record<string, { rawValue: number; quality: string; timestamp: string }> = {}
+  getLatestByObjectAll(objectId: number): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> {
+    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> = {}
     const prefix = objectId + ':'
     for (const [k, v] of this.latest) {
       if (!k.startsWith(prefix)) continue
       const key = k.slice(prefix.length)
-      out[key] = { ...v, timestamp: localTs(v.timestamp) }
+      out[key] = { ...v, timestamp: localTs(v.timestamp), timestampMs: Date.parse(v.timestamp) }
     }
     return out
   }

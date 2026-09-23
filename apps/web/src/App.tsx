@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './styles.css'
+import { pointHealth, sampleTime, staleAfterMs, type Sample } from './observation'
 import { baseType, decodeRawByAddr, decodeRegister, formatNumber, formatRawByAddr, formatRegisterValue, isBinType, isHexType, parseEnum, registerWidth } from '../../../packages/core/src/codec.ts'
 
 const TYPE_GROUPS = [
@@ -15,7 +16,7 @@ interface Device { id: number; name: string; ip: string; port: number; mode: str
 type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number; registers: Register[] }
-interface LatestValue { rawValue: number; quality: string; timestamp: string }
+interface LatestValue extends Sample {}
 
 type Lang = 'zh' | 'en'
 type Theme = 'light' | 'dark' | 'system'
@@ -24,6 +25,8 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    observe: "观测", configure: "配置", searchPoints: "搜索点位名称或地址", onlyIssues: "只看异常 / 过期", noMatchingPoints: "没有匹配的点位", lastSample: "最近采样", notSampled: "尚未采集", secondsAgo: "{n} 秒前", fresh: "数据新鲜", oldValue: "旧值", coveredWord: "合并占位", shortData: "数据不足", pausedData: "采集已暂停", sampling: "采集中", connectionPending: "等待通信", pageConnection: "页面实时连接异常，正在自动重连；暂用定时查询更新数据。", ageHint: "数据超过 {n} 秒未更新将标记为旧值（按轮询配置估算）", operationOk: "操作成功", operationFailed: "操作失败", working: "处理中…", dismiss: "关闭提示", requiredFields: "请填写名称和连接地址", pointStatus: "数据状态", updatedAt: "更新时间", currentValue: "当前值", noActiveGroups: "没有启用的分组", readOnly: "只读", pointWriteHint: "写入会改变设备值，请核对设备和地址。", importResult: "已导入 {g} 组 / {r} 个点位", loadFailed: "加载失败", refresh: "重试加载",
+    searchDevices: '搜索设备或地址', noSearchResults: '没有匹配的设备', expandNav: '展开导航', collapseNav: '收起导航', overview: '设备概览', transportLabel: '通信协议', pointsLabel: '配置点位', groupsLabel: '采集分组', faultsLabel: '异常分组',
     brand: 'ProbeStation',
     brandSub: '设备观测与测试',
     newDevice: '新建设备',
@@ -68,6 +71,8 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据库', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    observe: "Observe", configure: "Configure", searchPoints: "Search point name or address", onlyIssues: "Issues / stale only", noMatchingPoints: "No matching points", lastSample: "Latest sample", notSampled: "Not sampled", secondsAgo: "{n}s ago", fresh: "Fresh", oldValue: "Old value", coveredWord: "Merged word", shortData: "Incomplete data", pausedData: "Sampling paused", sampling: "Sampling", connectionPending: "Awaiting communication", pageConnection: "Live page connection interrupted. Reconnecting; using periodic snapshots meanwhile.", ageHint: "Values older than {n}s are marked stale (estimated from polling settings)", operationOk: "Operation succeeded", operationFailed: "Operation failed", working: "Working…", dismiss: "Dismiss", requiredFields: "Enter a name and connection address", pointStatus: "Data status", updatedAt: "Updated", currentValue: "Current value", noActiveGroups: "No enabled groups", readOnly: "Read only", pointWriteHint: "Writing changes the device value. Check the device and address.", importResult: "Imported {g} groups / {r} points", loadFailed: "Loading failed", refresh: "Retry loading",
+    searchDevices: 'Search devices or addresses', noSearchResults: 'No matching devices', expandNav: 'Expand navigation', collapseNav: 'Collapse navigation', overview: 'Device overview', transportLabel: 'Transport', pointsLabel: 'Configured points', groupsLabel: 'Register groups', faultsLabel: 'Group faults',
     brand: 'ProbeStation',
     brandSub: 'Device observation & testing',
     newDevice: 'New Device',
@@ -118,8 +123,10 @@ async function request(url: string, options?: RequestInit): Promise<any> {
   if (!r.ok) {
     let detail = ''
     try { detail = await r.text() } catch { /* ignore */ }
+    try { const parsed = JSON.parse(detail); detail = typeof parsed.error === 'string' ? parsed.error : typeof parsed.message === 'string' ? parsed.message : detail } catch { /* plain text response */ }
     throw new Error('HTTP ' + r.status + (detail ? ' ' + detail.slice(0, 200) : ''))
   }
+  if (r.status === 204) return null
   return r.json()
 }
 
@@ -229,13 +236,41 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<string, LatestValue
   return views
 }
 
+function useOperation(t: T) {
+  const [busy, setBusy] = useState(false)
+  const locked = useRef(false)
+  const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null)
+  const run = async (action: () => Promise<unknown>) => {
+    if (locked.current) return false
+    locked.current = true; setBusy(true); setNotice(null)
+    try { await action(); setNotice({ error: false, text: t('operationOk') }); return true }
+    catch (error) { setNotice({ error: true, text: t('operationFailed') + ': ' + (error instanceof Error ? error.message : String(error)) }); return false }
+    finally { locked.current = false; setBusy(false) }
+  }
+  return { busy, notice, setNotice, run }
+}
+
+function Feedback({ operation, t }: { operation: ReturnType<typeof useOperation>; t: T }) {
+  if (!operation.notice) return null
+  return <div className={'operation-feedback' + (operation.notice.error ? ' error' : '')} role={operation.notice.error ? 'alert' : 'status'}>
+    <span>{operation.notice.text}</span><button aria-label={t('dismiss')} onClick={() => operation.setNotice(null)}>×</button>
+  </div>
+}
+
+function useNow() {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer) }, [])
+  return now
+}
+
 export default function App() {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('ps-theme') as Theme) ?? 'system')
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('ps-lang') as Lang) ?? 'zh')
   const [devices, setDevices] = useState<Device[]>([])
+  const [deviceSearch, setDeviceSearch] = useState('')
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [showSettings, setShowSettings] = useState(false)
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('ps-collapsed') === '1')
+  const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 768 || localStorage.getItem('ps-collapsed') === '1')
   const [groups, setGroups] = useState<DeviceGroup[]>([])
   const [latest, setLatest] = useState<Record<string, LatestValue>>({})
   const [groupErrors, setGroupErrors] = useState<Record<number, string>>({})
@@ -245,6 +280,8 @@ export default function App() {
   const [view, setView] = useState<'monitor' | 'database' | 'raw'>('monitor')
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
+  const operation = useOperation(t)
+  const [loadError, setLoadError] = useState(false)
   const selectedIdRef = useRef<number | null>(selectedId)
   useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
 
@@ -265,10 +302,11 @@ export default function App() {
   const refreshDevices = useCallback(() => {
     api.get('/api/monitor_objects').then((objs: any[]) => {
       setDevices(objs)
+      setLoadError(false)
       const map: Record<number, boolean> = {}
       for (const o of objs) if (o && typeof o.id === 'number') map[o.id] = o.connected === true
       setDeviceConnected(map)
-    }).catch(() => {})
+    }).catch(() => setLoadError(true))
   }, [])
   const refreshRegisters = useCallback((id: number) => {
     api.get('/api/monitor_objects/' + id + '/groups').then(async (gs: Array<{ id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number }>) => {
@@ -277,12 +315,12 @@ export default function App() {
         const regs: Register[] = await api.get('/api/groups/' + g.id + '/registers')
         out.push({ id: g.id, name: g.name, slaveId: g.slaveId, functionCode: g.functionCode, startAddress: g.startAddress, quantity: g.quantity, isActive: g.isActive, registers: regs })
       }
-      setGroups(out)
-    }).catch(() => {})
+      if (selectedIdRef.current === id) { setGroups(out); setLoadError(false) }
+    }).catch(() => { if (selectedIdRef.current === id) setLoadError(true) })
   }, [])
 
   useEffect(() => { refreshDevices() }, [refreshDevices])
-  useEffect(() => { if (selectedId != null) refreshRegisters(selectedId) }, [selectedId, refreshRegisters])
+  useEffect(() => { setGroups([]); if (selectedId != null) refreshRegisters(selectedId) }, [selectedId, refreshRegisters])
   useEffect(() => {
     const HEARTBEAT_MS = 10_000
     const STALE_MS = 30_000
@@ -399,56 +437,62 @@ export default function App() {
   const addDevice = useCallback(async (f: DeviceFields) => {
     if (!f.name || (f.transport !== 'rtu' && !f.ip)) return
     await api.post('/api/monitor_objects', f)
-    setShowAdd(false); refreshDevices()
+    setShowAdd(false); refreshDevices(); operation.setNotice({ error: false, text: t('operationOk') })
   }, [refreshDevices])
-  const toggleDevice = useCallback(async (id: number) => { await api.post('/api/monitor_objects/' + id + '/toggle'); refreshDevices() }, [refreshDevices])
+  const toggleDevice = async (id: number) => { await operation.run(async () => { await api.post('/api/monitor_objects/' + id + '/toggle'); refreshDevices() }) }
   const editDevice = useCallback(async (id: number, f: DeviceFields) => {
     if (!f.name) return
     await api.put('/api/monitor_objects/' + id, f)
-    refreshDevices()
+    refreshDevices(); operation.setNotice({ error: false, text: t('operationOk') })
   }, [refreshDevices])
-  const deleteDevice = useCallback(async (id: number) => {
+  const deleteDevice = async (id: number) => {
     const device = devices.find((d) => d.id === id)
     if (!window.confirm(t('confirmDeleteDevice').replace('{name}', device?.name ?? String(id)))) return
-    try {
+    await operation.run(async () => {
       await api.del('/api/monitor_objects/' + id)
       if (selectedId === id) setSelectedId(null)
       refreshDevices()
-    } catch { /* 忽略，避免未处理 rejection */ }
-  }, [selectedId, refreshDevices, devices, t])
+    })
+  }
 
   const selected = devices.find((d) => d.id === selectedId) ?? null
+  const visibleDevices = devices.filter((d) => `${d.name} ${d.ip}:${d.port} ${d.serialPath ?? ''}`.toLowerCase().includes(deviceSearch.trim().toLowerCase()))
 
   return (
-    <div className="shell">
+    <div className={'shell' + (collapsed ? ' nav-collapsed' : '')}>
+      {!collapsed && <button className="sidebar-backdrop" aria-label={t('collapseNav')} onClick={() => setCollapsed(true)} />}
       <aside className={'sidebar' + (collapsed ? ' collapsed' : '')}>
         <div className="sidebar-header">
           <div className="sidebar-head-row">
             {!collapsed && (
               <div>
-                <div className="brand">{t('brand')}</div>
+                <div className="brand"><span className="brand-mark" aria-hidden="true">∿</span>{t('brand')}</div>
                 <div className="brand-sub">{t('brandSub')}</div>
               </div>
             )}
-            <button className="collapse-btn" onClick={() => setCollapsed(!collapsed)}>{collapsed ? '»' : '«'}</button>
+            <button className="collapse-btn" aria-label={t(collapsed ? 'expandNav' : 'collapseNav')} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}>{collapsed ? '»' : '«'}</button>
           </div>
         </div>
         {!collapsed && (
           <>
-            <button className="btn new-device-btn" onClick={() => setShowAdd(true)}>＋ {t('newDevice')}</button>
-            <div className="sidebar-section">设备</div>
+            <button className="btn primary new-device-btn" onClick={() => setShowAdd(true)}>＋ {t('newDevice')}</button>
+            <input className="device-search" aria-label={t('searchDevices')} placeholder={t('searchDevices')} value={deviceSearch} onChange={(e) => setDeviceSearch(e.target.value)} />
+            <div className="sidebar-section">{t('devices')}<span>{devices.length.toString().padStart(2, '0')}</span></div>
             <div className="device-list">
-              {devices.map((d) => (
-                <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')} onClick={() => { setSelectedId(d.id); setView('monitor') }}>
+              {visibleDevices.map((d) => (
+                <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')}>
+                <button className="device-select" aria-current={selectedId === d.id ? 'page' : undefined} onClick={() => { setSelectedId(d.id); setView('monitor'); if (window.innerWidth <= 768) setCollapsed(true) }}>
                   <span className={'device-dot' + (deviceConnected[d.id] === true ? ' on' : '')} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="device-name">{d.name}</div>
                     <div className="device-sub">{d.transport === 'rtu' ? (d.serialPath || 'RTU') : (d.ip + ':' + d.port)}</div>
                   </div>
-                  <button className="device-del" onClick={(e) => { e.stopPropagation(); deleteDevice(d.id) }}>×</button>
+                </button>
+                  <button className="device-del" aria-label={t('deleteDevice') + ': ' + d.name} disabled={operation.busy} onClick={() => deleteDevice(d.id)}>×</button>
                 </div>
               ))}
               {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
+              {devices.length > 0 && visibleDevices.length === 0 && <div className="device-sub" style={{ padding: 12 }}>{t('noSearchResults')}</div>}
             </div>
           </>
         )}
@@ -461,13 +505,15 @@ export default function App() {
       </aside>
 
       <main className="main">
+        <Feedback operation={operation} t={t} />
+        {loadError && <div className="operation-feedback error" role="alert">{t('loadFailed')}<button className="btn" onClick={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }}>{t('refresh')}</button></div>}
         <GlobalTabBar t={t} view={view} onChange={setView} />
         {view === 'database'
           ? <DatabaseView t={t} device={selected} />
           : view === 'raw'
             ? <RawDataView t={t} device={selected} />
             : (selected
-              ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+              ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
               : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
       </main>
 
@@ -559,36 +605,48 @@ function DatabaseView({ t, device }: { t: T; device: Device | null }) {
   )
 }
 
-function DeviceView({ t, device, connected, groups, latest, groupErrors, realtime, onToggle, onEdit, onDelete, onRefresh }: {
+function DeviceView({ t, device, connected, groups, latest, groupErrors, realtime, busy, onToggle, onEdit, onDelete, onRefresh }: {
   t: T; device: Device; connected: boolean; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
   realtime: { status: RealtimeStatus; attempt: number }
-  onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => void; onDelete: (id: number) => void; onRefresh: (id: number) => void
+  busy: boolean; onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => Promise<void>; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
   const [showEdit, setShowEdit] = useState(false)
   const registers = groups.flatMap((g) => g.registers)
+  const now = useNow()
+  const threshold = staleAfterMs(device.pollIntervalMs ?? 1000, device.timeoutMs ?? 3000, groups)
+  const times = groups.flatMap(g => g.registers.map(r => sampleTime(latest[device.id + ':' + areaForFunctionCode(g.functionCode) + ':' + r.startAddress]))).filter((v): v is number => v !== null)
+  const lastSample = times.length ? Math.max(...times) : null
+  const age = lastSample === null ? null : Math.max(0, Math.floor((now - lastSample) / 1000))
   const realtimeText = realtime.status === 'connected' ? t('realtimeConnected')
     : realtime.status === 'connecting' ? t('realtimeConnecting')
       : realtime.status === 'stale' ? t('realtimeStale')
         : realtime.status === 'reconnecting' ? t('realtimeReconnecting').replace('{n}', String(realtime.attempt))
           : t('realtimeDisconnected')
   return (
-    <div>
+    <div className="device-view">
+      <div className="section-eyebrow">{t('overview')}</div>
       <div className="device-head">
         <span className="name">{device.name}</span>
-        <span className={'status-badge' + (device.isActive && connected ? ' on' : '')}>{!device.isActive ? t('stopped') : connected ? t('connected') : t('disconnected')}</span>
-        <span className={'status-badge realtime ' + realtime.status}>{realtimeText}</span>
+        <span className={'status-badge' + (device.isActive && connected ? ' on' : '')}>{!device.isActive ? t('pausedData') : !groups.some(g => g.isActive) ? t('noActiveGroups') : connected ? t('sampling') : t('connectionPending')}</span>
+        {realtime.status === 'connected' && <span className="channel-ok">{realtimeText}</span>}
         <div style={{ flex: 1 }} />
-        <button className="btn" onClick={() => onToggle(device.id)}>{device.isActive ? t('disconnect') : t('connect')}</button>
+        <button className="btn" disabled={busy} onClick={() => onToggle(device.id)}>{device.isActive ? t('disconnect') : t('connect')}</button>
         <button className="btn" onClick={() => setShowEdit(true)}>{t('edit')}</button>
-        <button className="btn danger" onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
+        <button className="btn danger" disabled={busy} onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
       </div>
-      <div className="main-sub">{device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
+      <div className="main-sub">Modbus {device.transport.toUpperCase()} · {device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
+      {realtime.status !== 'connected' && <div className="connection-notice" role="status">{t('pageConnection')} <span>{realtimeText}</span></div>}
+      <div className="sampling-summary" title={t('ageHint').replace('{n}', String(Math.round(threshold / 1000)))}>
+        <span>{t('lastSample')}: <strong>{age === null ? t('notSampled') : t('secondsAgo').replace('{n}', String(age))}</strong></span>
+        <span>{lastSample === null ? '—' : formatLocalTs(new Date(lastSample).toISOString())}</span>
+        <span className={groups.some(g => groupErrors[g.id]) ? 'has-fault' : ''}>{t('faultsLabel')}: {groups.filter(g => groupErrors[g.id]).length}</span>
+      </div>
       <TabBar tabs={[t('tabLive'), t('tabHistory'), t('tabFirmware')]} active={tab} onChange={setTab} />
-      {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} onRefresh={() => onRefresh(device.id)} />}
+      {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
       {tab === 1 && <HistoryView t={t} device={device} groups={groups} registers={registers} />}
       {tab === 2 && <FirmwareView t={t} device={device} />}
-      {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={(f) => { onEdit(device.id, f); setShowEdit(false) }} />}
+      {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f) => { await onEdit(device.id, f); setShowEdit(false) }} />}
     </div>
   )
 }
@@ -603,47 +661,60 @@ function TabBar({ tabs, active, onChange }: { tabs: string[]; active: number; on
   )
 }
 
-function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
-  t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; onRefresh: () => void
+function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onRefresh }: {
+  t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; now: number; threshold: number; onRefresh: () => void
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
+  const [configuring, setConfiguring] = useState(false)
+  const [search, setSearch] = useState('')
+  const [issuesOnly, setIssuesOnly] = useState(false)
+  const operation = useOperation(t)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const deleteGroup = async (id: number) => {
     const g = groups.find((gg) => gg.id === id)
     if (!window.confirm(t('confirmDeleteGroup').replace('{name}', g?.name ?? String(id)))) return
-    try { await api.del('/api/groups/' + id); onRefresh() } catch { /* 忽略 */ }
+    await operation.run(async () => { await api.del('/api/groups/' + id); onRefresh() })
   }
   const toggleGroupPause = async (id: number) => {
-    try { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() } catch { /* 忽略 */ }
+    await operation.run(async () => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() })
   }
   const bookInputRef = useRef<HTMLInputElement>(null)
   const uploadBook = async (e: any) => {
     const file = e?.target?.files?.[0]
     if (!file || !device) return
-    try {
+    await operation.run(async () => {
       const r = await fetch('/api/monitor_objects/' + device.id + '/points/book', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file })
       if (!r.ok) throw new Error('HTTP ' + r.status)
       const res = await r.json()
       onRefresh()
-      alert('已导入点表：' + (res.groups ?? 0) + ' 组 / ' + (res.registers ?? 0) + ' 点' + ((res.errors?.length ? '\n' + res.errors.join('\n') : '')))
-    } catch (err: any) {
-      alert('导入失败：' + (err?.message ?? String(err)))
-    } finally {
-      bookInputRef.current && (bookInputRef.current.value = '')
-    }
+      if (res.errors?.length) throw new Error(res.errors.join('; '))
+    })
+    if (bookInputRef.current) bookInputRef.current.value = ''
   }
-  const views = buildRegViews(groups, latest, device.id)
+  const views = useMemo(() => buildRegViews(groups, latest, device.id), [groups, latest, device.id])
+  const health = (g: DeviceGroup, r: Register) => pointHealth(Array.from({ length: registerWidth(r.dataType) }, (_, i) => latest[device.id + ':' + areaForFunctionCode(g.functionCode) + ':' + (r.startAddress + i)]), now, threshold, !device.isActive || !g.isActive, !!groupErrors[g.id])
+  const shown = groups.map(g => ({ ...g, registers: g.registers.filter(r => {
+    const match = (r.alias ?? '').toLowerCase().includes(search.toLowerCase()) || String(r.startAddress).includes(search) || ('0x' + r.startAddress.toString(16)).includes(search.toLowerCase())
+    const rv = views.get(r.id)
+    return match && (!issuesOnly || (!rv?.covered && (health(g, r).stale || rv?.invalid)))
+  }) })).filter(g => g.registers.length > 0 || (!search && !issuesOnly))
   return (
     <div>
-      <div className="toolbar">
+      <Feedback operation={operation} t={t} />
+      <div className="observation-toolbar">
+        <div className="seg"><button className={!configuring ? 'selected' : ''} aria-pressed={!configuring} onClick={() => setConfiguring(false)}>{t('observe')}</button><button className={configuring ? 'selected' : ''} aria-pressed={configuring} onClick={() => setConfiguring(true)}>{t('configure')}</button></div>
+        <input className="hist-input point-search" aria-label={t('searchPoints')} placeholder={t('searchPoints')} value={search} onChange={e => setSearch(e.target.value)} />
+        <label className="issues-filter"><input type="checkbox" checked={issuesOnly} onChange={e => setIssuesOnly(e.target.checked)} />{t('onlyIssues')}</label>
+      </div>
+      {configuring && <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
-        <button className="btn" onClick={() => bookInputRef.current?.click()}>⬆ {t('importPointBook')}</button>
+        <button className="btn" disabled={operation.busy} onClick={() => bookInputRef.current?.click()}>⬆ {t('importPointBook')}</button>
         <button className="btn" onClick={() => window.open('/api/monitor_objects/' + device.id + '/points/book')}>⬇ {t('exportPointBook')}</button>
         <input ref={bookInputRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={(e) => void uploadBook(e)} />
-      </div>
-      {groups.map((g) => (
+      </div>}
+      {shown.map((g) => (
         <div key={g.id} className="group-block">
           <div className="group-head">
             <button className="group-collapse" onClick={() => toggleCollapse(g.id)}>{collapsed.has(g.id) ? '▸' : '▾'}</button>
@@ -651,32 +722,36 @@ function LiveTable({ t, device, groups, latest, groupErrors, onRefresh }: {
             <span className="kv">FC{g.functionCode} · 从站 {g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个</span>
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id] === 'Disconnected' ? t('groupDisconnected') : groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
-            <button className="btn" onClick={() => toggleGroupPause(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
-            <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>
-            <button className="btn danger" onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>
+            <button className="btn" disabled={operation.busy} onClick={() => toggleGroupPause(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
+            {configuring && <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>}
+            {configuring && <button className="btn danger" disabled={operation.busy} onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>}
           </div>
-          {!collapsed.has(g.id) && (<table className="reg">
-            <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th></tr></thead>
+          {!collapsed.has(g.id) && (<div className="register-table-scroll"><table className="reg">
+            <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th>{!configuring && <><th>{t('pointStatus')}</th><th>{t('updatedAt')}</th><th>{t('write')}</th></>}</tr></thead>
             <tbody>
               {g.registers.map((r) => {
                 const rv = views.get(r.id)
+                const state = health(g, r)
+                const writable = rv?.writable && [1, 3].includes(g.functionCode)
+                const status = rv?.covered ? t('coveredWord') : rv?.invalid ? (state.timestamp === null ? t('notSampled') : t('shortData')) : state.stale ? t('oldValue') : t('fresh')
                 return (
                   <tr key={r.id}>
                     <td className="kv">{r.startAddress}</td>
-                    <td><AliasCell t={t} reg={r} onRefresh={onRefresh} /></td>
-                    <td><TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /></td>
-                    <td className="value" title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : t('valueHint')} onDoubleClick={rv?.writable ? () => setWriteReg(r) : undefined}>{rv?.value ?? '—'}{rv?.label ? <span className="enum-badge">→ {rv.label}</span> : null}</td>
+                    <td>{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span>{r.alias || '—'}</span>}</td>
+                    <td>{configuring ? <TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /> : <span className="point-type">{r.dataType}</span>}</td>
+                    <td className={'value' + (state.stale ? ' stale-value' : '')} title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : t('valueHint')} onDoubleClick={writable ? () => setWriteReg(r) : undefined}>{rv?.value ?? '—'}{rv?.label ? <span className="enum-badge">→ {rv.label}</span> : null}</td>
+                    {!configuring && <><td><span className={'point-state' + (state.stale && !rv?.covered ? ' stale' : '')}>{status}</span></td><td className="point-time" title={state.timestamp === null ? '' : formatLocalTs(new Date(state.timestamp).toISOString())}>{rv?.covered || state.ageSeconds === null ? '—' : t('secondsAgo').replace('{n}', String(state.ageSeconds))}</td><td>{writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td></>}
                   </tr>
                 )
               })}
-              {g.registers.length === 0 && <tr><td colSpan={4} className="kv">{t('noRegisters')}</td></tr>}
+              {g.registers.length === 0 && <tr><td colSpan={configuring ? 4 : 7} className="kv">{t('noRegisters')}</td></tr>}
             </tbody>
-          </table>)}
+          </table></div>)}
         </div>
       ))}
-      {groups.length === 0 && <div className="kv">{t('noRegisters')}</div>}
-      {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh() }} />}
-      {writeReg && <WriteModal t={t} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => setWriteReg(null)} />}
+      {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
+      {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: t('operationOk') }) }} />}
+      {writeReg && <WriteModal t={t} deviceName={device.name} currentValue={views.get(writeReg.id)?.value ?? '—'} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => { setWriteReg(null); operation.setNotice({ error: false, text: t('writeOk') }) }} />}
     </div>
   )
 }
@@ -690,16 +765,18 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
   const [startAddress, setStartAddress] = useState(String(initial?.startAddress ?? 0))
   const [quantity, setQuantity] = useState(String(initial?.quantity ?? 1))
   const [isActive, setIsActive] = useState(initial ? initial.isActive === 1 : true)
-  const save = async () => {
+  const operation = useOperation(t)
+  const save = () => operation.run(async () => {
     const body = { name, slaveId: Number(slaveId), functionCode: Number(functionCode), startAddress: Number(startAddress), quantity: Number(quantity), isActive: isActive ? 1 : 0 }
     if (initial) await api.put('/api/groups/' + initial.id, body)
     else await api.post('/api/monitor_objects/' + device.id + '/groups', body)
     onSaved()
-  }
+  })
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{initial ? t('editGroup') : t('newGroup')}</h3>
+        <Feedback operation={operation} t={t} />
         <label>{t('groupName')}</label>
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         <label>{t('slaveId')}</label>
@@ -721,14 +798,14 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
         </label>
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" onClick={save}>{t('save')}</button>
+          <button className="btn primary" disabled={operation.busy} onClick={() => void save()}>{operation.busy ? t('working') : t('save')}</button>
         </div>
       </div>
     </div>
   )
 }
 
-function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose: () => void; onSaved: () => void }) {
+function WriteModal({ t, reg, deviceName, currentValue, onClose, onSaved }: { t: T; reg: Register; deviceName: string; currentValue: string; onClose: () => void; onSaved: () => void }) {
   const [value, setValue] = useState('')
   const [method, setMethod] = useState<'single' | 'multiple'>('multiple')
   const [busy, setBusy] = useState(false)
@@ -754,13 +831,14 @@ function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{t('writeReg')}</h3>
+        <div className="write-context"><strong>{deviceName}</strong><span>{t('currentValue')}: {currentValue}</span><small>{t('pointWriteHint')}</small></div>
         <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}{width > 1 ? '（' + width + ' 寄存器）' : ''}</div>
         <label>{t('valuePh')}</label>
         <input value={value} onChange={(e) => { setValue(e.target.value); setErr(null); setOk(false) }} autoFocus placeholder={t('valuePh')} />
         <label>{t('functionCode')}</label>
         <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')} disabled={width > 1}>
-          <option value="multiple">{t('fc16')}</option>
-          {width === 1 && <option value="single">{t('fc06')}</option>}
+          <option value="multiple">{reg.functionCode === 1 ? 'FC05' : t('fc16')}</option>
+          {width === 1 && reg.functionCode !== 1 && <option value="single">{t('fc06')}</option>}
         </select>
         {err && <div className="write-msg error">{err}</div>}
         {ok && <div className="write-msg ok">{t('writeOk')}</div>}
@@ -775,29 +853,30 @@ function WriteModal({ t, reg, onClose, onSaved }: { t: T; reg: Register; onClose
 
 function AliasCell({ t, reg, onRefresh }: { t: T; reg: Register; onRefresh: () => void }) {
   const [val, setVal] = useState(reg.alias ?? '')
+  const operation = useOperation(t)
+  useEffect(() => { setVal(reg.alias ?? '') }, [reg.alias])
   const commit = async () => {
     if (val === (reg.alias ?? '')) return
-    await api.put('/api/registers/' + reg.id, { alias: val || null })
-    onRefresh()
+    await operation.run(async () => { await api.put('/api/registers/' + reg.id, { alias: val || null }); onRefresh() })
   }
   return (
-    <input className="cell-input" value={val} placeholder={t('colAlias')}
+    <div className="inline-edit"><input className="cell-input" disabled={operation.busy} value={val} placeholder={t('colAlias')}
       onChange={(e) => setVal(e.target.value)} onBlur={commit}
-      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} /><Feedback operation={operation} t={t} /></div>
   )
 }
 
 function TypeCell({ t, reg, available, disabled, onRefresh }: { t: T; reg: Register; available: number; disabled?: boolean; onRefresh: () => void }) {
   const [err, setErr] = useState(false)
+  const operation = useOperation(t)
   const change = async (v: string) => {
     if (v === reg.dataType) return
     if (registerWidth(v) > available) { setErr(true); setTimeout(() => setErr(false), 1600); return }
-    await api.put('/api/registers/' + reg.id, { dataType: v })
-    onRefresh()
+    await operation.run(async () => { await api.put('/api/registers/' + reg.id, { dataType: v }); onRefresh() })
   }
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <select className="cell-select" value={reg.dataType} onChange={(e) => change(e.target.value)} disabled={disabled}>
+    <div className="inline-edit">
+      <select className="cell-select" value={reg.dataType} onChange={(e) => change(e.target.value)} disabled={disabled || operation.busy}>
         {TYPE_GROUPS.map((grp) => (
           <optgroup key={grp.key} label={t(grp.key)}>
             {grp.types.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -805,7 +884,8 @@ function TypeCell({ t, reg, available, disabled, onRefresh }: { t: T; reg: Regis
         ))}
       </select>
       {err && <span className="cell-err" title={t('valueShort')}>⚠</span>}
-    </span>
+      <Feedback operation={operation} t={t} />
+    </div>
   )
 }
 
@@ -1484,7 +1564,7 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose }: {
   )
 }
 
-function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | null; onClose: () => void; onSave: (f: DeviceFields) => void }) {
+function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | null; onClose: () => void; onSave: (f: DeviceFields) => Promise<void> }) {
   const [name, setName] = useState(initial?.name ?? '')
   const [transport, setTransport] = useState(initial?.transport ?? 'tcp')
   const [ip, setIp] = useState(initial?.ip ?? '')
@@ -1497,11 +1577,16 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
   const [slaveId, setSlaveId] = useState(initial ? String(initial.slaveId ?? 1) : '1')
   const [pollInterval, setPollInterval] = useState(initial ? String(initial.pollIntervalMs ?? 1000) : '1000')
   const [timeout, setTimeout_] = useState(initial ? String(initial.timeoutMs ?? 3000) : '3000')
-  const save = () => onSave({ name, ip, port: Number(port), transport, serialPath: transport === 'rtu' ? serialPath : '', baudRate: Number(baudRate) || 9600, parity, stopBits: Number(stopBits) || 1, dataBits: 8, flowControl, slaveId: Number(slaveId) || 1, pollIntervalMs: Number(pollInterval) || 1000, timeoutMs: Number(timeout) || 3000 })
+  const operation = useOperation(t)
+  const save = () => operation.run(async () => {
+    if (!name.trim() || !(transport === 'rtu' ? serialPath.trim() : ip.trim())) throw new Error(t('requiredFields'))
+    await onSave({ name, ip, port: Number(port), transport, serialPath: transport === 'rtu' ? serialPath : '', baudRate: Number(baudRate) || 9600, parity, stopBits: Number(stopBits) || 1, dataBits: 8, flowControl, slaveId: Number(slaveId) || 1, pollIntervalMs: Number(pollInterval) || 1000, timeoutMs: Number(timeout) || 3000 })
+  })
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3>
+        <Feedback operation={operation} t={t} />
         <label>{t('name')}</label>
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         <label>{t('transport')}</label>
@@ -1553,10 +1638,9 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
         )}
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" onClick={save}>{initial ? t('save') : t('add')}</button>
+          <button className="btn primary" disabled={operation.busy} onClick={() => void save()}>{operation.busy ? t('working') : initial ? t('save') : t('add')}</button>
         </div>
       </div>
     </div>
   )
 }
-
