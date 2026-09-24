@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import './styles.css'
+import { decodeHistorySeries, nearestHistorySample, type HistoryPoint } from './history-curve'
+import { sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, staleAfterMs, type Sample } from './observation'
 import { baseType, decodeRawByAddr, decodeRegister, formatNumber, formatRawByAddr, formatRegisterValue, isBinType, isHexType, parseEnum, registerWidth } from '../../../packages/core/src/codec.ts'
 
@@ -25,6 +27,12 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    histMinutes: "最近 {n} 分钟", histHours: "最近 {n} 小时", histNoNumeric: "所选点位没有可绘制的数值数据，请检查类型或选择其他点位。", histZoomIn: "放大", histZoomOut: "缩小", histMoveEarlier: "向前移动时间窗口", histMoveLater: "向后移动时间窗口", histQueryZoom: "查询放大区间", histRelative: "各曲线相对量程", histInteractionHint: "悬停查看读数 · 左右拖动框选时间范围 · 双击恢复全范围", histNoVisible: "当前范围没有可见曲线，可重置缩放或点击下方图例显示曲线。", histNearest: "最近采样点（实际时间）", histLegendHint: "点击图例隐藏 / 显示曲线", histStatsHint: "当前可见时间范围的显示数据统计", histLastValue: "末值", histSamplingNote: "曲线为分桶后的原始解码值：每桶每地址保留最后一个值。Min / Max 是显示点的统计，可能遗漏瞬时峰值；放大后可点击“查询放大区间”提高时间分辨率。", histRelativeNote: "相对量程将每条曲线映射为 0–100%，恒定值显示在 50%；悬停和统计仍为原始数值。",
+    liveCurve: '实时曲线', liveWindow: '时间窗口', freezeCurve: '暂停画面', resumeCurve: '继续实时', clearCurve: '清空曲线', curveWaiting: '等待新的有效采样数据…', liveCurveHint: '本次打开设备期间缓存；每 250ms 取最新值，最多 8 条曲线、每条 2400 点，保留最近 10 分钟。暂停仅冻结画面，不停止采集。', liveRawHint: '按寄存器类型解码原始值，不应用倍率/偏移；不绘制非有限数和无法精确表示的 64 位整数。', curvePaused: '画面已暂停，后台继续缓存', curveTracking: '实时跟随', curveNoNumeric: '暂无可绘制的数值点位，请先配置寄存器。', curveSelectLimit: '最多选择 {n} 个点位', curveTime: '时间',
+
+    groupOldValues: '存在旧值', groupPartialData: '数据不完整', groupCommunicationError: '通信异常', groupTimeHint: '按组内最早的采样时间显示，避免部分数据未更新被掩盖',
+    resizeSidebar: '调整侧边栏宽度', resizeSidebarHint: '拖动调整宽度，双击恢复默认；也可使用左右方向键',
+    sortDevices: '调整顺序', finishSorting: '完成排序', moveUp: '上移', moveDown: '下移', dragDevice: '拖动排序', sortingHint: '拖动手柄或点击箭头调整顺序，自动保存在当前浏览器。排序时显示全部设备。', orderSaveFailed: '顺序已调整，但浏览器无法保存；刷新后可能恢复。',
     observe: "观测", configure: "配置", searchPoints: "搜索点位名称或地址", onlyIssues: "只看异常 / 过期", noMatchingPoints: "没有匹配的点位", lastSample: "最近采样", notSampled: "尚未采集", secondsAgo: "{n} 秒前", fresh: "数据新鲜", oldValue: "旧值", coveredWord: "合并占位", shortData: "数据不足", pausedData: "采集已暂停", sampling: "采集中", connectionPending: "等待通信", pageConnection: "页面实时连接异常，正在自动重连；暂用定时查询更新数据。", ageHint: "数据超过 {n} 秒未更新将标记为旧值（按轮询配置估算）", operationOk: "操作成功", operationFailed: "操作失败", working: "处理中…", dismiss: "关闭提示", requiredFields: "请填写名称和连接地址", pointStatus: "数据状态", updatedAt: "更新时间", currentValue: "当前值", noActiveGroups: "没有启用的分组", readOnly: "只读", pointWriteHint: "写入会改变设备值，请核对设备和地址。", importResult: "已导入 {g} 组 / {r} 个点位", loadFailed: "加载失败", refresh: "重试加载",
     searchDevices: '搜索设备或地址', noSearchResults: '没有匹配的设备', expandNav: '展开导航', collapseNav: '收起导航', overview: '设备概览', transportLabel: '通信协议', pointsLabel: '配置点位', groupsLabel: '采集分组', faultsLabel: '异常分组',
     brand: 'ProbeStation',
@@ -71,6 +79,12 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据库', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    histMinutes: "Last {n} minutes", histHours: "Last {n} hours", histNoNumeric: "No plottable numeric data. Check types or select other points.", histZoomIn: "Zoom in", histZoomOut: "Zoom out", histMoveEarlier: "Move earlier", histMoveLater: "Move later", histQueryZoom: "Query zoomed range", histRelative: "Relative scale per series", histInteractionHint: "Hover for values · Drag horizontally to select time · Double-click to reset", histNoVisible: "No visible series in this range. Reset zoom or enable a legend item.", histNearest: "Nearest samples (actual times)", histLegendHint: "Click a legend item to hide / show", histStatsHint: "Statistics of displayed samples in the visible range", histLastValue: "Last", histSamplingNote: "Bucketed raw decoded values: the last value per address in each bucket. Min / Max describe displayed samples and may miss transient peaks. Query the zoomed range for finer resolution.", histRelativeNote: "Each series maps to 0–100%; constant values appear at 50%. Readouts and statistics retain raw values.",
+    liveCurve: 'Live curves', liveWindow: 'Time window', freezeCurve: 'Freeze view', resumeCurve: 'Resume live', clearCurve: 'Clear curves', curveWaiting: 'Waiting for new valid samples…', liveCurveHint: 'Buffered while this device is open. Latest values sampled every 250ms; up to 8 series, 2400 points each, retained for 10 minutes. Freezing does not stop acquisition.', liveRawHint: 'Raw values decoded by register type, without factor/offset. Non-finite values and unsafe 64-bit integers are omitted.', curvePaused: 'View frozen; buffering continues', curveTracking: 'Following live data', curveNoNumeric: 'No numeric points available. Configure registers first.', curveSelectLimit: 'Select up to {n} points', curveTime: 'Time',
+
+    groupOldValues: 'Stale data present', groupPartialData: 'Incomplete data', groupCommunicationError: 'Communication error', groupTimeHint: 'Shows the oldest sample in the group so partial updates do not hide stale data',
+    resizeSidebar: 'Resize sidebar', resizeSidebarHint: 'Drag to resize, double-click to reset, or use Left and Right arrow keys',
+    sortDevices: 'Reorder', finishSorting: 'Done', moveUp: 'Move up', moveDown: 'Move down', dragDevice: 'Drag to reorder', sortingHint: 'Drag the handle or use the arrows. Saved in this browser. All devices are shown while reordering.', orderSaveFailed: 'Order changed, but browser storage is unavailable; it may reset on reload.',
     observe: "Observe", configure: "Configure", searchPoints: "Search point name or address", onlyIssues: "Issues / stale only", noMatchingPoints: "No matching points", lastSample: "Latest sample", notSampled: "Not sampled", secondsAgo: "{n}s ago", fresh: "Fresh", oldValue: "Old value", coveredWord: "Merged word", shortData: "Incomplete data", pausedData: "Sampling paused", sampling: "Sampling", connectionPending: "Awaiting communication", pageConnection: "Live page connection interrupted. Reconnecting; using periodic snapshots meanwhile.", ageHint: "Values older than {n}s are marked stale (estimated from polling settings)", operationOk: "Operation succeeded", operationFailed: "Operation failed", working: "Working…", dismiss: "Dismiss", requiredFields: "Enter a name and connection address", pointStatus: "Data status", updatedAt: "Updated", currentValue: "Current value", noActiveGroups: "No enabled groups", readOnly: "Read only", pointWriteHint: "Writing changes the device value. Check the device and address.", importResult: "Imported {g} groups / {r} points", loadFailed: "Loading failed", refresh: "Retry loading",
     searchDevices: 'Search devices or addresses', noSearchResults: 'No matching devices', expandNav: 'Expand navigation', collapseNav: 'Collapse navigation', overview: 'Device overview', transportLabel: 'Transport', pointsLabel: 'Configured points', groupsLabel: 'Register groups', faultsLabel: 'Group faults',
     brand: 'ProbeStation',
@@ -263,11 +277,79 @@ function useNow() {
   return now
 }
 
+function SidebarResizer({ t }: { t: T }) {
+  const handle = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ startX: number; startWidth: number; width: number } | null>(null)
+  const [width, setWidth] = useState(() => {
+    try { const saved = Number(localStorage.getItem('ps-sidebar-width')); return Number.isFinite(saved) && saved >= 220 ? Math.min(460, saved) : 250 }
+    catch { return 250 }
+  })
+  const maximum = () => Math.max(220, Math.min(460, window.innerWidth - 360))
+  const applyWidth = (value: number) => {
+    const next = Math.round(Math.max(220, Math.min(maximum(), value)))
+    handle.current?.parentElement?.style.setProperty('--sidebar-width', `${next}px`)
+    return next
+  }
+  const saveWidth = (value: number) => {
+    setWidth(value)
+    try { localStorage.setItem('ps-sidebar-width', String(value)) } catch { /* Width remains usable for this session. */ }
+  }
+  useEffect(() => {
+    const sidebar = handle.current?.parentElement
+    sidebar?.style.setProperty('--sidebar-width', `${width}px`)
+    return () => { sidebar?.classList.remove('is-resizing') }
+  }, [width])
+  const finish = (cancel = false) => {
+    if (!drag.current) return
+    const next = cancel ? drag.current.startWidth : drag.current.width
+    applyWidth(next)
+    drag.current = null
+    handle.current?.parentElement?.classList.remove('is-resizing')
+    saveWidth(next)
+  }
+  return <div ref={handle} className="sidebar-resizer" role="separator" tabIndex={0} aria-orientation="vertical"
+    aria-label={t('resizeSidebar')} aria-valuemin={220} aria-valuemax={460} aria-valuenow={width} title={t('resizeSidebarHint')}
+    onPointerDown={(e) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      e.currentTarget.focus()
+      const startWidth = e.currentTarget.parentElement!.getBoundingClientRect().width
+      drag.current = { startX: e.clientX, startWidth, width: startWidth }
+      e.currentTarget.setPointerCapture(e.pointerId)
+      e.currentTarget.parentElement?.classList.add('is-resizing')
+    }}
+    onPointerMove={(e) => {
+      if (!drag.current) return
+      drag.current.width = applyWidth(drag.current.startWidth + e.clientX - drag.current.startX)
+      e.currentTarget.setAttribute('aria-valuenow', String(drag.current.width))
+    }}
+    onPointerUp={(e) => { finish(); if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId) }}
+    onPointerCancel={() => finish(true)} onLostPointerCapture={() => finish()}
+    onDoubleClick={() => saveWidth(applyWidth(250))}
+    onKeyDown={(e) => {
+      if (e.key === 'Escape') { finish(true); return }
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return
+      e.preventDefault()
+      const current = e.currentTarget.parentElement!.getBoundingClientRect().width
+      const next = e.key === 'Home' ? 220 : e.key === 'End' ? maximum() : current + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 40 : 10)
+      saveWidth(applyWidth(next))
+    }} />
+}
+
 export default function App() {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('ps-theme') as Theme) ?? 'system')
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('ps-lang') as Lang) ?? 'zh')
   const [devices, setDevices] = useState<Device[]>([])
   const [deviceSearch, setDeviceSearch] = useState('')
+  const [deviceOrder, setDeviceOrder] = useState<number[]>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('ps-device-order') ?? '[]')
+      return Array.isArray(saved) ? [...new Set(saved.filter((id): id is number => typeof id === 'number' && Number.isInteger(id)))] : []
+    } catch { return [] }
+  })
+  const [sortingDevices, setSortingDevices] = useState(false)
+  const [draggedDevice, setDraggedDevice] = useState<number | null>(null)
+  const [dropTarget, setDropTarget] = useState<number | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 768 || localStorage.getItem('ps-collapsed') === '1')
@@ -456,7 +538,21 @@ export default function App() {
   }
 
   const selected = devices.find((d) => d.id === selectedId) ?? null
-  const visibleDevices = devices.filter((d) => `${d.name} ${d.ip}:${d.port} ${d.serialPath ?? ''}`.toLowerCase().includes(deviceSearch.trim().toLowerCase()))
+  const orderedDevices = useMemo(() => {
+    const ranks = new Map(deviceOrder.map((id, index) => [id, index]))
+    return [...devices].sort((a, b) => (ranks.get(a.id) ?? Infinity) - (ranks.get(b.id) ?? Infinity))
+  }, [devices, deviceOrder])
+  const visibleDevices = orderedDevices.filter((d) => sortingDevices || `${d.name} ${d.ip}:${d.port} ${d.serialPath ?? ''}`.toLowerCase().includes(deviceSearch.trim().toLowerCase()))
+  const moveDevice = (from: number, to: number) => {
+    const ids = orderedDevices.map(d => d.id)
+    const source = ids.indexOf(from), target = ids.indexOf(to)
+    if (source < 0 || target < 0 || source === target) return
+    ids.splice(source, 1)
+    ids.splice(target, 0, from)
+    setDeviceOrder(ids)
+    try { localStorage.setItem('ps-device-order', JSON.stringify(ids)) }
+    catch { operation.setNotice({ error: true, text: t('orderSaveFailed') }) }
+  }
 
   return (
     <div className={'shell' + (collapsed ? ' nav-collapsed' : '')}>
@@ -476,11 +572,30 @@ export default function App() {
         {!collapsed && (
           <>
             <button className="btn primary new-device-btn" onClick={() => setShowAdd(true)}>＋ {t('newDevice')}</button>
-            <input className="device-search" aria-label={t('searchDevices')} placeholder={t('searchDevices')} value={deviceSearch} onChange={(e) => setDeviceSearch(e.target.value)} />
-            <div className="sidebar-section">{t('devices')}<span>{devices.length.toString().padStart(2, '0')}</span></div>
+            <input className="device-search" disabled={sortingDevices} aria-label={t('searchDevices')} placeholder={t('searchDevices')} value={deviceSearch} onChange={(e) => setDeviceSearch(e.target.value)} />
+            <div className="sidebar-section">{t('devices')} · {devices.length.toString().padStart(2, '0')}<button className="sort-devices-btn" aria-pressed={sortingDevices} onClick={() => { setSortingDevices(!sortingDevices); setDraggedDevice(null); setDropTarget(null) }}>{t(sortingDevices ? 'finishSorting' : 'sortDevices')}</button></div>
+            {sortingDevices && <p className="device-sort-hint">{t('sortingHint')}</p>}
             <div className="device-list">
-              {visibleDevices.map((d) => (
-                <div key={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '')}>
+              {visibleDevices.map((d, index) => (
+                <div key={d.id} data-device-id={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '') + (draggedDevice === d.id ? ' dragging' : '') + (dropTarget === d.id ? ' drop-target' : '')}>
+                {sortingDevices && <span className="device-drag-handle" title={t('dragDevice')} aria-hidden="true"
+                  onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); setDraggedDevice(d.id) }}
+                  onPointerMove={(e) => {
+                    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+                    const list = e.currentTarget.closest('.device-list')
+                    const bounds = list?.getBoundingClientRect()
+                    if (list && bounds) { if (e.clientY < bounds.top + 30) list.scrollTop -= 12; else if (e.clientY > bounds.bottom - 30) list.scrollTop += 12 }
+                    const row = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-device-id]')
+                    setDropTarget(row ? Number(row.getAttribute('data-device-id')) : null)
+                  }}
+                  onPointerUp={(e) => {
+                    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+                    const row = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-device-id]')
+                    if (row) moveDevice(d.id, Number(row.getAttribute('data-device-id')))
+                    e.currentTarget.releasePointerCapture(e.pointerId); setDraggedDevice(null); setDropTarget(null)
+                  }}
+                  onPointerCancel={() => { setDraggedDevice(null); setDropTarget(null) }}
+                  onLostPointerCapture={() => { setDraggedDevice(null); setDropTarget(null) }}>⠿</span>}
                 <button className="device-select" aria-current={selectedId === d.id ? 'page' : undefined} onClick={() => { setSelectedId(d.id); setView('monitor'); if (window.innerWidth <= 768) setCollapsed(true) }}>
                   <span className={'device-dot' + (deviceConnected[d.id] === true ? ' on' : '')} />
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -488,7 +603,10 @@ export default function App() {
                     <div className="device-sub">{d.transport === 'rtu' ? (d.serialPath || 'RTU') : (d.ip + ':' + d.port)}</div>
                   </div>
                 </button>
-                  <button className="device-del" aria-label={t('deleteDevice') + ': ' + d.name} disabled={operation.busy} onClick={() => deleteDevice(d.id)}>×</button>
+                  {sortingDevices ? <div className="device-order-actions">
+                    <button aria-label={t('moveUp') + ': ' + d.name} title={t('moveUp')} disabled={index === 0} onClick={() => moveDevice(d.id, visibleDevices[index - 1].id)}>↑</button>
+                    <button aria-label={t('moveDown') + ': ' + d.name} title={t('moveDown')} disabled={index === visibleDevices.length - 1} onClick={() => moveDevice(d.id, visibleDevices[index + 1].id)}>↓</button>
+                  </div> : <button className="device-del" aria-label={t('deleteDevice') + ': ' + d.name} disabled={operation.busy} onClick={() => deleteDevice(d.id)}>×</button>}
                 </div>
               ))}
               {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
@@ -502,6 +620,7 @@ export default function App() {
             {!collapsed && <span>{t('settings')}</span>}
           </button>
         </div>
+        {!collapsed && <SidebarResizer t={t} />}
       </aside>
 
       <main className="main">
@@ -612,7 +731,7 @@ function DeviceView({ t, device, connected, groups, latest, groupErrors, realtim
 }) {
   const [tab, setTab] = useState(0)
   const [showEdit, setShowEdit] = useState(false)
-  const registers = groups.flatMap((g) => g.registers)
+  const registers = useMemo(() => groups.flatMap((g) => g.registers), [groups])
   const now = useNow()
   const threshold = staleAfterMs(device.pollIntervalMs ?? 1000, device.timeoutMs ?? 3000, groups)
   const times = groups.flatMap(g => g.registers.map(r => sampleTime(latest[device.id + ':' + areaForFunctionCode(g.functionCode) + ':' + r.startAddress]))).filter((v): v is number => v !== null)
@@ -642,10 +761,11 @@ function DeviceView({ t, device, connected, groups, latest, groupErrors, realtim
         <span>{lastSample === null ? '—' : formatLocalTs(new Date(lastSample).toISOString())}</span>
         <span className={groups.some(g => groupErrors[g.id]) ? 'has-fault' : ''}>{t('faultsLabel')}: {groups.filter(g => groupErrors[g.id]).length}</span>
       </div>
-      <TabBar tabs={[t('tabLive'), t('tabHistory'), t('tabFirmware')]} active={tab} onChange={setTab} />
+      <TabBar tabs={[t('tabLive'), t('tabHistory'), t('tabFirmware'), t('liveCurve')]} active={tab} onChange={setTab} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
       {tab === 1 && <HistoryView t={t} device={device} groups={groups} registers={registers} />}
       {tab === 2 && <FirmwareView t={t} device={device} />}
+      <div hidden={tab !== 3}><LiveCurve t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
       {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f) => { await onEdit(device.id, f); setShowEdit(false) }} />}
     </div>
   )
@@ -695,6 +815,13 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
   }
   const views = useMemo(() => buildRegViews(groups, latest, device.id), [groups, latest, device.id])
   const health = (g: DeviceGroup, r: Register) => pointHealth(Array.from({ length: registerWidth(r.dataType) }, (_, i) => latest[device.id + ':' + areaForFunctionCode(g.functionCode) + ':' + (r.startAddress + i)]), now, threshold, !device.isActive || !g.isActive, !!groupErrors[g.id])
+  // Summarize the full group before applying search or issue filters.
+  const summaries = new Map(groups.map(g => {
+    const state = pointHealth(Array.from({ length: g.quantity }, (_, i) => latest[device.id + ':' + areaForFunctionCode(g.functionCode) + ':' + (g.startAddress + i)]), now, threshold, !device.isActive || !g.isActive, !!groupErrors[g.id])
+    const incomplete = state.missing || g.registers.some(r => views.get(r.id)?.invalid)
+    const status = !device.isActive || !g.isActive ? 'pausedData' : groupErrors[g.id] ? 'groupCommunicationError' : state.timestamp === null ? 'notSampled' : incomplete ? 'groupPartialData' : state.stale ? 'groupOldValues' : 'fresh'
+    return [g.id, { ...state, status }] as const
+  }))
   const shown = groups.map(g => ({ ...g, registers: g.registers.filter(r => {
     const match = (r.alias ?? '').toLowerCase().includes(search.toLowerCase()) || String(r.startAddress).includes(search) || ('0x' + r.startAddress.toString(16)).includes(search.toLowerCase())
     const rv = views.get(r.id)
@@ -714,8 +841,14 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
         <button className="btn" onClick={() => window.open('/api/monitor_objects/' + device.id + '/points/book')}>⬇ {t('exportPointBook')}</button>
         <input ref={bookInputRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={(e) => void uploadBook(e)} />
       </div>}
-      {shown.map((g) => (
+      {shown.map((g) => {
+        const summary = summaries.get(g.id)!
+        return (
         <div key={g.id} className="group-block">
+          <div className="group-data-summary">
+            <span>{t('pointStatus')}: <strong className={summary.status === 'fresh' ? 'group-data-fresh' : summary.status === 'groupCommunicationError' ? 'has-fault' : ''}>{t(summary.status)}</strong></span>
+            <span title={t('groupTimeHint') + (summary.timestamp === null ? '' : ' · ' + formatLocalTs(new Date(summary.timestamp).toISOString()))}>{t('updatedAt')}: <strong>{summary.ageSeconds === null ? '—' : t('secondsAgo').replace('{n}', String(summary.ageSeconds))}</strong></span>
+          </div>
           <div className="group-head">
             <button className="group-collapse" onClick={() => toggleCollapse(g.id)}>{collapsed.has(g.id) ? '▸' : '▾'}</button>
             <span className="group-name" style={{ cursor: 'pointer' }} onClick={() => toggleCollapse(g.id)}>{g.name}</span>
@@ -727,28 +860,27 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
             {configuring && <button className="btn danger" disabled={operation.busy} onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>}
           </div>
           {!collapsed.has(g.id) && (<div className="register-table-scroll"><table className="reg">
-            <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th>{!configuring && <><th>{t('pointStatus')}</th><th>{t('updatedAt')}</th><th>{t('write')}</th></>}</tr></thead>
+            <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th>{!configuring && <th>{t('write')}</th>}</tr></thead>
             <tbody>
               {g.registers.map((r) => {
                 const rv = views.get(r.id)
                 const state = health(g, r)
                 const writable = rv?.writable && [1, 3].includes(g.functionCode)
-                const status = rv?.covered ? t('coveredWord') : rv?.invalid ? (state.timestamp === null ? t('notSampled') : t('shortData')) : state.stale ? t('oldValue') : t('fresh')
                 return (
                   <tr key={r.id}>
                     <td className="kv">{r.startAddress}</td>
                     <td>{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span>{r.alias || '—'}</span>}</td>
                     <td>{configuring ? <TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /> : <span className="point-type">{r.dataType}</span>}</td>
                     <td className={'value' + (state.stale ? ' stale-value' : '')} title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : t('valueHint')} onDoubleClick={writable ? () => setWriteReg(r) : undefined}>{rv?.value ?? '—'}{rv?.label ? <span className="enum-badge">→ {rv.label}</span> : null}</td>
-                    {!configuring && <><td><span className={'point-state' + (state.stale && !rv?.covered ? ' stale' : '')}>{status}</span></td><td className="point-time" title={state.timestamp === null ? '' : formatLocalTs(new Date(state.timestamp).toISOString())}>{rv?.covered || state.ageSeconds === null ? '—' : t('secondsAgo').replace('{n}', String(state.ageSeconds))}</td><td>{writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td></>}
+                    {!configuring && <td>{writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
                   </tr>
                 )
               })}
-              {g.registers.length === 0 && <tr><td colSpan={configuring ? 4 : 7} className="kv">{t('noRegisters')}</td></tr>}
+              {g.registers.length === 0 && <tr><td colSpan={configuring ? 4 : 5} className="kv">{t('noRegisters')}</td></tr>}
             </tbody>
           </table></div>)}
         </div>
-      ))}
+      )})}
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
       {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: t('operationOk') }) }} />}
       {writeReg && <WriteModal t={t} deviceName={device.name} currentValue={views.get(writeReg.id)?.value ?? '—'} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => { setWriteReg(null); operation.setNotice({ error: false, text: t('writeOk') }) }} />}
@@ -892,24 +1024,24 @@ function TypeCell({ t, reg, available, disabled, onRefresh }: { t: T; reg: Regis
 
 function useRegisterSelection(deviceId: number, registers: Register[]): [Set<number>, (s: Set<number>) => void] {
   const key = 'ps-regs-' + deviceId
-  const [selected, setSelected] = useState<Set<number>>(() => {
+  const [ids, setIds] = useState<Set<number> | null>(() => {
     try {
       const raw = localStorage.getItem(key)
-      if (raw == null) return new Set(registers.map(r => r.id))
-      const ids = JSON.parse(raw) as number[]
-      const valid = new Set(registers.map(r => r.id))
-      return new Set(ids.filter(id => valid.has(id)))
-    } catch { return new Set(registers.map(r => r.id)) }
+      if (raw === null) return null
+      const saved: unknown = JSON.parse(raw)
+      return Array.isArray(saved) ? new Set(saved.filter((id): id is number => typeof id === 'number')) : null
+    } catch { return null }
   })
-  const update = useCallback((s: Set<number>) => {
-    setSelected(s)
-    localStorage.setItem(key, JSON.stringify([...s]))
+  const selected = useMemo(() => new Set(registers.filter(r => ids === null || ids.has(r.id)).map(r => r.id)), [ids, registers])
+  const update = useCallback((next: Set<number>) => {
+    setIds(next)
+    try { localStorage.setItem(key, JSON.stringify([...next])) } catch { /* Selection remains available this session. */ }
   }, [key])
   return [selected, update]
 }
 
-function RegisterSelectModal({ t, groups, initial, onClose, onApply }: {
-  t: T; groups: DeviceGroup[]; initial: Set<number>; onClose: () => void; onApply: (s: Set<number>) => void
+function RegisterSelectModal({ t, groups, initial, onClose, onApply, max }: {
+  t: T; groups: DeviceGroup[]; initial: Set<number>; onClose: () => void; onApply: (s: Set<number>) => void; max?: number
 }) {
   const [draft, setDraft] = useState<Set<number>>(() => new Set(initial))
   const toggle = (id: number) => setDraft((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -922,16 +1054,17 @@ function RegisterSelectModal({ t, groups, initial, onClose, onApply }: {
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div className="reg-modal-actions">
-          <button className="btn" onClick={() => setDraft(new Set(allIds))}>{t('selectAll')}</button>
+          <button className="btn" onClick={() => setDraft(new Set(allIds.slice(0, max)))}>{t('selectAll')}</button>
           <button className="btn" onClick={() => setDraft(new Set())}>{t('clearAll')}</button>
         </div>
+        {max && <p className="chart-hint">{t('curveSelectLimit').replace('{n}', String(max))}</p>}
         <div className="reg-list">
           {groups.map(g => (
             <div key={g.id} className="reg-group">
               <div className="reg-group-name">{g.name}</div>
               {g.registers.map(r => (
                 <label key={r.id} className="reg-item">
-                  <input type="checkbox" checked={draft.has(r.id)} onChange={() => toggle(r.id)} />
+                  <input type="checkbox" checked={draft.has(r.id)} disabled={!draft.has(r.id) && max !== undefined && draft.size >= max} onChange={() => toggle(r.id)} />
                   <span className="reg-item-alias">{r.alias ?? ('reg' + r.id)}</span>
                   <span className="kv">{r.startAddress} · {r.dataType}</span>
                 </label>
@@ -948,15 +1081,15 @@ function RegisterSelectModal({ t, groups, initial, onClose, onApply }: {
   )
 }
 
-function RegisterSelectButton({ t, groups, selected, onApply }: {
-  t: T; groups: DeviceGroup[]; selected: Set<number>; onApply: (s: Set<number>) => void
+function RegisterSelectButton({ t, groups, selected, onApply, max }: {
+  t: T; groups: DeviceGroup[]; selected: Set<number>; onApply: (s: Set<number>) => void; max?: number
 }) {
   const [show, setShow] = useState(false)
   const total = groups.reduce((n, g) => n + g.registers.length, 0)
   return (
     <>
       <button className="btn" onClick={() => setShow(true)}>{t('selectRegisters')} ({selected.size}/{total})</button>
-      {show && <RegisterSelectModal t={t} groups={groups} initial={selected} onClose={() => setShow(false)} onApply={(s) => { onApply(s); setShow(false) }} />}
+      {show && <RegisterSelectModal t={t} groups={groups} max={max} initial={selected} onClose={() => setShow(false)} onApply={(s) => { onApply(s); setShow(false) }} />}
     </>
   )
 }
@@ -992,115 +1125,72 @@ function deriveHistoryRows(pts: Array<{ ts: string; area: string; address: numbe
 }
 
 function HistoryView({ t, device, groups, registers }: { t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
+  const localInput = (date: Date) => toLocalInput(date) + ':' + String(date.getSeconds()).padStart(2, '0')
   const [mode, setMode] = useState<'table' | 'chart'>('table')
-  const [start, setStart] = useState(() => toLocalInput(new Date(Date.now() - 3600_000)))
-  const [end, setEnd] = useState(() => toLocalInput(new Date()))
-  const [pts, setPts] = useState<Array<{ ts: string; area: string; address: number; rawValue: number }>>([])
-  const [rows, setRows] = useState<Array<{ ts: string; values: Record<number, string> }>>([])
-  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [range, setRange] = useState(() => ({ start: localInput(new Date(Date.now() - 3600_000)), end: localInput(new Date()) }))
+  const [preset, setPreset] = useState<number | null>(60)
+  const [page, setPage] = useState(0)
+  const [refresh, setRefresh] = useState(0)
+  const [data, setData] = useState<{ points: HistoryPoint[]; total: number; start: string; end: string; mode: string } | null>(null)
+  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [showExport, setShowExport] = useState(false)
-  const [page, setPage] = useState(0)
-  const [curvePts, setCurvePts] = useState<Array<{ ts: string; area: string; address: number; rawValue: number }>>([])
-  const [curveLoading, setCurveLoading] = useState(false)
-  const [total, setTotal] = useState(0)
-  const [pageSize, setPageSize] = useState(200)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
   const selectedRegisters = registers.filter(r => selected.has(r.id))
-
+  const startMs = Date.parse(range.start), endMs = Date.parse(range.end)
+  const valid = Number.isFinite(startMs) && Number.isFinite(endMs) && startMs < endMs
   useEffect(() => {
+    if (!valid) return
+    const controller = new AbortController()
+    setStatus('loading'); setError(null)
+    const timer = setTimeout(async () => {
+      try {
+        const start = new Date(startMs).toISOString(), end = new Date(endMs).toISOString()
+        const path = mode === 'chart' ? 'curve' : 'page'
+        const response = await request(`/api/data/object/${path}?object_id=${device.id}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&page=${page}&page_size=200&max_points=1200`, { signal: controller.signal })
+        if (controller.signal.aborted) return
+        const points: HistoryPoint[] = response.points ?? response
+        setData({ points, total: response.total ?? points.length, start, end, mode }); setStatus('done')
+      } catch (e) {
+        if (!controller.signal.aborted) { setError(e instanceof Error ? e.message : String(e)); setStatus('error') }
+      }
+    }, 250)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [device.id, startMs, endMs, valid, mode, page, refresh])
+  const changeRange = (start: string, end: string) => { setRange({ start, end }); setPage(0) }
+  const applyPreset = (minutes: number) => {
     const now = new Date()
-    setStart(toLocalInput(new Date(now.getTime() - 3600_000)))
-    setEnd(toLocalInput(now))
-    setPts([]); setRows([]); setStatus('idle'); setError(null)
-    setPage(0); setTotal(0)
-  }, [device.id])
-
-  const rangeInvalid = Boolean(start && end) && new Date(start) >= new Date(end)
-  const canQuery = Boolean(start && end) && !rangeInvalid
-
-  const applyPreset = (kind: '1h' | '6h' | '24h' | 'today') => {
-    const now = new Date()
-    let s: Date
-    if (kind === 'today') s = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
-    else { const h = kind === '1h' ? 1 : kind === '6h' ? 6 : 24; s = new Date(now.getTime() - h * 3600_000) }
-    setStart(toLocalInput(s)); setEnd(toLocalInput(now))
+    const start = minutes === 0 ? new Date(now.getFullYear(), now.getMonth(), now.getDate()) : new Date(now.getTime() - minutes * 60_000)
+    setPreset(minutes); changeRange(localInput(start), localInput(now)); setRefresh(v => v + 1)
   }
-
-  const query = async (targetPage?: number) => {
-    if (!canQuery) return
-    setStatus('loading')
-    try {
-      const startIso = new Date(start).toISOString()
-      const endIso = new Date(end).toISOString()
-      const pg = targetPage ?? page
-      const res = await api.get('/api/data/object/page?object_id=' + device.id + '&start=' + startIso + '&end=' + endIso + '&page=' + pg + '&page_size=' + pageSize)
-      const data: Array<{ ts: string; area: string; address: number; rawValue: number }> = res.points ?? res
-      setPts(data)
-      setRows(deriveHistoryRows(data, registers, selectedRegisters))
-      setPage(pg)
-      setTotal(res.total ?? data.length)
-      setStatus('done')
-      setError(null)
-    } catch (e) {
-      setError((e as any)?.message ?? String(e))
-      setStatus('error')
-    }
-  }
-
-  // 曲线独立拉取整个时间范围的降采样数据（不受表格分页影响）
-  const loadCurve = async () => {
-    if (!canQuery) return
-    setCurveLoading(true)
-    try {
-      const startIso = new Date(start).toISOString()
-      const endIso = new Date(end).toISOString()
-      const data: Array<{ ts: string; area: string; address: number; rawValue: number }> = await api.get('/api/data/object/curve?object_id=' + device.id + '&start=' + startIso + '&end=' + endIso + '&max_points=1200')
-      setCurvePts(data)
-    } catch (e) {
-      setError((e as any)?.message ?? String(e))
-    } finally {
-      setCurveLoading(false)
-    }
-  }
-
-  const doExport = (fmt: 'csv' | 'xlsx') => {
-    if (!canQuery) return
+  const rows = useMemo(() => deriveHistoryRows(data?.points ?? [], registers, selectedRegisters), [data, registers, selected])
+  const doExport = (format: 'csv' | 'xlsx') => {
+    if (!valid) return
     const ids = selectedRegisters.map(r => r.id).join(',')
-    window.open('/api/export/' + fmt + '?object_id=' + device.id + '&start=' + new Date(start).toISOString() + '&end=' + new Date(end).toISOString() + '&tz=' + localTzOffsetMin() + (ids ? '&register_ids=' + ids : ''))
+    window.open('/api/export/' + format + '?object_id=' + device.id + '&start=' + new Date(startMs).toISOString() + '&end=' + new Date(endMs).toISOString() + '&tz=' + localTzOffsetMin() + (ids ? '&register_ids=' + ids : ''))
   }
-
-  return (
-    <div>
-      <div className="toolbar">
-        <label className="hist-label">{t('histStart')}</label>
-        <input className="hist-input" type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
-        <label className="hist-label">{t('histEnd')}</label>
-        <input className="hist-input" type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} />
-        <button className="btn primary" onClick={() => { setPage(0); query(0); void loadCurve() }} disabled={status === 'loading' || !canQuery}>{status === 'loading' ? t('histLoading') : t('histQuery')}</button>
-        <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
-        <div className="seg seg-small">
-          <button className={mode === 'table' ? 'selected' : ''} onClick={() => setMode('table')}>{t('histTable')}</button>
-          <button className={mode === 'chart' ? 'selected' : ''} onClick={() => { setMode('chart'); void loadCurve() }}>{t('tabCurve')}</button>
-        </div>
-        <div style={{ flex: 1 }} />
-        <button className="btn" onClick={() => setShowExport(true)} disabled={!canQuery}>{t('export')}</button>
-      </div>
-      <div className="hist-quick">
-        <span className="hist-label">{t('histQuick')}</span>
-        <div className="seg">
-          <button onClick={() => applyPreset('1h')}>{t('histLast1h')}</button>
-          <button onClick={() => applyPreset('6h')}>{t('histLast6h')}</button>
-          <button onClick={() => applyPreset('24h')}>{t('histLast24h')}</button>
-          <button onClick={() => applyPreset('today')}>{t('histToday')}</button>
-        </div>
-      </div>
-      {showExport && <ExportModal t={t} onClose={() => setShowExport(false)} onPick={(fmt) => { doExport(fmt); setShowExport(false) }} />}
-      {rangeInvalid && <div className="hist-empty warn">{t('histRangeInvalid')}</div>}
-      {!rangeInvalid && mode === 'table' && <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={status} error={error} page={page} total={total} pageSize={pageSize} onPageChange={(pg) => query(pg)} />}
-      {!rangeInvalid && mode === 'chart' && <ChartBody t={t} registers={registers} selected={selected} pts={curvePts} loading={curveLoading} status={status} error={error} />}
+  const currentStatus = data && (data.mode !== mode || Date.parse(data.start) !== startMs || Date.parse(data.end) !== endMs) && status === 'done' ? 'loading' : status
+  return <div className="history-view">
+    <div className="toolbar">
+      <div className="seg"><button className={mode === 'table' ? 'selected' : ''} onClick={() => { setMode('table'); setPage(0) }}>{t('histTable')}</button><button className={mode === 'chart' ? 'selected' : ''} onClick={() => { setMode('chart'); setPage(0) }}>{t('tabCurve')}</button></div>
+      <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
+      <div style={{ flex: 1 }} />
+      <button className="btn" disabled={!valid || selected.size === 0} onClick={() => setShowExport(true)}>{t('export')}</button>
     </div>
-  )
+    <div className="hist-quick history-presets">
+      {[5, 30, 60, 360, 1440, 0].map(minutes => <button key={minutes} className={'btn' + (preset === minutes ? ' selected' : '')} onClick={() => applyPreset(minutes)}>{minutes === 0 ? t('histToday') : minutes < 60 ? t('histMinutes').replace('{n}', String(minutes)) : t('histHours').replace('{n}', String(minutes / 60))}</button>)}
+    </div>
+    <div className="toolbar history-range">
+      <label className="hist-label">{t('histStart')}<input className="hist-input" type="datetime-local" step="1" value={range.start} onChange={e => { setPreset(null); changeRange(e.target.value, range.end) }} /></label>
+      <label className="hist-label">{t('histEnd')}<input className="hist-input" type="datetime-local" step="1" value={range.end} onChange={e => { setPreset(null); changeRange(range.start, e.target.value) }} /></label>
+      <button className="btn primary" disabled={!valid || currentStatus === 'loading'} onClick={() => setRefresh(v => v + 1)}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
+    </div>
+    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={error} range={{ start: startMs, end: endMs }} onQueryRange={(start, end) => { setPreset(null); changeRange(localInput(new Date(start)), localInput(new Date(end))); setRefresh(v => v + 1) }} /> : <>
+      {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
+      <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={error} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
+    </>}
+    {showExport && <ExportModal t={t} onClose={() => setShowExport(false)} onPick={format => { doExport(format); setShowExport(false) }} />}
+  </div>
 }
 
 function HistoryTableBody({ t, rows, selectedRegisters, status, error, page, total, pageSize, onPageChange }: { t: T; rows: Array<{ ts: string; values: Record<number, string> }>; selectedRegisters: Register[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null; page: number; total: number; pageSize: number; onPageChange: (page: number) => void }) {
@@ -1199,158 +1289,248 @@ function tickTime(ts: number, span: number): string {
 }
 
 
-function ChartBody({ t, registers, selected, pts, loading, status, error }: { t: T; registers: Register[]; selected: Set<number>; pts: Array<{ ts: string; area: string; address: number; rawValue: number }>; loading?: boolean; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null }) {
-  const [view, setView] = useState<{ t0: number; t1: number; v0: number; v1: number } | null>(null)
-  const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
-  const [size, setSize] = useState({ w: 900, h: 420 })
-  const svgRef = useRef<SVGSVGElement | null>(null)
-  const plotRef = useRef<HTMLDivElement | null>(null)
-  const roRef = useRef<ResizeObserver | null>(null)
-
-  const hasData = pts.length > 0
-  const showChart = hasData && selected.size > 0
-
-  // 新查询数据到达时重置框选缩放
-  useEffect(() => { setView(null) }, [pts])
-
-  // unmount 时断开 ResizeObserver
-  useEffect(() => () => { roRef.current?.disconnect() }, [])
-
-  // 用 callback ref：在 .chart-plot 真正挂载时测量，避免因 loading/status 提前 return 导致 ref 为空的时机问题
-  const setPlotRef = useCallback((el: HTMLDivElement | null) => {
-    plotRef.current = el
-    roRef.current?.disconnect()
-    if (!el) return
-    const measure = () => {
-      const r = el.getBoundingClientRect()
-      const w = Math.round(r.width), h = Math.round(r.height)
-      if (w > 10 && h > 10) setSize({ w, h })
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    roRef.current = ro
+function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
+  t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; threshold: number
+}) {
+  const numericGroups = useMemo(() => groups.map(g => {
+    let end = -1
+    return { ...g, registers: [...g.registers].sort((a, b) => a.startAddress - b.startAddress).filter(r => {
+      if (r.startAddress < end) return false
+      end = r.startAddress + registerWidth(r.dataType)
+      return end <= g.startAddress + g.quantity && !isHexType(r.dataType) && !isBinType(r.dataType)
+    }) }
+  }), [groups])
+  const candidates = numericGroups.flatMap(g => g.registers)
+  const [selection, setSelection] = useState<Set<number> | null>(null)
+  const chosen = candidates.filter(r => selection === null || selection.has(r.id)).slice(0, selection === null ? 4 : 8)
+  const selected = new Set(chosen.map(r => r.id))
+  const [seconds, setSeconds] = useState(60)
+  const [frame, setFrame] = useState<{ buffer: CurveBuffer; now: number }>({ buffer: {}, now: Date.now() })
+  const [frozen, setFrozen] = useState<typeof frame | null>(null)
+  const buffer = useRef<CurveBuffer>({})
+  const inputs = useRef({ chosen, latest, device, groups, groupErrors, threshold })
+  inputs.current = { chosen, latest, device, groups, groupErrors, threshold }
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const input = inputs.current
+      const blocked = new Set(input.groups.filter(g => !input.device.isActive || !g.isActive || input.groupErrors[g.id]).flatMap(g => g.registers.map(r => r.id)))
+      const now = Date.now()
+      buffer.current = sampleCurve(buffer.current, input.chosen, input.latest, input.device.id, now, input.threshold, blocked)
+      setFrame({ buffer: buffer.current, now })
+    }, 250)
+    return () => clearInterval(timer)
   }, [])
-
-  const W = size.w, H = size.h
-  const L = 60, R = 14, T = 12, B = 28 // 四周留白：左=Y 轴标签，下=X 轴标签
-  const rawByTs = new Map<number, Map<string, Record<number, number>>>()
-  for (const p of pts) {
-    const t = new Date(p.ts).getTime()
-    if (!rawByTs.has(t)) rawByTs.set(t, new Map())
-    const area = p.area
-    const byArea = rawByTs.get(t)!
-    if (!byArea.has(area)) byArea.set(area, {})
-    byArea.get(area)![p.address] = p.rawValue
-  }
-  const byReg = new Map<number, Array<[number, number]>>()
-  for (const [t, byArea] of rawByTs) {
-    const decoded = new Map<number, number | bigint>()
-    for (const area of ['coil', 'discrete-input', 'holding-register', 'input-register']) {
-      const subset = registers.filter(r => areaForFunctionCode(r.functionCode) === area)
-      for (const [id, value] of decodeRawByAddr(subset, byArea.get(area) ?? {})) decoded.set(id, value)
+  const visible = frozen ?? frame
+  const endTime = visible.now, startTime = endTime - seconds * 1000
+  const [size, setSize] = useState({ w: 800, h: 360 })
+  const observer = useRef<ResizeObserver | null>(null)
+  const setPlot = useCallback((el: HTMLDivElement | null) => {
+    observer.current?.disconnect()
+    if (!el) return
+    const measure = () => { if (el.clientWidth > 0) setSize({ w: el.clientWidth, h: el.clientHeight }) }
+    measure(); observer.current = new ResizeObserver(measure); observer.current.observe(el)
+  }, [])
+  useEffect(() => () => observer.current?.disconnect(), [])
+  const [hover, setHover] = useState<number | null>(null)
+  const series = chosen.map(r => ({ r, color: CHART_COLORS[Math.abs(r.id) % CHART_COLORS.length], points: (visible.buffer[r.id]?.points ?? []).filter(p => p[0] >= startTime && p[0] <= endTime) }))
+  let low = Infinity, high = -Infinity
+  for (const s of series) for (const [, v] of s.points) if (v !== null) { low = Math.min(low, v); high = Math.max(high, v) }
+  const hasData = Number.isFinite(low) && Number.isFinite(high)
+  if (!hasData) { low = 0; high = 1 }
+  const pad = low === high ? Math.max(1, Math.abs(low) * .05) : (high - low) * .08
+  low -= pad; high += pad
+  const left = 70, top = 16, bottom = 32, right = 16
+  const plotWidth = Math.max(1, size.w - left - right), plotHeight = Math.max(1, size.h - top - bottom)
+  const x = (time: number) => left + (time - startTime) / (endTime - startTime) * plotWidth
+  const y = (value: number) => top + (high - value) / (high - low) * plotHeight
+  const pathFor = (points: Array<[number, number | null]>) => {
+    let path = '', previous: number | null = null
+    for (const [time, value] of points) {
+      if (value === null) { previous = null; continue }
+      path += `${previous === null || time - previous > threshold ? 'M' : 'L'}${x(time).toFixed(2)},${y(value).toFixed(2)} `
+      previous = time
     }
-    for (const r of registers) {
-      if (!selected.has(r.id)) continue
-      const v = decoded.get(r.id)
-      if (v == null) continue
-      const num = typeof v === 'bigint' ? Number(v) : v
-      const arr = byReg.get(r.id) ?? []
-      arr.push([t, num])
-      byReg.set(r.id, arr)
-    }
+    return path
   }
-  const series = [...byReg.entries()].map(([id, arr], i) => ({ id, color: CHART_COLORS[i % CHART_COLORS.length], arr: arr.sort((a, b) => a[0] - b[0]) }))
-  const allT = series.flatMap(s => s.arr.map(p => p[0]))
-  const allV = series.flatMap(s => s.arr.map(p => p[1]))
-  const hasSeries = allT.length > 0
-  const fullMinT = hasSeries ? Math.min(...allT) : 0, fullMaxT = hasSeries ? Math.max(...allT) : 1
-  const fullMinV = hasSeries ? Math.min(...allV) : 0, fullMaxV = hasSeries ? Math.max(...allV) : 1
-  const tMin = view?.t0 ?? fullMinT, tMax = view?.t1 ?? fullMaxT, vMin = view?.v0 ?? fullMinV, vMax = view?.v1 ?? fullMaxV
-  const plotW = W - L - R, plotH = H - T - B
-  const x = (ts: number) => L + (tMax === tMin ? 0 : (ts - tMin) / (tMax - tMin)) * plotW
-  const y = (v: number) => H - B - (vMax === vMin ? 0 : (v - vMin) / (vMax - vMin)) * plotH
-  const path = (arr: Array<[number, number]>) => arr.map(([ts, v], i) => (i === 0 ? 'M' : 'L') + x(ts).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ')
-
-  // 刻度数量随容器尺寸自适应：X 轴每 ~80px 一个，Y 轴每 ~36px 一个
-  const xTickCount = Math.max(3, Math.min(30, Math.round(plotW / 80)))
-  const yTickCount = Math.max(3, Math.min(20, Math.round(plotH / 36)))
-  const yTickVals = hasSeries ? yTicks(vMin, vMax, yTickCount) : []
-  const xTickVals = hasSeries ? timeTicks(tMin, tMax, xTickCount) : []
-  const span = tMax - tMin
-
-  // SVG 无 viewBox，用户坐标 = CSS 像素，鼠标位置直接减矩形左上角
-  const toSvg = (clientX: number, clientY: number) => {
-    const rect = svgRef.current?.getBoundingClientRect()
-    if (!rect) return { x: 0, y: 0 }
-    return { x: clientX - rect.left, y: clientY - rect.top }
+  const cursorTime = hover === null ? null : startTime + hover * (endTime - startTime)
+  const clear = () => {
+    buffer.current = Object.fromEntries(Object.entries(buffer.current).map(([id, track]) => [id, { ...track, points: [] }]))
+    setFrame({ buffer: buffer.current, now: Date.now() }); setFrozen(null); setHover(null)
   }
-
-  if (status === 'idle') return <div className="hist-empty">{t('histIdle')}</div>
-  if (status === 'error') return <div className="hist-empty warn">{t('histError')} {error}</div>
-  if (status === 'loading' || loading) return null
-  if (!hasData) return <div className="hist-empty">{t('histEmpty')}</div>
-  if (selected.size === 0) return <div className="hist-empty">{t('histNoRegs')}</div>
-  return (
-    <div className="chart-wrap">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            <div className="chart-hint" style={{ marginBottom: 0 }}>{t('curveZoomHint')}</div>
-            <div style={{ flex: 1 }} />
-            {view && <button className="btn" onClick={() => setView(null)}>{t('curveReset')}</button>}
-          </div>
-          <div className="chart-plot" ref={setPlotRef} style={{ width: '100%', height: 'calc(100vh - 330px)', minHeight: 260 }}>
-            <svg
-              ref={svgRef}
-              width={W}
-              height={H}
-              style={{ display: 'block', cursor: 'crosshair', userSelect: 'none', WebkitUserSelect: 'none' }}
-              onMouseDown={(e) => { if (!hasSeries) return; const p = toSvg(e.clientX, e.clientY); setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }) }}
-            onMouseMove={(e) => { if (!drag) return; const p = toSvg(e.clientX, e.clientY); setDrag({ ...drag, x1: p.x, y1: p.y }) }}
-            onMouseUp={() => {
-              if (!drag) return
-              const { x0, y0, x1, y1 } = drag
-              setDrag(null)
-              const left = Math.max(L, Math.min(x0, x1))
-              const right = Math.min(W - R, Math.max(x0, x1))
-              const top = Math.max(T, Math.min(y0, y1))
-              const bottom = Math.min(H - B, Math.max(y0, y1))
-              const dx = right - left, dy = bottom - top
-              if (x1 < x0 && y1 < y0) { setView(null); return }
-              if (x1 > x0 && y1 > y0 && dx > 10 && dy > 10) {
-                const nt0 = tMin + (left - L) / plotW * (tMax - tMin)
-                const nt1 = tMin + (right - L) / plotW * (tMax - tMin)
-                const nv1 = vMin + (H - B - top) / plotH * (vMax - vMin)
-                const nv0 = vMin + (H - B - bottom) / plotH * (vMax - vMin)
-                setView({ t0: Math.min(nt0, nt1), t1: Math.max(nt0, nt1), v0: Math.min(nv0, nv1), v1: Math.max(nv0, nv1) })
-              }
-            }}
-            onMouseLeave={() => setDrag(null)}
-          >
-            {yTickVals.map((v) => (
-              <g key={'y' + v}>
-                <line x1={L} y1={y(v)} x2={W - R} y2={y(v)} stroke="var(--border-1)" strokeWidth="1" />
-                <text x={L - 6} y={y(v) + 4} textAnchor="end" fontSize="10" fill="var(--text-3)" pointerEvents="none">{tickNum(v)}</text>
-              </g>
-            ))}
-            {xTickVals.map((tv) => (
-              <g key={'x' + tv}>
-                <line x1={x(tv)} y1={T} x2={x(tv)} y2={H - B} stroke="var(--border-1)" strokeWidth="1" />
-                <text x={x(tv)} y={H - B + 16} textAnchor="middle" fontSize="10" fill="var(--text-3)" pointerEvents="none">{tickTime(tv, span)}</text>
-              </g>
-            ))}
-            <line x1={L} y1={T} x2={L} y2={H - B} stroke="var(--border-2)" strokeWidth="1" />
-            <line x1={L} y1={H - B} x2={W - R} y2={H - B} stroke="var(--border-2)" strokeWidth="1" />
-            {series.map(s => <path key={s.id} d={path(s.arr)} fill="none" stroke={s.color} strokeWidth="1.6" />)}
-            {drag && (
-              <rect x={Math.min(drag.x0, drag.x1)} y={Math.min(drag.y0, drag.y1)} width={Math.abs(drag.x1 - drag.x0)} height={Math.abs(drag.y1 - drag.y0)} className="zoom-box" />
-            )}
-            </svg>
-          </div>
-          <div className="legend">
-            {series.map(s => { const r = registers.find(rr => rr.id === s.id); return <span key={s.id} className="legend-item"><span className="legend-swatch" style={{ background: s.color }} />{r?.alias ?? s.id}</span> })}
-          </div>
+  return <div className="live-curve-view">
+    <div className="toolbar">
+      <RegisterSelectButton t={t} groups={numericGroups} selected={selected} max={8} onApply={ids => { setSelection(ids); setFrozen(null); setHover(null) }} />
+      <label className="live-window-label">{t('liveWindow')}<select className="hist-input" value={seconds} onChange={e => { setSeconds(Number(e.target.value)); setHover(null) }}>{[30, 60, 300, 600].map(n => <option key={n} value={n}>{n < 60 ? `${n} s` : `${n / 60} min`}</option>)}</select></label>
+      <button className="btn" onClick={() => { setFrozen(frozen ? null : frame); setHover(null) }}>{t(frozen ? 'resumeCurve' : 'freezeCurve')}</button>
+      <button className="btn" onClick={clear}>{t('clearCurve')}</button>
+      <span className={'status-badge' + (!frozen ? ' on' : '')}>{t(frozen ? 'curvePaused' : 'curveTracking')}</span>
     </div>
-  )
+    <p className="chart-hint">{t('liveCurveHint')}</p>
+    <div className="chart-wrap">
+      <div className="live-curve-plot" ref={setPlot}>
+        <svg width="100%" height="100%" role="img" aria-label={t('liveCurve')}
+          onMouseMove={e => { const rect = e.currentTarget.getBoundingClientRect(); setHover(Math.max(0, Math.min(1, (e.clientX - rect.left - left) / plotWidth))) }} onMouseLeave={() => setHover(null)}>
+          {yTicks(low, high, 5).map(v => <g key={v}><line x1={left} x2={size.w - right} y1={y(v)} y2={y(v)} stroke="var(--border-1)" /><text x={left - 9} y={y(v) + 4} textAnchor="end" fill="var(--text-3)" fontSize={11}>{tickNum(v)}</text></g>)}
+          {timeTicks(startTime, endTime, Math.max(2, Math.floor(plotWidth / 110))).map(time => <text key={time} x={x(time)} y={size.h - 9} textAnchor="middle" fill="var(--text-3)" fontSize={11}>{tickTime(time, endTime - startTime)}</text>)}
+          {series.map(s => <g key={s.r.id}><path data-live-series={s.r.id} d={pathFor(s.points)} fill="none" stroke={s.color} strokeWidth={1.8} strokeLinejoin="round" />{s.points.length === 1 && s.points[0][1] !== null && <circle cx={x(s.points[0][0])} cy={y(s.points[0][1])} r={3} fill={s.color} />}</g>)}
+          {cursorTime !== null && <line x1={x(cursorTime)} x2={x(cursorTime)} y1={top} y2={size.h - bottom} stroke="var(--text-3)" strokeDasharray="4 4" />}
+        </svg>
+        {(!hasData || chosen.length === 0) && <div className="live-curve-empty">{t(candidates.length === 0 ? 'curveNoNumeric' : chosen.length === 0 ? 'histNoRegs' : 'curveWaiting')}</div>}
+      </div>
+      <div className="live-curve-legend">
+        {cursorTime !== null && <span className="point-time">{t('curveTime')}: {tickTime(cursorTime, seconds * 1000)}</span>}
+        {series.map(s => {
+          const at = cursorTime ?? endTime
+          let sample: [number, number | null] | undefined
+          for (const p of s.points) if (p[0] <= at) sample = p
+          const value = sample && at - sample[0] <= threshold ? sample[1] : null
+          return <span key={s.r.id} className="live-legend-value"><i style={{ background: s.color }} /><span>{s.r.alias || `#${s.r.startAddress}`} <small>({s.r.startAddress})</small></span><strong>{value == null ? '—' : formatNumber(value)}</strong></span>
+        })}
+      </div>
+    </div>
+    <p className="chart-hint live-curve-footnote">{t('liveRawHint')}</p>
+  </div>
+}
+
+function ChartBody({ t, registers, selected, pts, status, error, range, onQueryRange }: {
+  t: T; registers: Register[]; selected: Set<number>; pts: HistoryPoint[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null
+  range: { start: number; end: number }; onQueryRange: (start: number, end: number) => void
+}) {
+  const [view, setView] = useState<{ start: number; end: number } | null>(null)
+  const [yView, setYView] = useState<{ min: number; max: number } | null>(null)
+  const [hidden, setHidden] = useState<Set<number>>(new Set())
+  const [relative, setRelative] = useState(false)
+  const [hover, setHover] = useState<number | null>(null)
+  const [drag, setDrag] = useState<{ start: number; end: number; fromY: number; toY: number } | null>(null)
+  const dragRef = useRef<typeof drag>(null)
+  const [size, setSize] = useState({ w: 800, h: 380 })
+  const observer = useRef<ResizeObserver | null>(null)
+  const clipId = useId()
+  const series = useMemo(() => decodeHistorySeries(registers, pts, selected), [registers, pts, selected])
+  useEffect(() => { setView(null); setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [pts, range.start, range.end])
+  const setPlot = useCallback((el: HTMLDivElement | null) => {
+    observer.current?.disconnect()
+    if (!el) return
+    const measure = () => { if (el.clientWidth) setSize({ w: el.clientWidth, h: el.clientHeight }) }
+    measure(); observer.current = new ResizeObserver(measure); observer.current.observe(el)
+  }, [])
+  useEffect(() => () => observer.current?.disconnect(), [])
+  const start = view?.start ?? range.start, end = view?.end ?? range.end
+  const span = Math.max(1, end - start)
+  const L = 72, R = 18, T = 16, B = 34
+  const pw = Math.max(1, size.w - L - R), ph = Math.max(1, size.h - T - B)
+  const x = (time: number) => L + (time - start) / span * pw
+  const visibleSeries = series.map(s => {
+    const samples = s.samples.filter(p => p[0] >= start && p[0] <= end)
+    let min = Infinity, max = -Infinity, last: number | null = null
+    for (const [, v] of samples) if (v !== null) { min = Math.min(min, v); max = Math.max(max, v); last = v }
+    return { ...s, samples, min, max, last, color: CHART_COLORS[Math.abs(s.id) % CHART_COLORS.length] }
+  })
+  let minimum = Infinity, maximum = -Infinity
+  for (const s of visibleSeries) if (!hidden.has(s.id)) { minimum = Math.min(minimum, s.min); maximum = Math.max(maximum, s.max) }
+  const anyVisible = Number.isFinite(minimum) && Number.isFinite(maximum)
+  if (!anyVisible) { minimum = 0; maximum = 1 }
+  const pad = minimum === maximum ? Math.max(1, Math.abs(minimum) * .05) : (maximum - minimum) * .08
+  const yMin = yView?.min ?? (relative ? 0 : minimum - pad), yMax = yView?.max ?? (relative ? 100 : maximum + pad)
+  const ySpan = yMax - yMin
+  const adjustY = (scale: number, move = 0) => {
+    const center = yMin + ySpan * (.5 + move), half = ySpan * scale / 2
+    const min = center - half, max = center + half
+    if (Number.isFinite(min) && Number.isFinite(max) && max - min > Math.max(1, Math.abs(center)) * Number.EPSILON * 16) setYView({ min, max })
+    setHover(null)
+  }
+  const y = (value: number) => T + (yMax - value) / (yMax - yMin) * ph
+  const displayValue = (value: number, s: typeof visibleSeries[number]) => relative ? s.max === s.min ? 50 : (value - s.min) / (s.max - s.min) * 100 : value
+  const pathFor = (s: typeof visibleSeries[number]) => {
+    let path = '', previous: number | null = null
+    for (const [time, value] of s.samples) {
+      if (value === null) { previous = null; continue }
+      path += `${previous === null || time - previous > s.gapMs ? 'M' : 'L'}${x(time).toFixed(2)},${y(displayValue(value, s)).toFixed(2)} `
+      previous = time
+    }
+    return path
+  }
+  const focusRange = (center: number, width: number) => {
+    const clampedWidth = Math.min(range.end - range.start, Math.max(1000, width))
+    const left = Math.max(range.start, Math.min(range.end - clampedWidth, center - clampedWidth / 2))
+    setView({ start: left, end: left + clampedWidth }); setHover(null)
+  }
+  const pointerTime = (e: React.PointerEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    return start + Math.max(0, Math.min(1, (e.clientX - rect.left - L) / pw)) * span
+  }
+  const pointerValue = (e: React.PointerEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    return yMax - Math.max(0, Math.min(1, (e.clientY - rect.top - T) / ph)) * ySpan
+  }
+  const tooltipRows = hover === null ? [] : visibleSeries.filter(s => !hidden.has(s.id)).map(s => ({ ...s, point: nearestHistorySample(s.samples, hover) }))
+  if (status === 'loading') return <div className="hist-empty" role="status">{t('histLoading')}</div>
+  if (status === 'error') return <div className="hist-empty warn" role="alert">{t('histError')}: {error}</div>
+  if (selected.size === 0) return <div className="hist-empty">{t('histNoRegs')}</div>
+  if (!pts.length) return <div className="hist-empty">{t('histEmpty')}</div>
+  if (!series.length) return <div className="hist-empty">{t('histNoNumeric')}</div>
+  return <div className="chart-wrap history-chart">
+    <div className="toolbar history-chart-tools">
+      <button className="btn" onClick={() => focusRange((start + end) / 2, span / 2)} disabled={span <= 1000}>{t('histZoomIn')}</button>
+      <button className="btn" onClick={() => focusRange((start + end) / 2, span * 2)} disabled={!view}>{t('histZoomOut')}</button>
+      <button className="btn" aria-label={t('histMoveEarlier')} onClick={() => focusRange((start + end) / 2 - span / 2, span)} disabled={!view || start <= range.start}>←</button>
+      <button className="btn" aria-label={t('histMoveLater')} onClick={() => focusRange((start + end) / 2 + span / 2, span)} disabled={!view || end >= range.end}>→</button>
+      <button className="btn" onClick={() => adjustY(.5)}>Y 轴放大</button>
+      <button className="btn" onClick={() => adjustY(2)}>Y 轴缩小</button>
+      <button className="btn" aria-label="向上移动数值范围" onClick={() => adjustY(1, .5)}>↑</button>
+      <button className="btn" aria-label="向下移动数值范围" onClick={() => adjustY(1, -.5)}>↓</button>
+      <button className="btn" onClick={() => { setYView(null); setHover(null) }} disabled={!yView}>Y 轴自适应</button>
+      <button className="btn" onClick={() => { setView(null); setYView(null); setHover(null) }} disabled={!view && !yView}>{t('curveReset')}</button>
+      {view && <button className="btn primary" onClick={() => onQueryRange(start, end)}>{t('histQueryZoom')}</button>}
+      <label className="issues-filter"><input type="checkbox" checked={relative} onChange={e => { setRelative(e.target.checked); setYView(null) }} />{t('histRelative')}</label>
+    </div>
+    <p className="chart-hint">悬停查看读数 · 横向拖动放大时间，纵向拖动放大 Y 轴，斜向框选同时放大两轴 · 双击恢复全范围</p>
+    <div className="history-chart-range">{formatLocalTs(new Date(start).toISOString())} — {formatLocalTs(new Date(end).toISOString())}</div>
+    <div className="history-chart-plot" ref={setPlot}>
+      <svg width="100%" height="100%" role="img" aria-label={t('tabCurve')} style={{ touchAction: 'none' }}
+        onPointerDown={e => { if (e.button !== 0) return; const time = pointerTime(e), value = pointerValue(e); dragRef.current = { start: time, end: time, fromY: value, toY: value }; setDrag(dragRef.current); setHover(null); e.currentTarget.setPointerCapture(e.pointerId) }}
+        onPointerMove={e => { const time = pointerTime(e); if (dragRef.current) { dragRef.current.end = time; dragRef.current.toY = pointerValue(e); setDrag({ ...dragRef.current }) } else setHover(time) }}
+        onPointerUp={e => {
+          const selection = dragRef.current
+          dragRef.current = null; setDrag(null)
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+          if (selection) {
+            selection.end = pointerTime(e); selection.toY = pointerValue(e)
+            const zoomX = Math.abs(selection.end - selection.start) / span * pw > 8
+            const zoomY = Math.abs(selection.toY - selection.fromY) / ySpan * ph > 8
+            if (zoomX) focusRange((selection.start + selection.end) / 2, Math.abs(selection.end - selection.start))
+            if (zoomY) setYView({ min: Math.min(selection.fromY, selection.toY), max: Math.max(selection.fromY, selection.toY) })
+            if (!zoomX && !zoomY) setHover(pointerTime(e))
+          }
+        }}
+        onPointerCancel={() => { dragRef.current = null; setDrag(null) }}
+        onLostPointerCapture={() => { dragRef.current = null; setDrag(null) }}
+        onPointerLeave={() => { if (!dragRef.current) setHover(null) }}
+        onDoubleClick={() => { setView(null); setYView(null); setHover(null) }}>
+        <defs><clipPath id={clipId}><rect x={L} y={T} width={pw} height={ph} /></clipPath></defs>
+        {yTicks(yMin, yMax, 5).map(value => <g key={value}><line x1={L} x2={size.w - R} y1={y(value)} y2={y(value)} stroke="var(--border-1)" /><text x={L - 8} y={y(value) + 4} textAnchor="end" fontSize={11} fill="var(--text-3)">{tickNum(value)}{relative ? '%' : ''}</text></g>)}
+        {timeTicks(start, end, Math.max(2, Math.floor(pw / 110))).map(time => <text key={time} x={x(time)} y={size.h - 10} textAnchor="middle" fontSize={11} fill="var(--text-3)">{tickTime(time, span)}</text>)}
+        <g clipPath={`url(#${clipId})`}>
+          {visibleSeries.filter(s => !hidden.has(s.id)).map(s => <g key={s.id}><path data-history-series={s.id} d={pathFor(s)} stroke={s.color} fill="none" strokeWidth={1.8} />{s.samples.filter(p => p[1] !== null).length <= 1 && s.samples.filter((p): p is [number, number] => p[1] !== null).map(p => <circle key={p[0]} cx={x(p[0])} cy={y(displayValue(p[1], s))} r={3} fill={s.color} />)}</g>)}
+          {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={T} y2={size.h - B} stroke="var(--text-3)" strokeDasharray="4 4" />}
+          {drag && <rect className="zoom-box" x={Math.abs(x(drag.end) - x(drag.start)) > 8 ? x(Math.min(drag.start, drag.end)) : L} y={Math.abs(y(drag.toY) - y(drag.fromY)) > 8 ? y(Math.max(drag.fromY, drag.toY)) : T} width={Math.abs(x(drag.end) - x(drag.start)) > 8 ? Math.abs(x(drag.end) - x(drag.start)) : pw} height={Math.abs(y(drag.toY) - y(drag.fromY)) > 8 ? Math.abs(y(drag.toY) - y(drag.fromY)) : ph} />}
+        </g>
+      </svg>
+      {!anyVisible && <div className="live-curve-empty">{t('histNoVisible')}</div>}
+      {hover !== null && !drag && <div className="history-tooltip" style={{ left: Math.max(4, Math.min(size.w - 265, x(hover) + 12)) }}>
+        <strong>{t('histNearest')}</strong>
+        {tooltipRows.map(s => { const reg = registers.find(r => r.id === s.id); const point = s.point; const valid = point && Math.abs(point[0] - hover) <= s.gapMs / 2; return <div key={s.id}><span style={{ color: s.color }}>{reg?.alias || `#${reg?.startAddress ?? s.id}`}</span><b>{valid && point[1] !== null ? formatNumber(point[1]) : '—'}</b><small>{valid ? formatLocalTs(new Date(point[0]).toISOString()) : t('histEmpty')}</small></div> })}
+      </div>}
+    </div>
+    <div className="history-legend-head"><span>{t('histLegendHint')}</span><span>{t('histStatsHint')}</span></div>
+    <div className="history-legend">
+      {visibleSeries.map(s => { const reg = registers.find(r => r.id === s.id); return <button key={s.id} className={'history-series-toggle' + (hidden.has(s.id) ? ' muted' : '')} aria-pressed={!hidden.has(s.id)} onClick={() => setHidden(old => { const next = new Set(old); if (next.has(s.id)) next.delete(s.id); else next.add(s.id); return next })}>
+        <span className="legend-swatch" style={{ background: s.color }} /><strong>{reg?.alias || `#${reg?.startAddress ?? s.id}`} <small>({reg?.startAddress})</small></strong>
+        <span>Min <b>{Number.isFinite(s.min) ? formatNumber(s.min) : '—'}</b></span><span>Max <b>{Number.isFinite(s.max) ? formatNumber(s.max) : '—'}</b></span><span>{t('histLastValue')} <b>{s.last === null ? '—' : formatNumber(s.last)}</b></span>
+      </button> })}
+    </div>
+    <p className="chart-hint history-sampling-note">{t('histSamplingNote')}{relative && ' ' + t('histRelativeNote')}</p>
+  </div>
 }
 
 function RawDataView({ t, device }: { t: T; device: Device | null }) {
