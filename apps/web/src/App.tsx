@@ -33,7 +33,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     groupOldValues: '存在旧值', groupPartialData: '数据不完整', groupCommunicationError: '通信异常', groupTimeHint: '按组内最早的采样时间显示，避免部分数据未更新被掩盖',
     resizeSidebar: '调整侧边栏宽度', resizeSidebarHint: '拖动调整宽度，双击恢复默认；也可使用左右方向键',
     sortDevices: '调整顺序', finishSorting: '完成排序', moveUp: '上移', moveDown: '下移', dragDevice: '拖动排序', sortingHint: '拖动手柄或点击箭头调整顺序，自动保存在当前浏览器。排序时显示全部设备。', orderSaveFailed: '顺序已调整，但浏览器无法保存；刷新后可能恢复。',
-    observe: "观测", configure: "配置", searchPoints: "搜索点位名称或地址", onlyIssues: "只看异常 / 过期", noMatchingPoints: "没有匹配的点位", lastSample: "最近采样", notSampled: "尚未采集", secondsAgo: "{n} 秒前", fresh: "数据新鲜", oldValue: "旧值", coveredWord: "合并占位", shortData: "数据不足", pausedData: "采集已暂停", sampling: "采集中", connectionPending: "等待通信", pageConnection: "页面实时连接异常，正在自动重连；暂用定时查询更新数据。", ageHint: "数据超过 {n} 秒未更新将标记为旧值（按轮询配置估算）", operationOk: "操作成功", operationFailed: "操作失败", working: "处理中…", dismiss: "关闭提示", requiredFields: "请填写名称和连接地址", pointStatus: "数据状态", updatedAt: "更新时间", currentValue: "当前值", noActiveGroups: "没有启用的分组", readOnly: "只读", pointWriteHint: "写入会改变设备值，请核对设备和地址。", importResult: "已导入 {g} 组 / {r} 个点位", loadFailed: "加载失败", refresh: "重试加载",
+    observe: "观测", configure: "配置", searchPoints: "搜索点位名称或地址", onlyIssues: "只看异常 / 过期", noMatchingPoints: "没有匹配的点位", lastSample: "最近采样", notSampled: "尚未采集", secondsAgo: "{n} 秒前", fresh: "数据新鲜", oldValue: "旧值", coveredWord: "合并占位", shortData: "数据不足", pausedData: "采集已暂停", sampling: "采集中", connectionPending: "等待通信", pageConnection: "实时更新暂时中断，正在通过定时刷新获取数据。", pageUpdateFailed: "数据更新中断，当前保留最后一次获取的结果，正在重试。", pageUpdateTrying: "正在恢复数据更新，并尝试定时刷新。", ageHint: "数据超过 {n} 秒未更新将标记为旧值（按轮询配置估算）", operationOk: "操作成功", operationFailed: "操作失败", working: "处理中…", dismiss: "关闭提示", requiredFields: "请填写名称和连接地址", pointStatus: "数据状态", updatedAt: "更新时间", currentValue: "当前值", noActiveGroups: "没有启用的分组", readOnly: "只读", pointWriteHint: "写入会改变设备值，请核对设备和地址。", importResult: "已导入 {g} 组 / {r} 个点位", loadFailed: "加载失败", refresh: "重试加载",
     searchDevices: '搜索设备或地址', noSearchResults: '没有匹配的设备', expandNav: '展开导航', collapseNav: '收起导航', overview: '设备概览', transportLabel: '通信协议', pointsLabel: '配置点位', groupsLabel: '采集分组', faultsLabel: '异常分组',
     brand: 'ProbeStation',
     brandSub: '设备观测与测试',
@@ -66,7 +66,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     write: '写', valuePh: '值', writeErrEmpty: '请输入值', writeErrNaN: '请输入有效数字', writeOk: '已写入',
     noRegisters: '暂无寄存器（可通过 API 导入 MBS/MBP 文件）',
     settingsTitle: '设置', settingsSub: '外观、语言与数据管理',
-    tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件', tabRaw: '原始数据', histTable: '表格',
+    tabLive: '实时数据', tabHistory: '历史数据', tabCurve: '曲线', tabFirmware: '固件', tabRaw: '通信诊断', histTable: '表格',
     groupCount: '{n} 组',
     newGroup: '新建分组', importPointBook: '导入点位', exportPointBook: '导出点位', editGroup: '编辑分组', groupName: '组名', slaveId: '从站 ID', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', edit: '编辑', save: '保存', fcReadCoils: '读线圈', fcReadDiscrete: '读离散输入', fcReadHolding: '读保持寄存器', fcReadInput: '读输入寄存器',
     histHint: '最近 1 小时数据', histStart: '开始时间', histEnd: '结束时间', histQuery: '查询', histLoading: '查询中…', histPrev: '上一页', histNext: '下一页', histFirst: '首页', histLast: '末页', histTotal: '共 {n} 条', histPage: '第 {x}/{y} 页', noHistory: '暂无历史数据', colTime: '时间', histTruncated: '结果较多，仅显示最近 {n} 条', histIdle: '选择时间范围后点击「查询」', histEmpty: '该时间段暂无历史数据', histError: '查询失败', histRangeInvalid: '开始时间必须早于结束时间', histLast1h: '最近 1 小时', histLast6h: '最近 6 小时', histLast24h: '最近 24 小时', histToday: '今天', histQuick: '快捷', selectRegisters: '选择寄存器', selectAll: '全选', clearAll: '清空', histNoRegs: '未选择任何寄存器', curveHint: '最近 1 小时曲线', curveReset: '重置缩放', curveZoomHint: '框选放大：左上→右下拖拽；恢复：右下→左上拖拽', firmwareHint: '暂无固件，请先上传', fwUpload: '上传固件', fwAbort: '中止升级', fwState: '状态', fwUpgrade: '升级', fwUploaded: '固件已上传', fwUploadErr: '上传失败', fwStarted: '升级已发起', fwUpgradeErr: '升级发起失败', fwDelete: '删除', fwDeleted: '固件已删除', fwDeleteErr: '删除失败', confirmDeleteFirmware: '确定删除固件 {name} 吗？',
@@ -76,7 +76,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     dataMgmt: '数据管理', runLogs: '运行日志', clearLogs: '清空日志', logsCleared: '日志已清空', retentionLabel: '历史保留', retentionSaved: '保留时长已保存', retentionForever: '永久',
     newDeviceTitle: '新建设备', editDeviceTitle: '编辑设备', name: '名称', ip: 'IP 地址', port: '端口', transport: '连接方式', transportTcp: 'TCP 网口', transportRtu: 'RTU 串口', serialPath: '串口路径', baudRate: '波特率', parity: '校验位', stopBits: '停止位', dataBits: '数据位', flowControl: '流控', slaveIdLabel: '从站地址', pollIntervalLabel: '扫描间隔(ms)', pollIntervalHint: '按分组轮流轮询，每个分组约每「间隔 × 分组数」刷新一次', timeoutLabel: '读写超时(ms)', timeoutHint: '读/写寄存器请求的超时，默认 3000 毫秒（超过判失败）', cancel: '取消', add: '添加',
     importPoints: '导入点表', importTitle: '智能导入点表', importHint: '粘贴 CSV（首行表头含 地址/名称/类型/枚举 等列），或上传 CSV/XLSX 文件；也支持 JSON 数组。', importPh: '粘贴点表 CSV（首行表头：地址,名称,类型,枚举）', importFile: '上传文件', importDo: '导入', importEmpty: '请输入内容或选择文件', impBadJson: '无法解析 JSON 数组', importUpdated: '更新 {n} 个', importSkipped: '跳过 {n} 个', importErrors: '错误', importColumns: '识别列',
-    tabMonitor: '设备观测', tabDatabase: '数据库', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
+    tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
     histMinutes: "Last {n} minutes", histHours: "Last {n} hours", histNoNumeric: "No plottable numeric data. Check types or select other points.", histZoomIn: "Zoom in", histZoomOut: "Zoom out", histMoveEarlier: "Move earlier", histMoveLater: "Move later", histQueryZoom: "Query zoomed range", histRelative: "Relative scale per series", histInteractionHint: "Hover for values · Drag horizontally to select time · Double-click to reset", histNoVisible: "No visible series in this range. Reset zoom or enable a legend item.", histNearest: "Nearest samples (actual times)", histLegendHint: "Click a legend item to hide / show", histStatsHint: "Statistics of displayed samples in the visible range", histLastValue: "Last", histSamplingNote: "Bucketed raw decoded values: the last value per address in each bucket. Min / Max describe displayed samples and may miss transient peaks. Query the zoomed range for finer resolution.", histRelativeNote: "Each series maps to 0–100%; constant values appear at 50%. Readouts and statistics retain raw values.",
@@ -85,7 +85,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     groupOldValues: 'Stale data present', groupPartialData: 'Incomplete data', groupCommunicationError: 'Communication error', groupTimeHint: 'Shows the oldest sample in the group so partial updates do not hide stale data',
     resizeSidebar: 'Resize sidebar', resizeSidebarHint: 'Drag to resize, double-click to reset, or use Left and Right arrow keys',
     sortDevices: 'Reorder', finishSorting: 'Done', moveUp: 'Move up', moveDown: 'Move down', dragDevice: 'Drag to reorder', sortingHint: 'Drag the handle or use the arrows. Saved in this browser. All devices are shown while reordering.', orderSaveFailed: 'Order changed, but browser storage is unavailable; it may reset on reload.',
-    observe: "Observe", configure: "Configure", searchPoints: "Search point name or address", onlyIssues: "Issues / stale only", noMatchingPoints: "No matching points", lastSample: "Latest sample", notSampled: "Not sampled", secondsAgo: "{n}s ago", fresh: "Fresh", oldValue: "Old value", coveredWord: "Merged word", shortData: "Incomplete data", pausedData: "Sampling paused", sampling: "Sampling", connectionPending: "Awaiting communication", pageConnection: "Live page connection interrupted. Reconnecting; using periodic snapshots meanwhile.", ageHint: "Values older than {n}s are marked stale (estimated from polling settings)", operationOk: "Operation succeeded", operationFailed: "Operation failed", working: "Working…", dismiss: "Dismiss", requiredFields: "Enter a name and connection address", pointStatus: "Data status", updatedAt: "Updated", currentValue: "Current value", noActiveGroups: "No enabled groups", readOnly: "Read only", pointWriteHint: "Writing changes the device value. Check the device and address.", importResult: "Imported {g} groups / {r} points", loadFailed: "Loading failed", refresh: "Retry loading",
+    observe: "Observe", configure: "Configure", searchPoints: "Search point name or address", onlyIssues: "Issues / stale only", noMatchingPoints: "No matching points", lastSample: "Latest sample", notSampled: "Not sampled", secondsAgo: "{n}s ago", fresh: "Fresh", oldValue: "Old value", coveredWord: "Merged word", shortData: "Incomplete data", pausedData: "Sampling paused", sampling: "Sampling", connectionPending: "Awaiting communication", pageConnection: "Live updates interrupted. Fetching data with periodic refreshes.", pageUpdateFailed: "Updates unavailable. Keeping the last received results and retrying.", pageUpdateTrying: "Restoring updates and trying periodic refreshes.", ageHint: "Values older than {n}s are marked stale (estimated from polling settings)", operationOk: "Operation succeeded", operationFailed: "Operation failed", working: "Working…", dismiss: "Dismiss", requiredFields: "Enter a name and connection address", pointStatus: "Data status", updatedAt: "Updated", currentValue: "Current value", noActiveGroups: "No enabled groups", readOnly: "Read only", pointWriteHint: "Writing changes the device value. Check the device and address.", importResult: "Imported {g} groups / {r} points", loadFailed: "Loading failed", refresh: "Retry loading",
     searchDevices: 'Search devices or addresses', noSearchResults: 'No matching devices', expandNav: 'Expand navigation', collapseNav: 'Collapse navigation', overview: 'Device overview', transportLabel: 'Transport', pointsLabel: 'Configured points', groupsLabel: 'Register groups', faultsLabel: 'Group faults',
     brand: 'ProbeStation',
     brandSub: 'Device observation & testing',
@@ -118,7 +118,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     write: 'Write', valuePh: 'value', writeErrEmpty: 'Enter a value', writeErrNaN: 'Enter a valid number', writeOk: 'Written',
     noRegisters: 'No registers (import MBS/MBP via API)',
     settingsTitle: 'Settings', settingsSub: 'Appearance, language & data',
-    tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware', tabRaw: 'Raw', histTable: 'Table',
+    tabLive: 'Live', tabHistory: 'History', tabCurve: 'Curve', tabFirmware: 'Firmware', tabRaw: 'Diagnostics', histTable: 'Table',
     groupCount: '{n} groups',
     newGroup: 'New Group', importPointBook: 'Import points', exportPointBook: 'Export points', editGroup: 'Edit Group', groupName: 'Name', slaveId: 'Slave ID', functionCode: 'Function', startAddress: 'Start addr', quantity: 'Quantity', edit: 'Edit', save: 'Save', fcReadCoils: 'Read Coils', fcReadDiscrete: 'Read Discrete Inputs', fcReadHolding: 'Read Holding', fcReadInput: 'Read Input',
     histHint: 'Last 1 hour', histStart: 'Start', histEnd: 'End', histQuery: 'Query', histLoading: 'Loading…', histPrev: 'Prev', histNext: 'Next', histFirst: 'First', histLast: 'Last', histTotal: '{n} rows', histPage: 'Page {x}/{y}', noHistory: 'No history data', colTime: 'Time', histTruncated: 'Too many rows, showing latest {n}', histIdle: 'Select a time range and click Query', histEmpty: 'No history data in this range', histError: 'Query failed', histRangeInvalid: 'Start time must be before end time', histLast1h: 'Last 1h', histLast6h: 'Last 6h', histLast24h: 'Last 24h', histToday: 'Today', histQuick: 'Quick', selectRegisters: 'Select registers', selectAll: 'Select all', clearAll: 'Clear', histNoRegs: 'No registers selected', curveHint: 'Last 1 hour', curveReset: 'Reset zoom', curveZoomHint: 'Drag top-left→bottom-right to zoom in; drag back to reset', firmwareHint: 'No firmware uploaded yet', fwUpload: 'Upload firmware', fwAbort: 'Abort', fwState: 'State', fwUpgrade: 'Upgrade', fwUploaded: 'Firmware uploaded', fwUploadErr: 'Upload failed', fwStarted: 'Upgrade started', fwUpgradeErr: 'Upgrade failed', fwDelete: 'Delete', fwDeleted: 'Firmware deleted', fwDeleteErr: 'Delete failed', confirmDeleteFirmware: 'Delete firmware {name}?',
@@ -128,7 +128,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     dataMgmt: 'Data management', runLogs: 'Runtime logs', clearLogs: 'Clear logs', logsCleared: 'Logs cleared', retentionLabel: 'Data retention', retentionSaved: 'Retention saved', retentionForever: 'Forever',
     newDeviceTitle: 'New device', editDeviceTitle: 'Edit device', name: 'Name', ip: 'IP address', port: 'Port', transport: 'Transport', transportTcp: 'TCP', transportRtu: 'RTU serial', serialPath: 'Serial path', baudRate: 'Baud rate', parity: 'Parity', stopBits: 'Stop bits', dataBits: 'Data bits', flowControl: 'Flow control', slaveIdLabel: 'Slave ID', pollIntervalLabel: 'Scan interval (ms)', pollIntervalHint: 'Groups poll round-robin; each refreshes roughly every interval × group count', timeoutLabel: 'Timeout (ms)', timeoutHint: 'Read/write request timeout, default 3000 ms', cancel: 'Cancel', add: 'Add',
     importPoints: 'Import points', importTitle: 'Smart point import', importHint: 'Paste CSV (header columns like addr/name/type/enum), or upload CSV/XLSX; JSON array is also accepted.', importPh: 'Paste point-table CSV (header: addr,name,type,enum)', importFile: 'Upload file', importDo: 'Import', importEmpty: 'Enter content or choose a file', impBadJson: 'Cannot parse JSON array', importUpdated: '{n} updated', importSkipped: '{n} skipped', importErrors: 'Errors', importColumns: 'Detected columns',
-    tabMonitor: 'Monitor', tabDatabase: 'Database', dbHistory: 'History data', dbTotalRows: 'Total samples', dbTimeSpan: 'Time span', dbDiskUsage: 'Disk usage', dbPerDevice: 'Per device', dbMetadata: 'Metadata', dbRetention: 'Retention', dbRefresh: 'Refresh', dbNoData: 'No history data yet', dbBufferHint: '{n} buffered rows pending flush', dbDevices: 'Devices', dbGroups: 'Groups', dbRegisters: 'Registers', dbRules: 'Alarm rules', dbFirmwares: 'Firmware', dbLogs: 'Logs', dbRetentionForever: 'Forever', dbRetentionDays: '{n} days',
+    tabMonitor: 'Monitor', tabDatabase: 'Data management', dbHistory: 'History data', dbTotalRows: 'Total samples', dbTimeSpan: 'Time span', dbDiskUsage: 'Disk usage', dbPerDevice: 'Per device', dbMetadata: 'Metadata', dbRetention: 'Retention', dbRefresh: 'Refresh', dbNoData: 'No history data yet', dbBufferHint: '{n} buffered rows pending flush', dbDevices: 'Devices', dbGroups: 'Groups', dbRegisters: 'Registers', dbRules: 'Alarm rules', dbFirmwares: 'Firmware', dbLogs: 'Logs', dbRetentionForever: 'Forever', dbRetentionDays: '{n} days',
   },
 }
 
@@ -267,7 +267,7 @@ function useOperation(t: T) {
 function Feedback({ operation, t }: { operation: ReturnType<typeof useOperation>; t: T }) {
   if (!operation.notice) return null
   return <div className={'operation-feedback' + (operation.notice.error ? ' error' : '')} role={operation.notice.error ? 'alert' : 'status'}>
-    <span>{operation.notice.text}</span><button aria-label={t('dismiss')} onClick={() => operation.setNotice(null)}>×</button>
+    <span>{operation.notice.text}</span><button type="button" aria-label={t('dismiss')} onClick={() => operation.setNotice(null)}>×</button>
   </div>
 }
 
@@ -354,12 +354,13 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 768 || localStorage.getItem('ps-collapsed') === '1')
   const [groups, setGroups] = useState<DeviceGroup[]>([])
+  const [fallbackStatus, setFallbackStatus] = useState<Record<number, boolean>>({})
   const [latest, setLatest] = useState<Record<string, LatestValue>>({})
   const [groupErrors, setGroupErrors] = useState<Record<number, string>>({})
   const [showAdd, setShowAdd] = useState(false)
   const [realtime, setRealtime] = useState<{ status: RealtimeStatus; attempt: number }>({ status: 'connecting', attempt: 0 })
   const [deviceConnected, setDeviceConnected] = useState<Record<number, boolean>>({})
-  const [view, setView] = useState<'monitor' | 'database' | 'raw'>('monitor')
+  const [view, setView] = useState<'monitor' | 'database'>('monitor')
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const operation = useOperation(t)
@@ -428,11 +429,17 @@ export default function App() {
         return next
       })
     }
+    const channelConnected = () => currentStatus === 'connected'
     const fetchFallback = async () => {
-      if (currentStatus === 'connected') return
+      if (channelConnected()) return
       const id = selectedIdRef.current
       if (id == null) return
-      try { mergeObjectSnapshot(id, await api.get('/api/monitor_objects/' + id + '/latest')) } catch { /* 下轮继续尝试 */ }
+      try {
+        const snapshot = await api.get('/api/monitor_objects/' + id + '/latest')
+        if (stopped || channelConnected()) return
+        mergeObjectSnapshot(id, snapshot)
+        setFallbackStatus(prev => ({ ...prev, [id]: true }))
+      } catch { if (!stopped && !channelConnected()) setFallbackStatus(prev => ({ ...prev, [id]: false })) }
     }
     const scheduleReconnect = () => {
       if (stopped || reconnectTimer) return
@@ -444,7 +451,7 @@ export default function App() {
     }
     const handleMessage = (event: MessageEvent) => {
       lastMessageAt = Date.now()
-      if (currentStatus !== 'connected') updateStatus('connected', 0)
+      if (currentStatus !== 'connected') { setFallbackStatus({}); updateStatus('connected', 0) }
       let msg: any
       try { msg = JSON.parse(String(event.data)) } catch { return }
       if (!msg || typeof msg.type !== 'string' || msg.type === 'pong') return
@@ -476,6 +483,7 @@ export default function App() {
         if (ws !== socket) return
         attempt = 0
         lastMessageAt = Date.now()
+        setFallbackStatus({})
         updateStatus('connected', 0)
       }
       socket.onmessage = (event) => { if (ws === socket) handleMessage(event) }
@@ -628,11 +636,9 @@ export default function App() {
         {loadError && <div className="operation-feedback error" role="alert">{t('loadFailed')}<button className="btn" onClick={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }}>{t('refresh')}</button></div>}
         <GlobalTabBar t={t} view={view} onChange={setView} />
         {view === 'database'
-          ? <DatabaseView t={t} device={selected} />
-          : view === 'raw'
-            ? <RawDataView t={t} device={selected} />
-            : (selected
-              ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+          ? <DatabaseView t={t} devices={devices} />
+          : (selected
+              ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
               : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
       </main>
 
@@ -646,12 +652,11 @@ function EmptyState({ t, onAdd }: { t: T; onAdd: () => void }) {
   return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div><button className="btn primary" onClick={onAdd}>＋ {t('newDevice')}</button></div>
 }
 
-function GlobalTabBar({ t, view, onChange }: { t: T; view: 'monitor' | 'database' | 'raw'; onChange: (v: 'monitor' | 'database' | 'raw') => void }) {
+function GlobalTabBar({ t, view, onChange }: { t: T; view: 'monitor' | 'database'; onChange: (v: 'monitor' | 'database') => void }) {
   return (
     <div className="global-tab-bar">
       <button className={'global-tab' + (view === 'monitor' ? ' active' : '')} onClick={() => onChange('monitor')}>{t('tabMonitor')}</button>
       <button className={'global-tab' + (view === 'database' ? ' active' : '')} onClick={() => onChange('database')}>{t('tabDatabase')}</button>
-      <button className={'global-tab' + (view === 'raw' ? ' active' : '')} onClick={() => onChange('raw')}>{t('tabRaw')}</button>
     </div>
   )
 }
@@ -671,35 +676,39 @@ function fmtBytes(n: number | null | undefined): string {
   return v.toFixed(1) + ' ' + units[i]
 }
 
-function DatabaseView({ t, device }: { t: T; device: Device | null }) {
+function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
+  const [scope, setScope] = useState('all')
+  const device = devices.find(d => String(d.id) === scope) ?? null
+  const requestId = useRef(0)
   const [stats, setStats] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const load = useCallback(async () => {
-    if (!device) { setStats(null); setErr(null); return }
-    setLoading(true); setErr(null)
-    try { setStats(await api.get('/api/monitor_objects/' + device.id + '/stats')) } catch (e: any) { setErr(e?.message ?? String(e)) }
-    finally { setLoading(false) }
+    const id = ++requestId.current
+    setLoading(true); setErr(null); setStats(null)
+    try {
+      const result = await api.get(device ? '/api/monitor_objects/' + device.id + '/stats' : '/api/stats')
+      if (id === requestId.current) setStats(device ? result : { ...result.history, retention: result.retention })
+    } catch (e: any) { if (id === requestId.current) setErr(e?.message ?? String(e)) }
+    finally { if (id === requestId.current) setLoading(false) }
   }, [device])
   useEffect(() => { void load() }, [load])
 
   const retention = stats?.retention?.retention_seconds
   const retentionText = retention === 0 ? t('dbRetentionForever') : (retention != null ? t('dbRetentionDays').replace('{n}', String(Math.round(retention / 86400))) : '—')
 
-  if (!device) {
-    return <div className="db-view"><div className="hist-empty">{t('emptyHint')}</div></div>
-  }
 
   return (
     <div className="db-view">
       <div className="db-head">
         <div>
           <div className="db-title">{t('tabDatabase')}</div>
-          <div className="kv" style={{ wordBreak: 'break-all' }}>{device.name} · {device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · 超时 {device.timeoutMs ?? 3000}ms</div>
+          <div className="kv" style={{ wordBreak: 'break-all' }}>{device ? device.name + ' · ' + (device.transport === 'rtu' ? device.serialPath : device.ip + ':' + device.port) : '全部设备 / All devices'}</div>
         </div>
         <div style={{ flex: 1 }} />
         <button className="btn" onClick={() => void load()} disabled={loading}>{loading ? '…' : t('dbRefresh')}</button>
       </div>
+      <div className="toolbar"><label>统计范围 / Scope <select aria-label="统计范围 / Scope" className="hist-input" value={device ? scope : 'all'} onChange={e => setScope(e.target.value)}><option value="all">全部设备 / All devices</option>{devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label></div>
       {err && <div className="write-msg error">{err}</div>}
 
       <div className="db-cards">
@@ -724,9 +733,10 @@ function DatabaseView({ t, device }: { t: T; device: Device | null }) {
   )
 }
 
-function DeviceView({ t, device, connected, groups, latest, groupErrors, realtime, busy, onToggle, onEdit, onDelete, onRefresh }: {
+function DeviceView({ t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
   t: T; device: Device; connected: boolean; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
   realtime: { status: RealtimeStatus; attempt: number }
+  fallbackOk?: boolean
   busy: boolean; onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => Promise<void>; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
@@ -737,35 +747,30 @@ function DeviceView({ t, device, connected, groups, latest, groupErrors, realtim
   const times = groups.flatMap(g => g.registers.map(r => sampleTime(latest[device.id + ':' + areaForFunctionCode(g.functionCode) + ':' + r.startAddress]))).filter((v): v is number => v !== null)
   const lastSample = times.length ? Math.max(...times) : null
   const age = lastSample === null ? null : Math.max(0, Math.floor((now - lastSample) / 1000))
-  const realtimeText = realtime.status === 'connected' ? t('realtimeConnected')
-    : realtime.status === 'connecting' ? t('realtimeConnecting')
-      : realtime.status === 'stale' ? t('realtimeStale')
-        : realtime.status === 'reconnecting' ? t('realtimeReconnecting').replace('{n}', String(realtime.attempt))
-          : t('realtimeDisconnected')
   return (
     <div className="device-view">
       <div className="section-eyebrow">{t('overview')}</div>
       <div className="device-head">
         <span className="name">{device.name}</span>
         <span className={'status-badge' + (device.isActive && connected ? ' on' : '')}>{!device.isActive ? t('pausedData') : !groups.some(g => g.isActive) ? t('noActiveGroups') : connected ? t('sampling') : t('connectionPending')}</span>
-        {realtime.status === 'connected' && <span className="channel-ok">{realtimeText}</span>}
         <div style={{ flex: 1 }} />
         <button className="btn" disabled={busy} onClick={() => onToggle(device.id)}>{device.isActive ? t('disconnect') : t('connect')}</button>
         <button className="btn" onClick={() => setShowEdit(true)}>{t('edit')}</button>
         <button className="btn danger" disabled={busy} onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
       </div>
       <div className="main-sub">Modbus {device.transport.toUpperCase()} · {device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
-      {realtime.status !== 'connected' && <div className="connection-notice" role="status">{t('pageConnection')} <span>{realtimeText}</span></div>}
+      {realtime.status !== 'connected' && <div className="connection-notice" role="status">{t(fallbackOk === true ? 'pageConnection' : fallbackOk === false ? 'pageUpdateFailed' : 'pageUpdateTrying')}</div>}
       <div className="sampling-summary" title={t('ageHint').replace('{n}', String(Math.round(threshold / 1000)))}>
         <span>{t('lastSample')}: <strong>{age === null ? t('notSampled') : t('secondsAgo').replace('{n}', String(age))}</strong></span>
         <span>{lastSample === null ? '—' : formatLocalTs(new Date(lastSample).toISOString())}</span>
         <span className={groups.some(g => groupErrors[g.id]) ? 'has-fault' : ''}>{t('faultsLabel')}: {groups.filter(g => groupErrors[g.id]).length}</span>
       </div>
-      <TabBar tabs={[t('tabLive'), t('tabHistory'), t('tabFirmware'), t('liveCurve')]} active={tab} onChange={setTab} />
+      <TabBar tabs={[t('tabLive'), t('liveCurve'), t('tabHistory'), t('tabRaw'), t('tabFirmware')]} active={tab} onChange={setTab} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
-      {tab === 1 && <HistoryView t={t} device={device} groups={groups} registers={registers} />}
-      {tab === 2 && <FirmwareView t={t} device={device} />}
-      <div hidden={tab !== 3}><LiveCurve t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
+      {tab === 2 && <HistoryView t={t} device={device} groups={groups} registers={registers} />}
+      {tab === 3 && <RawDataView t={t} device={device} />}
+      {tab === 4 && <FirmwareView t={t} device={device} />}
+      <div hidden={tab !== 1}><LiveCurve t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
       {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f) => { await onEdit(device.id, f); setShowEdit(false) }} />}
     </div>
   )
@@ -850,8 +855,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
             <span title={t('groupTimeHint') + (summary.timestamp === null ? '' : ' · ' + formatLocalTs(new Date(summary.timestamp).toISOString()))}>{t('updatedAt')}: <strong>{summary.ageSeconds === null ? '—' : t('secondsAgo').replace('{n}', String(summary.ageSeconds))}</strong></span>
           </div>
           <div className="group-head">
-            <button className="group-collapse" onClick={() => toggleCollapse(g.id)}>{collapsed.has(g.id) ? '▸' : '▾'}</button>
-            <span className="group-name" style={{ cursor: 'pointer' }} onClick={() => toggleCollapse(g.id)}>{g.name}</span>
+            <button className="group-collapse" aria-label={g.name} aria-expanded={!collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}><span className={'group-chevron' + (collapsed.has(g.id) ? ' is-collapsed' : '')}>▾</span></button>
+            <button className="group-name group-name-toggle" aria-expanded={!collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}>{g.name}</button>
             <span className="kv">FC{g.functionCode} · 从站 {g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个</span>
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id] === 'Disconnected' ? t('groupDisconnected') : groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
@@ -859,7 +864,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
             {configuring && <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>}
             {configuring && <button className="btn danger" disabled={operation.busy} onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>}
           </div>
-          {!collapsed.has(g.id) && (<div className="register-table-scroll"><table className="reg realtime-table">
+          <GroupFold collapsed={collapsed.has(g.id)}>{() => (<div className="register-table-scroll"><table className="reg realtime-table">
             <colgroup><col className="rt-address" /><col /><col className="rt-type" /><col className="rt-value" />{!configuring && <col className="rt-action" />}</colgroup>
             <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th>{!configuring && <th>{t('write')}</th>}</tr></thead>
             <tbody>
@@ -879,7 +884,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
               })}
               {g.registers.length === 0 && <tr><td colSpan={configuring ? 4 : 5} className="kv">{t('noRegisters')}</td></tr>}
             </tbody>
-          </table></div>)}
+          </table></div>)}</GroupFold>
         </div>
       )})}
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
@@ -887,6 +892,22 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
       {writeReg && <WriteModal t={t} deviceName={device.name} currentValue={views.get(writeReg.id)?.value ?? '—'} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => { setWriteReg(null); operation.setNotice({ error: false, text: t('writeOk') }) }} />}
     </div>
   )
+}
+
+function GroupFold({ collapsed, children }: { collapsed: boolean; children: () => React.ReactNode }) {
+  const [retained, setRetained] = useState(!collapsed)
+  useEffect(() => {
+    if (!collapsed) { setRetained(true); return }
+    // Unmount after the short exit transition so hidden rows stop updating.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setRetained(false); return }
+    const timer = window.setTimeout(() => setRetained(false), 180)
+    return () => window.clearTimeout(timer)
+  }, [collapsed])
+  return <div className={'group-fold' + (collapsed ? ' is-collapsed' : '')} aria-hidden={collapsed}>
+    <div className="group-fold-inner" ref={el => { if (el) { if (collapsed) el.setAttribute('inert', ''); else el.removeAttribute('inert') } }}>
+      {(!collapsed || retained) && children()}
+    </div>
+  </div>
 }
 
 function GroupModal({ t, device, initial, onClose, onSaved }: {
@@ -906,7 +927,7 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
     onSaved()
   })
   return (
-    <div className="modal-mask" onClick={onClose}>
+    <div className="modal-mask">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{initial ? t('editGroup') : t('newGroup')}</h3>
         <Feedback operation={operation} t={t} />
@@ -961,7 +982,7 @@ function WriteModal({ t, reg, deviceName, currentValue, onClose, onSaved }: { t:
     } finally { setBusy(false) }
   }
   return (
-    <div className="modal-mask" onClick={onClose}>
+    <div className="modal-mask">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{t('writeReg')}</h3>
         <div className="write-context"><strong>{deviceName}</strong><span>{t('currentValue')}: {currentValue}</span><small>{t('pointWriteHint')}</small></div>
@@ -1045,33 +1066,57 @@ function RegisterSelectModal({ t, groups, initial, onClose, onApply, max }: {
   t: T; groups: DeviceGroup[]; initial: Set<number>; onClose: () => void; onApply: (s: Set<number>) => void; max?: number
 }) {
   const [draft, setDraft] = useState<Set<number>>(() => new Set(initial))
-  const toggle = (id: number) => setDraft((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  const [search, setSearch] = useState('')
+  const titleId = useId()
+  const toggle = (id: number) => setDraft((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else if (max === undefined || next.size < max) next.add(id); return next })
   const allIds = groups.flatMap(g => g.registers).map(r => r.id)
+  const query = search.trim().toLowerCase()
+  const filtered = groups.map(g => ({ ...g, registers: g.registers.filter(r => `${g.name} ${r.alias ?? ''} ${r.startAddress} 0x${r.startAddress.toString(16)} ${r.dataType}`.toLowerCase().includes(query)) })).filter(g => g.registers.length)
+  const addVisible = () => setDraft(prev => {
+    const next = new Set(prev)
+    for (const g of filtered) for (const r of g.registers) if (max === undefined || next.size < max) next.add(r.id)
+    return next
+  })
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    return () => previous?.focus()
+  }, [])
   return (
-    <div className="modal-mask" onClick={onClose}>
-      <div className="modal reg-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-mask">
+      <div className="modal reg-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(e) => e.stopPropagation()} onKeyDown={e => {
+        if (e.key === 'Escape') { e.stopPropagation(); onClose() }
+        if (e.key === 'Tab') {
+          const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'))
+          const first = items[0], last = items[items.length - 1]
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
+        }
+      }}>
         <div className="modal-head">
-          <span>{t('selectRegisters')}</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <span id={titleId}>{t('selectRegisters')}</span>
+          <button className="modal-close" aria-label={t('cancel')} onClick={onClose}>✕</button>
         </div>
+        <input className="reg-picker-search" aria-label={t('searchPoints')} placeholder={t('searchPoints')} value={search} onChange={e => setSearch(e.target.value)} autoFocus />
         <div className="reg-modal-actions">
-          <button className="btn" onClick={() => setDraft(new Set(allIds.slice(0, max)))}>{t('selectAll')}</button>
+          <span className="reg-picker-count" aria-live="polite">{draft.size} / {allIds.length}</span>
+          <button className="btn" onClick={addVisible} disabled={!filtered.length || (max !== undefined && draft.size >= max)}>{t('selectAll')}</button>
           <button className="btn" onClick={() => setDraft(new Set())}>{t('clearAll')}</button>
         </div>
         {max && <p className="chart-hint">{t('curveSelectLimit').replace('{n}', String(max))}</p>}
         <div className="reg-list">
-          {groups.map(g => (
+          {filtered.map(g => (
             <div key={g.id} className="reg-group">
-              <div className="reg-group-name">{g.name}</div>
+              <div className="reg-group-name"><span>{g.name}</span><span>{g.registers.filter(r => draft.has(r.id)).length} / {g.registers.length}</span></div>
               {g.registers.map(r => (
-                <label key={r.id} className="reg-item">
+                <label key={r.id} className={'reg-item' + (draft.has(r.id) ? ' selected' : '') + (!draft.has(r.id) && max !== undefined && draft.size >= max ? ' unavailable' : '')}>
                   <input type="checkbox" checked={draft.has(r.id)} disabled={!draft.has(r.id) && max !== undefined && draft.size >= max} onChange={() => toggle(r.id)} />
-                  <span className="reg-item-alias">{r.alias ?? ('reg' + r.id)}</span>
-                  <span className="kv">{r.startAddress} · {r.dataType}</span>
+                  <span className="reg-item-copy"><span className="reg-item-alias" title={r.alias ?? ('reg' + r.id)}>{r.alias || ('reg' + r.id)}</span><span className="reg-item-meta">{t('colAddr')} {r.startAddress} · FC{r.functionCode}</span></span>
+                  <span className="reg-item-type">{r.dataType}</span>
                 </label>
               ))}
             </div>
           ))}
+          {!filtered.length && <div className="hist-empty">{t('noMatchingPoints')}</div>}
         </div>
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
@@ -1089,7 +1134,7 @@ function RegisterSelectButton({ t, groups, selected, onApply, max }: {
   const total = groups.reduce((n, g) => n + g.registers.length, 0)
   return (
     <>
-      <button className="btn" onClick={() => setShow(true)}>{t('selectRegisters')} ({selected.size}/{total})</button>
+      <button className="btn reg-picker-trigger" onClick={() => setShow(true)}>{t('selectRegisters')} <span>{selected.size}/{total}</span></button>
       {show && <RegisterSelectModal t={t} groups={groups} max={max} initial={selected} onClose={() => setShow(false)} onApply={(s) => { onApply(s); setShow(false) }} />}
     </>
   )
@@ -1232,7 +1277,7 @@ function HistoryTableBody({ t, rows, selectedRegisters, status, error, page, tot
 
 function ExportModal({ t, onClose, onPick }: { t: T; onClose: () => void; onPick: (fmt: 'csv' | 'xlsx') => void }) {
   return (
-    <div className="modal-mask" onClick={onClose}>
+    <div className="modal-mask">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{t('exportTitle')}</h3>
         <div className="export-options">
@@ -1293,6 +1338,13 @@ function tickTime(ts: number, span: number): string {
 function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
   t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; threshold: number
 }) {
+  const [expanded, setExpanded] = useState(false)
+  useEffect(() => {
+    if (!expanded) return
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setExpanded(false) }
+    window.addEventListener('keydown', escape)
+    return () => window.removeEventListener('keydown', escape)
+  }, [expanded])
   const numericGroups = useMemo(() => groups.map(g => {
     let end = -1
     return { ...g, registers: [...g.registers].sort((a, b) => a.startAddress - b.startAddress).filter(r => {
@@ -1358,8 +1410,9 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
     buffer.current = Object.fromEntries(Object.entries(buffer.current).map(([id, track]) => [id, { ...track, points: [] }]))
     setFrame({ buffer: buffer.current, now: Date.now() }); setFrozen(null); setHover(null)
   }
-  return <div className="live-curve-view">
+  return <div className={"live-curve-view" + (expanded ? " expanded" : "")}>
     <div className="toolbar">
+      <button className="btn" aria-pressed={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '退出铺满' : '铺满窗口'}</button>
       <RegisterSelectButton t={t} groups={numericGroups} selected={selected} max={8} onApply={ids => { setSelection(ids); setFrozen(null); setHover(null) }} />
       <label className="live-window-label">{t('liveWindow')}<select className="hist-input" value={seconds} onChange={e => { setSeconds(Number(e.target.value)); setHover(null) }}>{[30, 60, 300, 600].map(n => <option key={n} value={n}>{n < 60 ? `${n} s` : `${n / 60} min`}</option>)}</select></label>
       <button className="btn" onClick={() => { setFrozen(frozen ? null : frame); setHover(null) }}>{t(frozen ? 'resumeCurve' : 'freezeCurve')}</button>
@@ -1539,39 +1592,60 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [limit, setLimit] = useState(200)
+  const [paused, setPaused] = useState(false)
+  const pausedRef = useRef(false)
+  const requestVersion = useRef(0)
   const clampLimit = (v: number) => Math.max(1, Math.min(2000, Math.trunc(v) || 200))
   const load = useCallback(async () => {
+    if (pausedRef.current) return
     if (!device) { setFrames([]); setErr(null); return }
+    const version = ++requestVersion.current
     setBusy(true); setErr(null)
-    try { setFrames(await api.get('/api/monitor_objects/' + device.id + '/frames?limit=' + clampLimit(limit))) }
-    catch (e: any) { setErr(e?.message ?? String(e)) }
-    finally { setBusy(false) }
+    try {
+      const result = await api.get('/api/monitor_objects/' + device.id + '/frames?limit=' + clampLimit(limit))
+      if (version === requestVersion.current && !pausedRef.current) setFrames(result)
+    }
+    catch (e: any) { if (version === requestVersion.current) setErr(e?.message ?? String(e)) }
+    finally { if (version === requestVersion.current) setBusy(false) }
   }, [device, limit])
-  useEffect(() => { void load(); const id = setInterval(() => { void load() }, 1000); return () => clearInterval(id) }, [load])
+  useEffect(() => {
+    if (paused) return
+    void load()
+    const id = setInterval(() => { void load() }, 1000)
+    return () => { clearInterval(id); requestVersion.current++ }
+  }, [load, paused])
+  const togglePause = () => {
+    pausedRef.current = !pausedRef.current
+    requestVersion.current++
+    setBusy(false)
+    setPaused(pausedRef.current)
+  }
   const clear = async () => { if (!device) return; try { await api.post('/api/monitor_objects/' + device.id + '/frames/clear', {}); await load() } catch { /* */ } }
   const dir = (d: string) => d === 'tx' ? 'TX' : 'RX'
   if (!device) return <div className="db-view"><div className="hist-empty">{t('emptyHint')}</div></div>
   return (
     <div>
+      <div className="db-head"><div><div className="db-title">{t('tabRaw')}</div><div className="kv">{device.name} · {device.transport === 'rtu' ? device.serialPath : device.ip + ':' + device.port}</div></div></div>
       <div className="toolbar">
-        <span className="kv">串口/TCP 原始报文（自动刷新 1s）</span>
+        <span className="kv" role="status">{paused ? '已暂停刷新 · 设备采集继续' : '串口/TCP 原始报文（自动刷新 1s）'}</span>
         <label className="kv">显示帧数
           <input type="number" min={1} max={2000} value={limit}
             style={{ width: 70, marginLeft: 6 }}
             onChange={(e) => setLimit(clampLimit(Number(e.target.value)))}
-            onBlur={(e) => { const v = clampLimit(Number(e.target.value)); setLimit(v); void load() }} />
+            onBlur={(e) => setLimit(clampLimit(Number(e.target.value)))} />
         </label>
         <div style={{ flex: 1 }} />
-        <button className="btn" onClick={() => void load()} disabled={busy}>{busy ? '…' : '刷新'}</button>
-        <button className="btn" onClick={() => void clear()}>清空</button>
+        <button className={'btn' + (paused ? ' selected' : '')} aria-pressed={paused} onClick={togglePause}>{paused ? '继续' : '暂停'}</button>
+        <button className="btn" onClick={() => void load()} disabled={busy || paused}>{busy ? '…' : '刷新'}</button>
+        <button className="btn" disabled={paused} onClick={() => void clear()}>清空</button>
       </div>
       {err && <div className="write-msg error">{err}</div>}
-      <div style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, maxHeight: '60vh', overflow: 'auto', background: 'var(--bg-2, #111)', color: 'var(--text-1, #eee)', borderRadius: 6, padding: 8 }}>
+      <div style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, maxHeight: '60vh', overflow: 'auto', background: 'var(--surface)', color: 'var(--text-1, #eee)', borderRadius: 6, padding: 8 }}>
         {frames.length === 0 ? <div className="kv">暂无原始帧（确认设备已连接并轮询）</div> : (
           frames.map((f) => (
             <div key={f.id} style={{ display: 'flex', gap: 10, padding: '1px 0', borderBottom: '1px solid var(--border-1, #222)' }}>
               <span style={{ color: 'var(--text-3, #888)', minWidth: 72 }}>{formatLocalTs(f.timestamp).slice(11)}</span>
-              <span style={{ color: f.direction === 'tx' ? '#5fd7ff' : '#7ce08a', minWidth: 28, fontWeight: 600 }}>{dir(f.direction)}</span>
+              <span style={{ color: f.direction === 'tx' ? 'var(--accent)' : 'var(--success)', minWidth: 28, fontWeight: 600 }}>{dir(f.direction)}</span>
               <span style={{ minWidth: 40, color: 'var(--text-2, #bbb)' }}>{f.slaveId != null ? 'slave ' + f.slaveId : ''}</span>
               <span style={{ minWidth: 44, color: 'var(--text-2, #bbb)' }}>FC{f.functionCode ?? '?'}{f.isException ? ' (err ' + f.exceptionCode + ')' : ''}</span>
               <span style={{ color: 'var(--text-3, #999)', minWidth: 40 }}>{f.byteLength}B</span>
@@ -1589,13 +1663,15 @@ function FirmwareView({ t, device }: { t: T; device: Device }) {
   const [status, setStatus] = useState<any>({ state: 'idle' })
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  const [statusError, setStatusError] = useState('')
+  const fileInput = useRef<HTMLInputElement>(null)
 
-  const refresh = useCallback(async () => { try { setFirmwares(await api.get('/api/firmwares')) } catch { /* ignore */ } }, [])
+  const refresh = useCallback(async () => { try { setFirmwares(await api.get('/api/firmwares')) } catch (e: any) { setMsg(t('loadFailed') + ': ' + (e?.message ?? '')) } }, [t])
   useEffect(() => { void refresh() }, [refresh])
 
   useEffect(() => {
     let alive = true
-    const poll = async () => { try { const s = await api.get('/api/ota/status?device_id=' + device.id); if (alive) setStatus(s) } catch { /* ignore */ } }
+    const poll = async () => { try { const s = await api.get('/api/ota/status?device_id=' + device.id); if (alive) { setStatus(s); setStatusError('') } } catch (e: any) { if (alive) setStatusError(e?.message ?? String(e)) } }
     void poll()
     const timer = setInterval(poll, 1000)
     return () => { alive = false; clearInterval(timer) }
@@ -1617,7 +1693,7 @@ function FirmwareView({ t, device }: { t: T; device: Device }) {
 
   const upgrade = async (fid: number) => {
     setBusy(true); setMsg('')
-    try { await api.post('/api/ota/upgrade', { device_id: device.id, firmware_id: fid }); setMsg(t('fwStarted')) }
+    try { await api.post('/api/ota/upgrade', { device_id: device.id, firmware_id: fid }); setStatus({ state: 'starting', percent: 0 }); setMsg(t('fwStarted')) }
     catch (err: any) { setMsg(t('fwUpgradeErr') + ' ' + (err?.message ?? '')) }
     finally { setBusy(false) }
   }
@@ -1630,33 +1706,52 @@ function FirmwareView({ t, device }: { t: T; device: Device }) {
     finally { setBusy(false) }
   }
 
-  const pct = status.percent ?? 0
   const state = status.state ?? 'idle'
+  const active = ['starting', 'transferring', 'verifying'].includes(state)
+  const pct = Math.max(0, Math.min(100, Number(status.percent) || 0))
+  const chinese = t('tabFirmware') === '固件'
+  const label = (zh: string, en: string) => chinese ? zh : en
+  const stateNames: Record<string, string> = {
+    idle: label('等待升级', 'Ready'), starting: label('正在准备', 'Preparing'),
+    transferring: label('正在传输', 'Transferring'), verifying: label('正在校验', 'Verifying'),
+    done: label('升级完成', 'Completed'), failed: label('升级失败', 'Failed'), aborted: label('已中止', 'Aborted'),
+  }
+  const abort = async () => {
+    setBusy(true)
+    try { await api.post('/api/ota/abort', { device_id: device.id }); setStatus(await api.get('/api/ota/status?device_id=' + device.id)) }
+    catch (e: any) { setMsg(t('operationFailed') + ': ' + (e?.message ?? '')) }
+    finally { setBusy(false) }
+  }
   return (
-    <div className="chart-wrap firmware-card">
-      <div className="fw-toolbar">
-        <label className="btn">{t('fwUpload')}<input type="file" style={{ display: 'none' }} onChange={onFile} disabled={busy} /></label>
-        {(state === 'starting' || state === 'transferring' || state === 'verifying') && <button className="btn danger" onClick={() => { void api.post('/api/ota/abort', { device_id: device.id }) }}>{t('fwAbort')}</button>}
-      </div>
-      {state !== 'idle' && (
-        <div className="fw-progress">
-          <div className="fw-state">{t('fwState')}: {state} · {pct}% · {status.currentBlock ?? 0}/{status.totalBlocks ?? 0}</div>
-          <div className="fw-bar"><div style={{ width: pct + '%' }} /></div>
-          {status.error && <div className="fw-err">{status.error}</div>}
+    <div className="firmware-dashboard">
+      <section className="chart-wrap firmware-status-card">
+        <div className="fw-section-head">
+          <div><div className="section-eyebrow">{label('目标设备', 'Target device')}</div><h3>{device.name}</h3><p className="kv">{device.transport.toUpperCase()} · {device.transport === 'rtu' ? device.serialPath : device.ip + ':' + device.port}</p></div>
+          <span className={'status-badge' + (state === 'done' ? ' on' : '')} role="status">{stateNames[state] || state}</span>
         </div>
-      )}
-      {msg && <div className="write-msg">{msg}</div>}
-      <div className="fw-list">
-        {firmwares.length === 0 && <div className="chart-hint">{t('firmwareHint')}</div>}
-        {firmwares.map((f) => (
-          <div key={f.id} className="fw-item">
-            <div className="fw-name">{f.name} <span className="kv">{f.version || '—'}</span></div>
-            <div className="kv">{f.size} B · crc32=0x{(f.crc32 >>> 0).toString(16)}</div>
-            <button className="btn" disabled={busy} onClick={() => { void upgrade(f.id) }}>{t('fwUpgrade')}</button>
-            <button className="btn danger" disabled={busy} onClick={() => { void remove(f.id, f.name) }}>{t('fwDelete')}</button>
-          </div>
-        ))}
-      </div>
+        <div className="fw-progress-summary"><strong>{pct}<small>%</small></strong><span className="kv">{state === 'idle' ? label('从下方选择固件开始升级', 'Choose firmware below to begin') : `${status.currentBlock ?? 0} / ${status.totalBlocks ?? 0} ${label('数据块', 'blocks')}`}</span>
+          {active && <button className="btn danger" disabled={busy} onClick={() => void abort()}>{t('fwAbort')}</button>}
+        </div>
+        <div className="fw-bar" role="progressbar" aria-label={t('fwState')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}><div style={{ width: pct + '%' }} /></div>
+        <div className="fw-stages">{['starting', 'transferring', 'verifying', 'done'].map((step, i) => <span key={step} className={state === step ? 'current' : ''}><b>{i + 1}</b>{[label('准备', 'Prepare'), label('传输', 'Transfer'), label('校验', 'Verify'), label('完成', 'Complete')][i]}</span>)}</div>
+        {status.error && <div className="fw-err" role="alert">{status.error}</div>}
+        {statusError && <div className="fw-err" role="alert">{label('升级状态暂时无法更新：', 'Status update unavailable: ')}{statusError}</div>}
+      </section>
+      <section className="chart-wrap firmware-library">
+        <div className="fw-section-head"><div><h3>{label('固件库', 'Firmware library')} <span className="fw-count">{firmwares.length}</span></h3><p className="kv">{label('上传文件后，可选择固件升级当前设备', 'Upload a file, then upgrade the current device')}</p></div>
+          <input ref={fileInput} type="file" hidden onChange={onFile} disabled={busy || active} />
+          <button className="btn primary" disabled={busy || active} onClick={() => fileInput.current?.click()}>＋ {t('fwUpload')}</button>
+        </div>
+        {msg && <div className="fw-feedback" role="status">{msg}</div>}
+        <div className="fw-list">
+          {firmwares.length === 0 && <div className="fw-empty"><span aria-hidden="true">⇧</span><strong>{t('firmwareHint')}</strong><p>{label('点击右上方“上传固件”添加第一个文件', 'Use Upload firmware to add your first file')}</p></div>}
+          {firmwares.map(f => <div key={f.id} className="fw-item">
+            <div className="fw-file-icon" aria-hidden="true">BIN</div>
+            <div className="fw-file-info"><div className="fw-name" title={f.name}>{f.name}</div><div className="fw-file-meta"><span>{fmtBytes(f.size)}</span><span>{label('版本', 'Version')} {f.version || '—'}</span><code>CRC32 {(f.crc32 >>> 0).toString(16).padStart(8, '0').toUpperCase()}</code></div></div>
+            <div className="fw-file-actions"><button className="btn" disabled={busy || active || !!statusError} onClick={() => void upgrade(f.id)}>{t('fwUpgrade')}</button><button className="btn danger" disabled={busy || active} aria-label={t('fwDelete') + ' ' + f.name} onClick={() => void remove(f.id, f.name)}>{t('fwDelete')}</button></div>
+          </div>)}
+        </div>
+      </section>
     </div>
   )
 }
@@ -1682,7 +1777,7 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose }: {
     await applyRetention(s)
   }
   return (
-    <div className="modal-mask" onClick={onClose}>
+    <div className="modal-mask">
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span>{t('settingsTitle')}</span>
@@ -1758,70 +1853,73 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
   const [slaveId, setSlaveId] = useState(initial ? String(initial.slaveId ?? 1) : '1')
   const [pollInterval, setPollInterval] = useState(initial ? String(initial.pollIntervalMs ?? 1000) : '1000')
   const [timeout, setTimeout_] = useState(initial ? String(initial.timeoutMs ?? 3000) : '3000')
+  const [dataBits, setDataBits] = useState(String(initial?.dataBits ?? 8))
+  const titleId = useId()
   const operation = useOperation(t)
   const save = () => operation.run(async () => {
-    if (!name.trim() || !(transport === 'rtu' ? serialPath.trim() : ip.trim())) throw new Error(t('requiredFields'))
-    await onSave({ name, ip, port: Number(port), transport, serialPath: transport === 'rtu' ? serialPath : '', baudRate: Number(baudRate) || 9600, parity, stopBits: Number(stopBits) || 1, dataBits: 8, flowControl, slaveId: Number(slaveId) || 1, pollIntervalMs: Number(pollInterval) || 1000, timeoutMs: Number(timeout) || 3000 })
+    await onSave({ name: name.trim(), ip: ip.trim(), port: transport === 'tcp' ? Number(port) : initial?.port ?? 8899, transport, serialPath: serialPath.trim(), baudRate: Number(baudRate), parity, stopBits: Number(stopBits), dataBits: Number(dataBits), flowControl, slaveId: Number(slaveId), pollIntervalMs: Number(pollInterval), timeoutMs: Number(timeout) })
   })
+  const textField = (label: string, value: string, change: (value: string) => void, placeholder = '', numeric?: { min: number; max?: number }, unit?: string) => (
+    <label className="device-field"><span>{label}</span><span className="device-input-wrap">
+      <input aria-label={label} required type={numeric ? 'number' : 'text'} min={numeric?.min} max={numeric?.max} step={numeric ? 1 : undefined} value={value} onChange={e => change(e.target.value)} placeholder={placeholder} pattern={numeric ? undefined : '.*\\S.*'} />
+      {unit && <span className="device-input-unit">{unit}</span>}
+    </span></label>
+  )
+  const selectField = (label: string, value: string, change: (value: string) => void, options: string[]) => (
+    <label className="device-field"><span>{label}</span><select aria-label={label} value={value} onChange={e => change(e.target.value)}>{options.map(v => <option key={v} value={v}>{v}</option>)}</select></label>
+  )
   return (
-    <div className="modal-mask" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3>
-        <Feedback operation={operation} t={t} />
-        <label>{t('name')}</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-        <label>{t('transport')}</label>
-        <select value={transport} onChange={(e) => setTransport(e.target.value)}>
-          <option value="tcp">{t('transportTcp')}</option>
-          <option value="rtu">{t('transportRtu')}</option>
-        </select>
-        <label>{t('slaveIdLabel')}</label>
-        <input value={slaveId} onChange={(e) => setSlaveId(e.target.value)} placeholder="1" />
-        <label>{t('pollIntervalLabel')}</label>
-        <input value={pollInterval} onChange={(e) => setPollInterval(e.target.value)} placeholder="1000" />
-        <div className="kv" style={{ marginBottom: 10 }}>{t('pollIntervalHint')}</div>
-        <label>{t('timeoutLabel')}</label>
-        <input value={timeout} onChange={(e) => setTimeout_(e.target.value)} placeholder="3000" />
-        <div className="kv" style={{ marginBottom: 10 }}>{t('timeoutHint')}</div>
-        {transport === 'tcp' ? (
-          <>
-            <label>{t('ip')}</label>
-            <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.90.176" />
-            <label>{t('port')}</label>
-            <input value={port} onChange={(e) => setPort(e.target.value)} placeholder="8899" />
-          </>
-        ) : (
-          <>
-            <label>{t('serialPath')}</label>
-            <input value={serialPath} onChange={(e) => setSerialPath(e.target.value)} placeholder="COM3 / /dev/ttyUSB0" />
-            <label>{t('baudRate')}</label>
-            <select value={baudRate} onChange={(e) => setBaudRate(e.target.value)}>
-              {[9600, 19200, 38400, 57600, 115200].map((b) => <option key={b} value={b}>{b}</option>)}
-            </select>
-            <label>{t('parity')}</label>
-            <select value={parity} onChange={(e) => setParity(e.target.value)}>
-              <option value="even">Even</option>
-              <option value="odd">Odd</option>
-              <option value="none">None</option>
-            </select>
-            <label>{t('stopBits')}</label>
-            <select value={stopBits} onChange={(e) => setStopBits(e.target.value)}>
-              <option value="1">1</option>
-              <option value="2">2</option>
-            </select>
-            <label>{t('flowControl')}</label>
-            <select value={flowControl} onChange={(e) => setFlowControl(e.target.value)}>
-              <option value="none">None</option>
-              <option value="rtscts">RTS/CTS</option>
-              <option value="xonxoff">XON/XOFF</option>
-            </select>
-          </>
-        )}
-        <div className="modal-actions">
-          <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" disabled={operation.busy} onClick={() => void save()}>{operation.busy ? t('working') : initial ? t('save') : t('add')}</button>
+    <div className="modal-mask">
+      <form className="modal device-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); if (!operation.busy) void save() }} onKeyDown={e => {
+        if (e.key !== 'Tab') return
+        const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)'))
+        const first = items[0], last = items[items.length - 1]
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
+      }}>
+        <div className="device-modal-header"><h3 id={titleId}>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3><button type="button" className="modal-close" aria-label={t('cancel')} disabled={operation.busy} onClick={onClose}>✕</button></div>
+        <div className="device-modal-body">
+          <Feedback operation={operation} t={t} />
+          <fieldset disabled={operation.busy}>
+            <legend>基本信息 / General</legend>
+            <label className="device-field"><span>{t('name')}</span><input aria-label={t('name')} required pattern={'.*\\S.*'} value={name} onChange={e => setName(e.target.value)} autoFocus /></label>
+            <div className="device-transport" role="group" aria-label={t('transport')}>
+              <button type="button" className={'btn' + (transport === 'tcp' ? ' selected' : '')} aria-pressed={transport === 'tcp'} onClick={() => setTransport('tcp')}>{t('transportTcp')}</button>
+              <button type="button" className={'btn' + (transport === 'rtu' ? ' selected' : '')} aria-pressed={transport === 'rtu'} onClick={() => setTransport('rtu')}>{t('transportRtu')}</button>
+            </div>
+          </fieldset>
+          <fieldset disabled={operation.busy}>
+            <legend>连接参数 / Connection</legend>
+            <div className="device-field-grid">
+              {transport === 'tcp' ? <>
+                {textField(t('ip'), ip, setIp, '192.168.1.10')}
+                {textField(t('port'), port, setPort, '8899', { min: 1, max: 65535 })}
+              </> : <>
+                {textField(t('serialPath'), serialPath, setSerialPath, 'COM3 / /dev/ttyUSB0')}
+                {textField(t('baudRate'), baudRate, setBaudRate, '9600', { min: 1 })}
+                {selectField(t('parity'), parity, setParity, ['even', 'odd', 'none'])}
+                {selectField('数据位 / Data bits', dataBits, setDataBits, ['5', '6', '7', '8'])}
+                {selectField(t('stopBits'), stopBits, setStopBits, ['1', '2'])}
+                {selectField(t('flowControl'), flowControl, setFlowControl, ['none', 'rtscts', 'xonxoff'])}
+              </>}
+            </div>
+          </fieldset>
+          <fieldset disabled={operation.busy}>
+            <legend>采集设置 / Sampling</legend>
+            <div className="device-field-grid">
+              {textField(t('slaveIdLabel'), slaveId, setSlaveId, '1', { min: 0, max: 247 })}
+              {textField(t('pollIntervalLabel'), pollInterval, setPollInterval, '1000', { min: 1, max: 2147483647 }, 'ms')}
+              {textField(t('timeoutLabel'), timeout, setTimeout_, '3000', { min: 1, max: 2147483647 }, 'ms')}
+            </div>
+            <p className="device-field-hint">{t('pollIntervalHint')}</p>
+            <p className="device-field-hint">{t('timeoutHint')}</p>
+          </fieldset>
         </div>
-      </div>
+        <div className="modal-actions device-modal-footer">
+          <button type="button" className="btn" disabled={operation.busy} onClick={onClose}>{t('cancel')}</button>
+          <button type="submit" className="btn primary" disabled={operation.busy}>{operation.busy ? t('working') : initial ? t('save') : t('add')}</button>
+        </div>
+      </form>
     </div>
   )
 }
