@@ -7,6 +7,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [`docs/probestation-operator/SKILL.md`](docs/probestation-operator/SKILL.md) | **Agent 操作技能**：接入 MCP/REST、设备与点位、历史/实时曲线、诊断与操作边界 |
 | [`docs/03-开发与接手指南.md`](docs/03-开发与接手指南.md) | **现状 + 开发指南（接手必读）**：怎么跑、架构、插件范式、踩坑、API 速查 |
 | [`docs/02-重构架构方案.md`](docs/02-重构架构方案.md) | Phase 0 架构方案与选型决策 |
 | [`docs/01-项目初步讨论纪要.md`](docs/01-项目初步讨论纪要.md) | 立项背景与调研 |

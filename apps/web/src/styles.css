@@ -379,6 +379,24 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .group-head .btn { font-size: 11px; min-height: 27px; padding: 3px 10px; }
 .group-collapse { width: 24px; min-height: 26px; }
 .register-table-scroll { overflow-x: auto; }
+/* Live values must not change column geometry as samples arrive. */
+table.realtime-table { table-layout: fixed; min-width: 720px; }
+.realtime-table .rt-address { width: 90px; }
+.realtime-table .rt-type { width: 140px; }
+.realtime-table .rt-value { width: 250px; }
+.realtime-table .rt-action { width: 90px; }
+table.realtime-table th, table.realtime-table td { box-sizing: border-box; padding: 8px 16px; }
+table.realtime-table td { height: 60px; white-space: nowrap; vertical-align: middle; }
+table.realtime-table th:nth-child(4), table.realtime-table td:nth-child(4) { text-align: right; }
+table.realtime-table th:last-child, table.realtime-table td:last-child { padding-right: 20px; }
+.realtime-table tbody tr:nth-child(even) { background: var(--sidebar); }
+.realtime-table .rt-name { display: block; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.realtime-table .point-type { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--text-3); }
+.realtime-table .value { cursor: default; }
+.realtime-table .rt-reading { display: block; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-code), monospace; font-variant-numeric: tabular-nums lining-nums; font-size: 15px; line-height: 22px; letter-spacing: 0; user-select: text; }
+.realtime-table .rt-reading:focus { outline: 2px solid var(--accent); outline-offset: 2px; overflow-x: auto; text-overflow: clip; }
+.realtime-table .rt-enum { display: block; height: 16px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; font-family: var(--font); font-size: 11px; font-weight: 400; color: var(--text-3); }
+.realtime-table input, .realtime-table select { max-width: 100%; box-sizing: border-box; }
 table.reg th { background: var(--sidebar); padding: 10px 18px; font-size: 11px; font-weight: 600; }
 table.reg td { padding: 11px 18px; font-variant-numeric: tabular-nums; }
 table.reg tbody tr:last-child td { border-bottom: 0; }

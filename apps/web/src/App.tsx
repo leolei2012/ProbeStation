@@ -859,7 +859,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
             {configuring && <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>}
             {configuring && <button className="btn danger" disabled={operation.busy} onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>}
           </div>
-          {!collapsed.has(g.id) && (<div className="register-table-scroll"><table className="reg">
+          {!collapsed.has(g.id) && (<div className="register-table-scroll"><table className="reg realtime-table">
+            <colgroup><col className="rt-address" /><col /><col className="rt-type" /><col className="rt-value" />{!configuring && <col className="rt-action" />}</colgroup>
             <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th>{!configuring && <th>{t('write')}</th>}</tr></thead>
             <tbody>
               {g.registers.map((r) => {
@@ -869,9 +870,9 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
                 return (
                   <tr key={r.id}>
                     <td className="kv">{r.startAddress}</td>
-                    <td>{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span>{r.alias || '—'}</span>}</td>
+                    <td>{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span className="rt-name" title={r.alias || '—'}>{r.alias || '—'}</span>}</td>
                     <td>{configuring ? <TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /> : <span className="point-type">{r.dataType}</span>}</td>
-                    <td className={'value' + (state.stale ? ' stale-value' : '')} title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : t('valueHint')} onDoubleClick={writable ? () => setWriteReg(r) : undefined}>{rv?.value ?? '—'}{rv?.label ? <span className="enum-badge">→ {rv.label}</span> : null}</td>
+                    <td className={'value' + (state.stale ? ' stale-value' : '')} title={(rv?.value ?? '—') + (rv?.label ? ' → ' + rv.label : '') + '\n' + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : writable ? t('valueHint') : t('readOnly'))} onDoubleClick={writable ? () => setWriteReg(r) : undefined}><span className="rt-reading" tabIndex={0}>{rv?.value ?? '—'}</span><span className="rt-enum">{rv?.label || '\u00a0'}</span></td>
                     {!configuring && <td>{writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
                   </tr>
                 )
