@@ -1,3 +1,4 @@
+import { assertPortsAvailable } from './startup'
 import { Context } from 'cordis'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +15,11 @@ import * as importerPlugin from '@probebench/importer'
 import * as mcpPlugin from '@probebench/mcp'
 import * as slavePlugin from '@probebench/slave'
 import * as otaPlugin from '@probebench/ota'
+
+try { await assertPortsAvailable([8080, 8081, 8502]) } catch (error) {
+  console.error(`[启动失败] ${(error as Error).message}`)
+  process.exit(1)
+}
 
 const ctx = new Context()
 // 单一数据目录（已去除工作区抽象）：config.db / poll.duckdb / firmware 都固定在此。

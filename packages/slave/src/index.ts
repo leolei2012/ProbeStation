@@ -36,7 +36,13 @@ export class ModbusSlave {
   }
 
   async start(): Promise<void> {
-    await new Promise<void>((resolve) => this.netServer.listen(this.config.port, '0.0.0.0', resolve))
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => { this.netServer.off('listening', onListening); reject(error) }
+      const onListening = () => { this.netServer.off('error', onError); resolve() }
+      this.netServer.once('error', onError)
+      this.netServer.once('listening', onListening)
+      this.netServer.listen(this.config.port, '0.0.0.0')
+    })
   }
 
   stop(): void {
@@ -59,5 +65,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.provide('slave', slave)
   void slave.start().then(() => {
     ctx.logger('slave').info(`slave listening on 0.0.0.0:${config.port}`)
+  }).catch((error: NodeJS.ErrnoException) => {
+    ctx.logger('slave').error(`本地模拟器启动失败，端口 ${config.port}：${error.code ?? error.message}。请检查端口占用后重启。`)
   })
 }

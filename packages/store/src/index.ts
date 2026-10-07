@@ -293,7 +293,7 @@ export class DuckDBStore {
   /** 单地址查询 + offset 分页（升序，最早的在前），供 MCP 等需要翻完整大时间范围的场景。 */
   async queryWithOffset(
     objectId: number, address: number, start: string, end: string, area: ModbusArea, limit: number, offset = 0,
-  ): Promise<Array<{ ts: string; rawValue: number; quality: string }>> {
+  ): Promise<Array<{ ts: string; rawValue: number; quality: string; timestampMs: number }>> {
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
     const endUtc = this.normalizeToUtc(end)
@@ -307,7 +307,11 @@ export class DuckDBStore {
       { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped, off },
     )
     const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown }>
-    return rows.map(r => ({ ts: localTs(String(r.ts)), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
+    return rows.map(r => {
+      const timestamp = String(r.ts)
+      const utc = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(timestamp) ? timestamp : timestamp + 'Z'
+      return { ts: localTs(timestamp), timestampMs: Date.parse(utc), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }
+    })
   }
 
   /**
