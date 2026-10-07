@@ -5,7 +5,7 @@ import { AssistantModelPicker } from './AssistantModelPicker'
 import { AssistantConversation, type AssistantTurn } from './AssistantConversation'
 
 type Proposal = { id: string; label: string; field: string; before: unknown; after: unknown; state: string }
-type Session = { turns?: AssistantTurn[]; id: string; entries: { role: string; content: string }[]; proposals: Proposal[]; running: boolean; error?: string }
+type Session = { compacting?: boolean; turns?: AssistantTurn[]; id: string; entries: { role: string; content: string }[]; proposals: Proposal[]; running: boolean; error?: string }
 const stateLabels: Record<string, string> = { pending: '等待确认', applied: '已执行', rejected: '已拒绝', expired: '已过期', conflict: '配置已变化', failed: '执行失败', cancelled: '已取消', applying: '执行中' }
 const fieldLabels: Record<string, string> = { name: '名称', alias: '点位名称', unit: '单位', factor: '比例系数', offset: '偏移', pollIntervalMs: '采样间隔（ms）', timeoutMs: '超时（ms）', isActive: '分组启用（1=启用，0=暂停）' }
 
@@ -70,6 +70,14 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
     const message = input.trim()
     if ((!message && !attachments.length) || readingFiles || busy || session?.running || session?.proposals.some(p => p.state === 'pending')) return
     setFollowing(true)
+    if (message.startsWith('/')) {
+      if (message !== '/compact') throw new Error('当前支持 /compact：压缩上下文，不接受参数')
+      if (attachments.length) throw new Error('压缩命令不能附带附件，请先发送或移除附件')
+      if (!session) throw new Error('暂时没有可压缩的对话')
+      const next = await request('/sessions/' + session.id + '/compact', { provider, model: model || config.model })
+      if (!disposed.current) { setSession(next); setInput('') }
+      return
+    }
     const s = session ?? await createSession()
     const next = await request('/sessions/' + s.id + '/messages', { message, provider, model: model || config.model, effort, attachments: attachments.map(({ name, data }) => ({ name, data })) })
     if (!disposed.current) { setSession(next); setInput(''); setAttachments([]) }
@@ -103,19 +111,20 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
   return <>
     <button className="btn ai-launch" aria-expanded={open} onClick={() => setOpen(!open)}>✦ AI 助手{session?.running ? ' · 处理中' : ''}</button>
     {open && <aside className={'ai-panel' + (expanded ? ' expanded' : '')} aria-label="AI 助手">
-      <header className="ai-header"><div><strong>✦ AI 助手</strong><small>{device?.name ?? '全部设备'} · {model || config.model || '尚未配置模型'}</small></div><button className="btn" disabled={!!active || pending} onClick={() => void act(async () => { if (session) await request('/sessions/' + session.id, undefined, 'DELETE'); setSession(null); sessionRef.current = null; setInput(''); setAttachments([]) })}>新对话</button><button className="btn" onClick={onOpenSettings}>模型设置</button><button className="btn" aria-label={expanded ? '还原聊天窗口' : '展开聊天窗口'} onClick={() => setExpanded(!expanded)}>{expanded ? '还原' : '展开'}</button><button className="btn" aria-label="收起 AI 助手" onClick={() => setOpen(false)}>×</button></header>
+      <header className="ai-header"><div><strong>✦ AI 助手</strong><small>{device?.name ?? '全部设备'} · {model || config.model || '尚未配置模型'}</small></div><button className="btn" onClick={onOpenSettings}>模型设置</button><button className="btn" aria-label={expanded ? '还原聊天窗口' : '展开聊天窗口'} onClick={() => setExpanded(!expanded)}>{expanded ? '还原' : '展开'}</button><button className="btn" aria-label="收起 AI 助手" onClick={() => setOpen(false)}>×</button></header>
       {(!config.baseUrl || !config.model) && <div className="ai-config-hint">请在左下角设置中配置模型服务。<button className="btn" onClick={onOpenSettings}>前往设置</button></div>}
       <div className="ai-scope-note">发送后，对话及按需查询的数据会传给配置的模型服务。切换设备会新建会话；配置修改需在下方确认。</div>
       <div className="ai-transcript" ref={transcript} onScroll={e => { const el = e.currentTarget; setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 64) }}><div className="ai-transcript-content">
         {!session?.entries.length && <div className="ai-welcome"><h3>想了解设备的什么情况？</h3><p>可以查询当前值、历史变化、通信异常，或提出配置修改。</p>{['查看当前设备的数据和采样时间', '检查设备通信有没有异常', '把当前设备采样间隔改成 500ms'].map(q => <button className="btn" key={q} onClick={() => setInput(q)}>{q}</button>)}</div>}
         {session && <AssistantConversation entries={session.entries} turns={session.turns ?? []} onNavigate={() => setFollowing(false)} />}
         {session?.proposals.map(p => <div className="ai-proposal" key={p.id}><strong>{p.label}</strong><small>{fieldLabels[p.field] ?? p.field}</small><div className="ai-change"><span>{String(p.before ?? '未设置')}</span><span>→</span><b>{String(p.after)}</b></div><small>{stateLabels[p.state] ?? p.state}</small>{p.state === 'pending' && <div><button className="btn primary" disabled={!!active} onClick={() => void decide(p.id, true)}>确认修改</button> <button className="btn" disabled={!!active} onClick={() => void decide(p.id, false)}>拒绝</button></div>}</div>)}
-        {session?.running && <div className="ai-working" role="status">正在分析或调用工具…</div>}
+        {session?.running && <div className="ai-working" role="status">{session.compacting ? '正在压缩上下文，原对话记录会保留…' : '正在分析或调用工具…'}</div>}
         {(error || session?.error) && <div className="ai-error" role="alert">{error || session?.error}</div>}
         {notice && <div role="status">{notice}</div>}
       </div></div>
       {!following && <button className="btn ai-jump" onClick={() => setFollowing(true)}>↓ 回到最新消息</button>}
       <form className="ai-composer" onSubmit={e => { e.preventDefault(); void send() }}>
+        {input.startsWith('/') && !active && <div className="ai-command-menu"><button type="button" onClick={() => setInput('/compact')}><strong>/compact</strong><span>压缩较早上下文，保留对话记录</span></button><small>使用当前模型生成摘要，会产生一次 API 请求；选择后按 Enter 执行。</small></div>}
         <input ref={fileInput} type="file" multiple hidden aria-label="选择附件" accept=".png,.jpg,.jpeg,.webp,.txt,.md,.csv,.json,.log,.yaml,.yml,.xml,.ini,.c,.h,.cpp,.py,.js,.ts" onChange={e => {
           const files = Array.from(e.target.files ?? []); e.target.value = ''
           void addAttachments(files)
@@ -129,7 +138,7 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
           // Preserve normal text insertion for mixed text/file clipboard content.
           if (!e.clipboardData.getData('text/plain')) e.preventDefault()
           void addAttachments(files)
-        }} aria-label="给 AI 助手的消息" placeholder={pending ? '请先确认或拒绝上方修改' : '询问数据或描述配置修改；可直接粘贴图片、文件…'} value={input} maxLength={8000} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!active && !pending && config.baseUrl && config.model) void send() } }} onChange={e => setInput(e.target.value)} disabled={!!active || pending} />
+        }} aria-label="给 AI 助手的消息" placeholder={pending ? '请先确认或拒绝上方修改' : '询问数据或描述配置修改；可粘贴附件，输入 / 查看命令…'} value={input} maxLength={8000} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!active && !pending && config.baseUrl && config.model) void send() } }} onChange={e => setInput(e.target.value)} disabled={!!active || pending} />
         <div className="ai-composer-toolbar">
           <button type="button" className="ai-new-chat" aria-label="添加附件" title="添加图片、文本、CSV 或日志（最多 4 个）" disabled={!!active || pending} onClick={() => fileInput.current?.click()}>＋</button>
           <span className="ai-toolbar-spacer" />

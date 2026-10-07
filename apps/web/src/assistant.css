@@ -134,3 +134,8 @@
 .ai-turn-nav button { display: flex; gap: 10px; width: 100%; text-align: left; color: var(--text-2); background: none; border: 0; padding: 10px; cursor: pointer; border-radius: 8px; font: inherit; }
 .ai-turn-nav button:hover { background: var(--item-active); }
 .ai-turn-nav button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-composer { position: relative; }
+.ai-command-menu { position: absolute; bottom: calc(100% + 8px); left: 0; right: 0; display: flex; flex-direction: column; padding: 8px; border: 1px solid var(--border-2); border-radius: 12px; background: var(--surface); box-shadow: 0 8px 24px #0004; z-index: 3; }
+.ai-command-menu button { display: flex; gap: 12px; align-items: center; border: 0; background: var(--item-active); color: var(--text-1); padding: 12px; border-radius: 8px; cursor: pointer; text-align: left; }
+.ai-command-menu span, .ai-command-menu small { font-size: 11px; color: var(--text-3); }
+.ai-command-menu small { padding: 4px 8px; line-height: 1.6; }

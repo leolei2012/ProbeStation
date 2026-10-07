@@ -107,6 +107,25 @@ try {
   await request('POST', '/settings', { baseUrl: 'https://different.example/v1', model: 'test' })
   assert.equal((await request('GET', '/settings')).json().hasKey, false)
   mode = 'normal'
+  const compactId = await session()
+  await turn(compactId, call('list_devices', {}))
+  await turn(compactId, call('get_snapshot', { device_id: 1 }))
+  const beforeCompact = (await request('GET', `/sessions/${compactId}`)).json()
+  responses = [{ content: '用户正在查看设备数据；具体数值需要重新查询。' }]
+  assert.equal((await request('POST', `/sessions/${compactId}/compact`, {})).statusCode, 200)
+  async function waitCompact() { for (let i = 0; i < 100; i++) { const state = (await request('GET', `/sessions/${compactId}`)).json(); if (!state.running) return state; await new Promise(r => setTimeout(r, 5)) }; throw new Error('compact timeout') }
+  const compacted = await waitCompact()
+  assert(!compacted.error); assert(!compacted.compacting)
+  assert.deepEqual(compacted.entries.slice(0, beforeCompact.entries.length), beforeCompact.entries)
+  assert(compacted.entries.at(-1).content.includes('已压缩上下文'))
+  await turn(compactId, { content: '继续' })
+  assert(sent.at(-1).messages.some((m: any) => typeof m.content === 'string' && m.content.includes('较早对话摘要')))
+  mode = 'error'
+  await request('POST', `/sessions/${compactId}/compact`, {})
+  assert((await waitCompact()).error.includes('原上下文已保留'))
+  mode = 'normal'
+  const emptyCompactId = await session()
+  assert.equal((await request('POST', `/sessions/${emptyCompactId}/compact`, {})).statusCode, 400)
   const attachmentId = await session()
   const attachment = { name: 'sample.csv', data: Buffer.from('time,value\n1,25').toString('base64') }
   const attached = await turn(attachmentId, { content: '已读取附件' }, { attachments: [attachment] })
