@@ -8,6 +8,7 @@ import { physicalValue, displayNumber, curveValue, type ValueMode } from './phys
 import { PointSettingsEditor } from './PointSettingsEditor'
 import { DeviceIssues, type DataTarget } from './DeviceIssues'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { showOperationNotice } from './OperationNotifications'
 import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
 import { AssistantSettings } from './AssistantSettings'
@@ -49,7 +50,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     histMinutes: "最近 {n} 分钟", histHours: "最近 {n} 小时", histNoNumeric: "所选点位没有可绘制的数值数据，请检查类型或选择其他点位。", histZoomIn: "放大", histZoomOut: "缩小", histMoveEarlier: "向前移动时间窗口", histMoveLater: "向后移动时间窗口", histQueryZoom: "查询放大区间", histRelative: "各曲线相对量程", histInteractionHint: "悬停查看读数 · 左右拖动框选时间范围 · 双击恢复全范围", histNoVisible: "当前范围没有可见曲线，可重置缩放或点击下方图例显示曲线。", histNearest: "最近采样点（实际时间）", histLegendHint: "点击图例隐藏 / 显示曲线", histStatsHint: "当前可见时间范围的显示数据统计", histLastValue: "末值", histSamplingNote: "曲线为分桶后的解码值，显示模式由上方选择：每桶每地址保留最后一个值。Min / Max 是显示点的统计，可能遗漏瞬时峰值；放大后可点击“查询放大区间”提高时间分辨率。", histRelativeNote: "相对量程将每条曲线映射为 0–100%，恒定值显示在 50%；悬停和统计仍按所选原始值或物理值显示。",
     liveCurve: '实时曲线', liveWindow: '时间窗口', freezeCurve: '暂停画面', resumeCurve: '继续实时', clearCurve: '清空曲线', curveWaiting: '等待新的有效采样数据…', liveCurveHint: '本次打开设备期间缓存；每 250ms 取最新值，最多 8 条曲线、每条 2400 点，保留最近 10 分钟。暂停仅冻结画面，不停止采集。', liveRawHint: '按寄存器类型解码原始值，不应用倍率/偏移；不绘制非有限数和无法精确表示的 64 位整数。', curvePaused: '画面已暂停，后台继续缓存', curveTracking: '实时跟随', curveNoNumeric: '暂无可绘制的数值点位，请先配置寄存器。', curveSelectLimit: '最多选择 {n} 个点位', curveTime: '时间',
 
-    groupOldValues: '存在旧值', groupPartialData: '数据不完整', groupCommunicationError: '通信异常', groupTimeHint: '按组内最早的采样时间显示，避免部分数据未更新被掩盖',
+    groupOldValues: '存在旧值', groupPartialData: '数据不完整', groupCommunicationError: '通信异常', slaveServiceError: '从站服务异常', groupTimeHint: '按组内最早的采样时间显示，避免部分数据未更新被掩盖',
     resizeSidebar: '调整侧边栏宽度', resizeSidebarHint: '拖动调整宽度，双击恢复默认；也可使用左右方向键',
     sortDevices: '调整顺序', finishSorting: '完成排序', moveUp: '上移', moveDown: '下移', dragDevice: '拖动排序', sortingHint: '拖动手柄或点击箭头调整顺序，自动保存在当前浏览器。排序时显示全部设备。', orderSaveFailed: '顺序已调整，但浏览器无法保存；刷新后可能恢复。',
     observe: "观测", configure: "配置", searchPoints: "搜索点位名称或地址", onlyIssues: "只看异常 / 过期", noMatchingPoints: "没有匹配的点位", lastSample: "最近采样", notSampled: "尚未采集", secondsAgo: "{n} 秒前", fresh: "数据新鲜", oldValue: "旧值", coveredWord: "合并占位", shortData: "数据不足", pausedData: "采集已暂停", sampling: "采集中", connectionPending: "等待通信", pageConnection: "实时更新暂时中断，正在通过定时刷新获取数据。", pageUpdateFailed: "数据更新中断，当前保留最后一次获取的结果，正在重试。", pageUpdateTrying: "正在恢复数据更新，并尝试定时刷新。", ageHint: "数据超过 {n} 秒未更新将标记为旧值（按轮询配置估算）", operationOk: "操作成功", operationFailed: "操作失败", working: "处理中…", dismiss: "关闭提示", requiredFields: "请填写名称和连接地址", pointStatus: "数据状态", updatedAt: "更新时间", currentValue: "当前值", noActiveGroups: "没有启用的分组", readOnly: "只读", pointWriteHint: "写入会改变设备值，请核对设备和地址。", importResult: "已导入 {g} 组 / {r} 个点位", loadFailed: "加载失败", refresh: "重试加载",
@@ -109,7 +110,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     histMinutes: "Last {n} minutes", histHours: "Last {n} hours", histNoNumeric: "No plottable numeric data. Check types or select other points.", histZoomIn: "Zoom in", histZoomOut: "Zoom out", histMoveEarlier: "Move earlier", histMoveLater: "Move later", histQueryZoom: "Query zoomed range", histRelative: "Relative scale per series", histInteractionHint: "Hover for values · Drag horizontally to select time · Double-click to reset", histNoVisible: "No visible series in this range. Reset zoom or enable a legend item.", histNearest: "Nearest samples (actual times)", histLegendHint: "Click a legend item to hide / show", histStatsHint: "Statistics of displayed samples in the visible range", histLastValue: "Last", histSamplingNote: "Bucketed decoded values in the selected display mode: the last value per address in each bucket. Min / Max describe displayed samples and may miss transient peaks. Query the zoomed range for finer resolution.", histRelativeNote: "Each series maps to 0–100%; constant values appear at 50%. Readouts and statistics retain values in the selected display mode.",
     liveCurve: 'Live curves', liveWindow: 'Time window', freezeCurve: 'Freeze view', resumeCurve: 'Resume live', clearCurve: 'Clear curves', curveWaiting: 'Waiting for new valid samples…', liveCurveHint: 'Buffered while this device is open. Latest values sampled every 250ms; up to 8 series, 2400 points each, retained for 10 minutes. Freezing does not stop acquisition.', liveRawHint: 'Raw values decoded by register type, without factor/offset. Non-finite values and unsafe 64-bit integers are omitted.', curvePaused: 'View frozen; buffering continues', curveTracking: 'Following live data', curveNoNumeric: 'No numeric points available. Configure registers first.', curveSelectLimit: 'Select up to {n} points', curveTime: 'Time',
 
-    groupOldValues: 'Stale data present', groupPartialData: 'Incomplete data', groupCommunicationError: 'Communication error', groupTimeHint: 'Shows the oldest sample in the group so partial updates do not hide stale data',
+    groupOldValues: 'Stale data present', groupPartialData: 'Incomplete data', groupCommunicationError: 'Communication error', slaveServiceError: 'Slave service error', groupTimeHint: 'Shows the oldest sample in the group so partial updates do not hide stale data',
     resizeSidebar: 'Resize sidebar', resizeSidebarHint: 'Drag to resize, double-click to reset, or use Left and Right arrow keys',
     sortDevices: 'Reorder', finishSorting: 'Done', moveUp: 'Move up', moveDown: 'Move down', dragDevice: 'Drag to reorder', sortingHint: 'Drag the handle or use the arrows. Saved in this browser. All devices are shown while reordering.', orderSaveFailed: 'Order changed, but browser storage is unavailable; it may reset on reload.',
     observe: "Observe", configure: "Configure", searchPoints: "Search point name or address", onlyIssues: "Issues / stale only", noMatchingPoints: "No matching points", lastSample: "Latest sample", notSampled: "Not sampled", secondsAgo: "{n}s ago", fresh: "Fresh", oldValue: "Old value", coveredWord: "Merged word", shortData: "Incomplete data", pausedData: "Sampling paused", sampling: "Sampling", connectionPending: "Awaiting communication", pageConnection: "Live updates interrupted. Fetching data with periodic refreshes.", pageUpdateFailed: "Updates unavailable. Keeping the last received results and retrying.", pageUpdateTrying: "Restoring updates and trying periodic refreshes.", ageHint: "Values older than {n}s are marked stale (estimated from polling settings)", operationOk: "Operation succeeded", operationFailed: "Operation failed", working: "Working…", dismiss: "Dismiss", requiredFields: "Enter a name and connection address", pointStatus: "Data status", updatedAt: "Updated", currentValue: "Current value", noActiveGroups: "No enabled groups", readOnly: "Read only", pointWriteHint: "Writing changes the device value. Check the device and address.", importResult: "Imported {g} groups / {r} points", loadFailed: "Loading failed", refresh: "Retry loading",
@@ -282,22 +283,15 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<string, LatestValue
 function useOperation(t: T) {
   const [busy, setBusy] = useState(false)
   const locked = useRef(false)
-  const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null)
+  const setNotice = (notice: { error: boolean; text: string }) => showOperationNotice(notice, t('dismiss'))
   const run = async (action: () => Promise<unknown>) => {
     if (locked.current) return false
-    locked.current = true; setBusy(true); setNotice(null)
+    locked.current = true; setBusy(true)
     try { await action(); setNotice({ error: false, text: t('operationOk') }); return true }
     catch (error) { setNotice({ error: true, text: t('operationFailed') + ': ' + (error instanceof Error ? error.message : String(error)) }); return false }
     finally { locked.current = false; setBusy(false) }
   }
-  return { busy, notice, setNotice, run }
-}
-
-function Feedback({ operation, t }: { operation: ReturnType<typeof useOperation>; t: T }) {
-  if (!operation.notice) return null
-  return <div className={'operation-feedback' + (operation.notice.error ? ' error' : '')} role={operation.notice.error ? 'alert' : 'status'}>
-    <span>{operation.notice.text}</span><button type="button" aria-label={t('dismiss')} onClick={() => operation.setNotice(null)}>×</button>
-  </div>
+  return { busy, setNotice, run }
 }
 
 function useNow() {
@@ -503,7 +497,7 @@ export default function App() {
         }
       }
       else if (msg.type === 'group-errors' && Array.isArray(msg.errors)) {
-        setGroupErrors((prev) => { const next = { ...prev }; for (const e of msg.errors) if (e && typeof e.groupId === 'number') next[e.groupId] = e.error; return next })
+        setGroupErrors(() => { const next: Record<number, string> = {}; for (const e of msg.errors) if (e && typeof e.groupId === 'number') next[e.groupId] = e.error; return next })
       }
     }
     const connect = () => {
@@ -666,7 +660,7 @@ export default function App() {
 
       <main className="main">
         <div className="mobile-header"><button className="btn" aria-label={t('expandNav')} onClick={() => setCollapsed(false)}>☰ {t('devices')}</button><strong>ProbeStation</strong><button className="btn" aria-label={t('settings')} onClick={() => { setSettingsSection('general'); setShowSettings(true) }}>⚙</button></div>
-        <Feedback operation={operation} t={t} />
+
         {loadError && <div className="operation-feedback error" role="alert">{t('loadFailed')}<button className="btn" onClick={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }}>{t('refresh')}</button></div>}
         <DeviceIssues onNavigate={navigateData} />
         <GlobalTabBar t={t} view={view} onChange={setView} />
@@ -802,11 +796,11 @@ function DeviceView({ target, t, device, connected, groups, latest, groupErrors,
         <span>{lastSample === null ? '—' : formatLocalTs(new Date(lastSample).toISOString())}</span>
         <span className={groups.some(g => groupErrors[g.id]) ? 'has-fault' : ''}>{t('faultsLabel')}: {groups.filter(g => groupErrors[g.id]).length}</span>
       </div>
+      {device.mode === 'slave' && <DeviceSlaveStatus deviceId={device.id} />}
       <TabBar tabs={[t('tabLive'), t('liveCurve'), t('tabHistory'), t('tabRaw'), ...(device.mode === 'slave' ? [] : [t('tabFirmware')])]} active={tab} onChange={setTab} />
       <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
       {tab === 2 && <HistoryView target={target} t={t} device={device} groups={groups} registers={registers} />}
-      {device.mode === 'slave' && <DeviceSlaveStatus deviceId={device.id} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
       <div hidden={tab !== 1}><LiveCurve t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
@@ -880,7 +874,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
   }) })).filter(g => g.registers.length > 0 || (!search && !issuesOnly))
   return (
     <div>
-      <Feedback operation={operation} t={t} />
+
       <div className="observation-toolbar">
         <div className="seg"><button className={!configuring ? 'selected' : ''} aria-pressed={!configuring} onClick={() => setConfiguring(false)}>{t('observe')}</button><button className={configuring ? 'selected' : ''} aria-pressed={configuring} onClick={() => setConfiguring(true)}>{t('configure')}</button></div>
         <input className="hist-input point-search" aria-label={t('searchPoints')} placeholder={t('searchPoints')} value={search} onChange={e => setSearch(e.target.value)} />
@@ -898,7 +892,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
         return (
         <div key={g.id} className="group-block">
           <div className="group-data-summary">
-            <span>{t('pointStatus')}: <strong className={summary.status === 'fresh' ? 'group-data-fresh' : summary.status === 'groupCommunicationError' ? 'has-fault' : ''}>{t(summary.status)}</strong></span>
+            <span>{t('pointStatus')}: <strong className={summary.status === 'fresh' ? 'group-data-fresh' : summary.status === 'groupCommunicationError' ? 'has-fault' : ''}>{t(device.mode === 'slave' && summary.status === 'groupCommunicationError' ? 'slaveServiceError' : summary.status)}</strong></span>
             <span title={t('groupTimeHint') + (summary.timestamp === null ? '' : ' · ' + formatLocalTs(new Date(summary.timestamp).toISOString()))}>{t('updatedAt')}: <strong>{summary.ageSeconds === null ? '—' : t('secondsAgo').replace('{n}', String(summary.ageSeconds))}</strong></span>
           </div>
           <div className="group-head">
@@ -987,7 +981,7 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
     <div className="modal-mask">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{initial ? t('editGroup') : t('newGroup')}</h3>
-        <Feedback operation={operation} t={t} />
+
         <label>{t('groupName')}</label>
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         <label>{t('slaveId')}</label>
@@ -1073,7 +1067,7 @@ function AliasCell({ t, reg, onRefresh }: { t: T; reg: Register; onRefresh: () =
   return (
     <div className="inline-edit"><input className="cell-input" disabled={operation.busy} value={val} placeholder={t('colAlias')}
       onChange={(e) => setVal(e.target.value)} onBlur={commit}
-      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} /><Feedback operation={operation} t={t} /></div>
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} /></div>
   )
 }
 
@@ -1095,7 +1089,7 @@ function TypeCell({ t, reg, available, disabled, onRefresh }: { t: T; reg: Regis
         ))}
       </select>
       {err && <span className="cell-err" title={t('valueShort')}>⚠</span>}
-      <Feedback operation={operation} t={t} />
+
     </div>
   )
 }
@@ -1940,7 +1934,7 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
       }}>
         <div className="device-modal-header"><h3 id={titleId}>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3><button type="button" className="modal-close" aria-label={t('cancel')} disabled={operation.busy} onClick={onClose}>✕</button></div>
         <div className="device-modal-body">
-          <Feedback operation={operation} t={t} />
+
           <fieldset disabled={operation.busy}>
             <legend>基本信息 / General</legend>
             <label className="device-field"><span>{t('name')}</span><input aria-label={t('name')} required pattern={'.*\\S.*'} value={name} onChange={e => setName(e.target.value)} autoFocus /></label>
@@ -1970,10 +1964,10 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
             <legend>{mode === 'slave' ? '从站设置 / Slave' : '采集设置 / Sampling'}</legend>
             <div className="device-field-grid">
               {textField(t('slaveIdLabel'), slaveId, setSlaveId, '1', { min: mode === 'slave' ? 1 : 0, max: 247 })}
-              {textField(t('pollIntervalLabel'), pollInterval, setPollInterval, '1000', { min: 1, max: 2147483647 }, 'ms')}
+              {mode === 'master' && textField(t('pollIntervalLabel'), pollInterval, setPollInterval, '1000', { min: 1, max: 2147483647 }, 'ms')}
               {mode === 'master' && textField(t('timeoutLabel'), timeout, setTimeout_, '3000', { min: 1, max: 2147483647 }, 'ms')}
             </div>
-            {mode === 'slave' ? <p className="device-field-hint">从站按上方间隔刷新并记录本地数据。TCP 的 0.0.0.0 接受本机所有网卡连接；外部主站使用本机实际 IP。RTU 使用独占串口。</p> : <><p className="device-field-hint">{t('pollIntervalHint')}</p><p className="device-field-hint">{t('timeoutHint')}</p></>}
+            {mode === 'slave' ? <p className="device-field-hint">从站等待外部主站读写。TCP 的 0.0.0.0 接受本机所有网卡连接；外部主站使用本机实际 IP。RTU 使用独占串口。</p> : <><p className="device-field-hint">{t('pollIntervalHint')}</p><p className="device-field-hint">{t('timeoutHint')}</p></>}
           </fieldset>
         </div>
         <div className="modal-actions device-modal-footer">

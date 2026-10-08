@@ -48,6 +48,12 @@ export class DuckDBStore {
   private retentionTimer: NodeJS.Timeout | null = null
   private dbPath: string
   private retentionSeconds: number
+  private mutations: Promise<unknown> = Promise.resolve()
+  private mutate<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.mutations.then(action)
+    this.mutations = result.catch(() => {})
+    return result
+  }
 
   constructor(private readonly config: Config, private readonly cfg?: any) {
     this.dbPath = config.dbPath
@@ -111,14 +117,36 @@ export class DuckDBStore {
 
   /** Flush buffered points to DuckDB. */
   async flush(): Promise<void> {
-    const conn = await this.ready
-    if (this.buffer.length === 0) return
+    if (this.buffer.length === 0) { await this.mutations; return }
     const batch = this.buffer.splice(0)
     // TODO(phase2): replace string interpolation with parameterized insert.
     const rows = batch.map(p =>
       `(${p.objectId}, '${p.area}', ${p.address}, '${p.timestamp}', ${p.rawValue}, '${p.quality}')`,
     ).join(', ')
-    await conn.run(`INSERT INTO poll_data (object_id, area, address, ts, raw_value, quality) VALUES ${rows}`)
+    await this.mutate(async () => {
+      const conn = await this.ready
+      await conn.run(`INSERT INTO poll_data (object_id, area, address, ts, raw_value, quality) VALUES ${rows}`)
+    })
+  }
+
+  /** Explicit device/time range only; leaves the live cache and configuration intact. */
+  async deleteHistory(objectId: number, start: string, end: string, dryRun = true) {
+    if (!Number.isSafeInteger(objectId) || objectId < 1) throw new Error('设备 ID 无效')
+    const from = new Date(start), to = new Date(end)
+    if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from > to) throw new Error('历史时间范围无效')
+    // Queue buffered inserts before the deletion so old buffered samples cannot reappear afterward.
+    const flushing = this.flush()
+    const result = this.mutate(async () => {
+      await flushing
+      const conn = await this.ready
+      const params = { objectId, start: from.toISOString(), end: to.toISOString() }
+      const where = 'object_id = $objectId AND ts >= CAST($start AS TIMESTAMP) AND ts <= CAST($end AS TIMESTAMP)'
+      const rows = (await conn.runAndReadAll(`SELECT COUNT(*) AS c FROM poll_data WHERE ${where}`, params)).getRowObjects()
+      const affectedRows = Number(rows[0]?.c ?? 0)
+      if (!dryRun) await conn.run(`DELETE FROM poll_data WHERE ${where}`, params)
+      return { objectId, start: params.start, end: params.end, dryRun, affectedRows }
+    })
+    return result
   }
 
   /**

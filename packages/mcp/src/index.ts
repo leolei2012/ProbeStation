@@ -37,6 +37,12 @@ export function apply(ctx: Context, config: Config): void {
   const ota = (ctx as any).ota
   const sink = (ctx as any).sink
   const recorder = new Recorder(ctx as any, cfg)
+  const timeRange = (start: string, end: string) => {
+    if (!/(Z|[+-]\d{2}:\d{2})$/i.test(start) || !/(Z|[+-]\d{2}:\d{2})$/i.test(end)) throw new Error('时间必须为带时区的 ISO 字符串')
+    const from = new Date(start), to = new Date(end)
+    if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from > to) throw new Error('时间范围无效')
+    return { start: from.toISOString(), end: to.toISOString() }
+  }
 
   /** 按设备、数据区和协议地址定位点，四数据区地址空间相互独立。 */
   const findRegisterByAddress = (deviceId: number, area: ModbusArea, address: number) =>
@@ -45,13 +51,14 @@ export function apply(ctx: Context, config: Config): void {
   // 每个会话一个独立 McpServer：Protocol 只能连一个 transport，多会话/多连接必须各自实例。
   function registerTools(server: McpServer): void {
     server.registerTool('list_devices', {
-      title: 'List devices', description: '列出所有监控设备（id、名称、IP、端口、启停状态）', inputSchema: {},
+      title: 'List devices', description: '列出所有设备的 id、名称、mode（master/slave）、连接参数和启停状态；实时连接/监听状态用 get_device_health 查询。', inputSchema: {},
     }, async () => ({ content: [{ type: 'text', text: JSON.stringify(cfg.listObjects()) }] }))
 
     server.registerTool('create_device', {
-      title: 'Create device', description: '新增一台监控设备（连接参数：TCP 填 ip/port，RTU 填 serial_path 及串口参数；slave 从站号、扫描间隔可选）。创建后该设备接入轮询（可在其下再 create_group/create_register 建点位）',
+      title: 'Create device', description: '新增 TCP/RTU 设备。mode=master（默认）主动轮询；mode=slave 监听外部主站，TCP ip/port 是本机监听地址/端口，RTU 使用独占串口，slave_id 是从站号。扫描间隔与读写超时只用于主站。',
       inputSchema: {
         name: zz.string(),
+        mode: zz.enum(['master', 'slave']).optional(),
         transport: zz.enum(['tcp', 'rtu']).optional(),
         ip: zz.string().optional(),
         port: zz.number().optional(),
@@ -94,17 +101,20 @@ export function apply(ctx: Context, config: Config): void {
         ip = args.ip
         port = args.port ?? 8899
       }
-      const obj = cfg.createObject(name, ip, port, 'master', conn)
+      const obj = cfg.createObject(name, ip, port, args.mode ?? 'master', conn)
+      await ctx.get('deviceSlaves', false)?.sync()
       cfg.log('INFO', 'mcp', 'create device ' + obj.id + ' ' + name)
       // createObject 已 emit config/changed，poller 若在跑会自动 refreshSchedule 纳入该设备
       return { content: [{ type: 'text', text: JSON.stringify(obj) }] }
     })
 
     server.registerTool('update_device', {
-      title: 'Update device', description: '改设备连接/超时等字段（name/ip/port/serial_path/baud_rate/parity/slave_id/poll_interval_ms/timeout_ms…）；改完会重连该设备',
+      title: 'Update device', description: '修改设备角色 mode（master/slave）、transport（tcp/rtu）和连接参数；主站重连，从站重新监听。切为 TCP 从站时提供本机监听 IP 和端口；RTU 从站数据位必须为 8。',
       inputSchema: {
         device_id: zz.number(),
         name: zz.string().optional(),
+        mode: zz.enum(['master', 'slave']).optional(),
+        transport: zz.enum(['tcp', 'rtu']).optional(),
         ip: zz.string().optional(),
         port: zz.number().optional(),
         serial_path: zz.string().optional(),
@@ -121,7 +131,7 @@ export function apply(ctx: Context, config: Config): void {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
       const fields: Record<string, unknown> = {}
       const snake2camel: Record<string, string> = {
-        name: 'name', ip: 'ip', port: 'port', transport: 'transport',
+        name: 'name', mode: 'mode', ip: 'ip', port: 'port', transport: 'transport',
         serial_path: 'serialPath', baud_rate: 'baudRate', parity: 'parity', stop_bits: 'stopBits',
         data_bits: 'dataBits', flow_control: 'flowControl', slave_id: 'slaveId',
         poll_interval_ms: 'pollIntervalMs', timeout_ms: 'timeoutMs',
@@ -132,13 +142,25 @@ export function apply(ctx: Context, config: Config): void {
         if (mapped) fields[mapped] = v
       }
       const updated = cfg.updateObject(args.device_id, fields)
-      try { await poller.reconnectDevice(args.device_id) } catch { /* 忽略 */ }
+      if (updated.mode !== 'slave') { try { await poller.reconnectDevice(args.device_id) } catch { /* 忽略 */ } }
+      await ctx.get('deviceSlaves', false)?.sync()
       cfg.log('INFO', 'mcp', 'update device ' + args.device_id)
       return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
     })
 
+    server.registerTool('delete_device', {
+      title: 'Delete device', description: '删除指定设备及其分组、点位、告警，停止连接/从站监听；保留历史数据，可用 delete_history 单独清理。不可撤销。',
+      annotations: { destructiveHint: true }, inputSchema: { device_id: zz.number().int().positive() },
+    }, async args => {
+      if (!cfg.getObject(args.device_id)) throw new Error('设备不存在')
+      cfg.deleteObject(args.device_id)
+      await ctx.get('deviceSlaves', false)?.sync()
+      cfg.log('INFO', 'mcp', 'delete device ' + args.device_id)
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, device_id: args.device_id, history_preserved: true }) }] }
+    })
+
     server.registerTool('get_raw_frames', {
-      title: 'Get raw frames', description: '查设备串口/TCP 的原始 TX/RX 报文（最近 limit 帧，默认 200，上限 2000）：含时间/方向/slave/FC/hex',
+      title: 'Get raw frames', description: '查主站串口/TCP 原始 TX/RX 报文（最近 limit 帧，默认 200，上限 2000）：含时间/方向/slave/FC/hex。从站尚无报文缓冲，使用 get_device_health 的 slave_service 查询监听状态。',
       inputSchema: { device_id: zz.number(), limit: zz.number().optional() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
@@ -171,11 +193,12 @@ export function apply(ctx: Context, config: Config): void {
     }, async (args) => ({ content: [{ type: 'text', text: JSON.stringify(cfg.listRegistersByObject(args.device_id)) }] }))
 
     server.registerTool('set_device_active', {
-      title: 'Connect/disconnect device', description: '连接或断开设备（active=true 连接并打开串口/开始轮询；active=false 断开并关闭串口/停止轮询）。状态会通过 config/changed 事件同步到 Web UI',
+      title: 'Start/stop device', description: '主站：active=true 连接并轮询，false 停止；从站：true 启动监听，false 停止监听。停止再启动从站保留本次程序运行期间的内存值。',
       inputSchema: { device_id: zz.number(), active: zz.boolean() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
       const updated = cfg.updateObject(args.device_id, { isActive: args.active ? 1 : 0 })
+      await ctx.get('deviceSlaves', false)?.sync()
       cfg.log('INFO', 'mcp', (args.active ? 'connect' : 'disconnect') + ' device ' + args.device_id)
       return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
     })
@@ -185,6 +208,7 @@ export function apply(ctx: Context, config: Config): void {
       inputSchema: { device_id: zz.number(), poll_interval_ms: zz.number() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      if (cfg.getObject(args.device_id).mode === 'slave') return { content: [{ type: 'text', text: '从站等待主站读写，没有扫描间隔' }], isError: true }
       if (!Number.isInteger(args.poll_interval_ms) || args.poll_interval_ms < 1) {
         return { content: [{ type: 'text', text: 'poll_interval_ms must be an integer >= 1' }], isError: true }
       }
@@ -294,11 +318,13 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('write_register', {
-      title: 'Write register', description: '按 Modbus 地址写某设备寄存器（holding-register 用 FC06/FC16，coil 用 FC05/FC15；控制真机，危险操作）',
+      title: 'Write register', description: 'value 是工程值，反向应用 factor/offset 后编码。主站写真实设备，仅支持 holding-register/coil；从站修改本机点位内存，四数据区均支持，供外部主站读取，不主动连接外部设备。',
       inputSchema: { device_id: zz.number(), address: zz.number(), value: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']).optional(), method: zz.enum(['single', 'multiple']).optional() },
     }, async (args) => {
       const area = (args.area ?? 'holding-register') as 'holding-register' | 'coil' | 'discrete-input' | 'input-register'
-      if (area !== 'holding-register' && area !== 'coil') return { content: [{ type: 'text', text: 'only holding-register and coil are writable' }], isError: true }
+      const device = cfg.getObject(args.device_id)
+      if (!device) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
+      if (device.mode !== 'slave' && area !== 'holding-register' && area !== 'coil') return { content: [{ type: 'text', text: 'master can only write holding-register and coil' }], isError: true }
       const reg = findRegisterByAddress(args.device_id, area, args.address)
       if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
       // 物理值 → 逆变换（÷factor、−offset）→ 寄存器值 → 编码
@@ -311,12 +337,36 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, address: reg.startAddress, area, value: args.value, method }) }] }
     })
 
+    server.registerTool('export_history', {
+      title: 'Export history', description: '导出设备指定时间范围的历史，格式 CSV/XLSX，返回文件名和 base64；可选择 register_ids（必须属于设备），tz_offset_min 是展示时区相对 UTC 的分钟数，例如中国 +480。时间必须带时区。',
+      annotations: { readOnlyHint: true },
+      inputSchema: { device_id: zz.number().int().positive(), start: zz.string(), end: zz.string(), format: zz.enum(['csv', 'xlsx']).optional(), register_ids: zz.array(zz.number().int().positive()).min(1).optional(), tz_offset_min: zz.number().int().min(-840).max(840).optional() },
+    }, async args => {
+      if (!cfg.getObject(args.device_id)) throw new Error('设备不存在')
+      const range = timeRange(args.start, args.end), format = args.format ?? 'csv'
+      if (args.register_ids?.some(id => cfg.getRegister(id)?.objectId !== args.device_id)) throw new Error('点位不存在或不属于该设备')
+      await store.flush()
+      const buffer = format === 'csv' ? Buffer.from(await sink.exportCsv(args.device_id, range.start, range.end, args.register_ids, args.tz_offset_min ?? 0), 'utf8') : await sink.exportXlsx(args.device_id, range.start, range.end, args.register_ids, args.tz_offset_min ?? 0)
+      return { content: [{ type: 'text', text: JSON.stringify({ filename: `device-${args.device_id}-history.${format}`, mime: format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: buffer.length, b64: buffer.toString('base64'), ...range }) }] }
+    })
+    server.registerTool('delete_history', {
+      title: 'Delete history', description: '按设备 ID 和带时区起止时间（包含两端）删除历史。dry_run 默认 true，只预览行数；false 实际删除。可清理已删除设备的遗留历史。保留配置和实时缓存，运行中的设备仍会产生新数据。',
+      annotations: { destructiveHint: true },
+      inputSchema: { device_id: zz.number().int().positive(), start: zz.string(), end: zz.string(), dry_run: zz.boolean().optional() },
+    }, async args => {
+      const range = timeRange(args.start, args.end)
+      const result = await store.deleteHistory(args.device_id, range.start, range.end, args.dry_run ?? true)
+      if (!result.dryRun) cfg.log('INFO', 'mcp', `delete history device ${args.device_id}: ${range.start} - ${range.end}, ${result.affectedRows} rows`)
+      return { content: [{ type: 'text', text: JSON.stringify({ device_id: args.device_id, ...range, dry_run: result.dryRun, affected_rows: result.affectedRows }) }] }
+    })
+
     server.registerTool('create_group', {
       title: 'Create group', description: '新建寄存器分组（名称/从站ID/功能码/起始地址/数量）',
       inputSchema: { device_id: zz.number(), name: zz.string(), function_code: zz.number().optional(), start_address: zz.number(), quantity: zz.number(), slave_id: zz.number().optional() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
-      const g = cfg.createGroup(args.device_id, args.name, args.function_code ?? 3, args.start_address, args.quantity, 'read', args.slave_id ?? 1)
+      const device = cfg.getObject(args.device_id)
+      const g = cfg.createGroup(args.device_id, args.name, args.function_code ?? 3, args.start_address, args.quantity, 'read', device.mode === 'slave' ? device.slaveId : args.slave_id ?? 1)
       for (let i = 0; i < g.quantity; i++) cfg.createRegister(g.id, g.objectId, null, g.functionCode, g.startAddress + i, 'int16')
       cfg.log('INFO', 'mcp', 'create group ' + g.id + ' "' + g.name + '"')
       return { content: [{ type: 'text', text: JSON.stringify(g) }] }
@@ -380,7 +430,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('export_points_xlsx', {
-      title: 'Export point sheet (xlsx)', description: '把一台设备的点位点表导成 xlsx（每个寄存器分组单独一个 sheet），返回 base64 内容（"一个分组一个 sheet，便于查看/交接/回导"）',
+      title: 'Export point sheet (xlsx)', description: '导出新版 v2 点位表：设备信息、每分组一个 sheet、告警规则 sheet（每条规则一行，阈值为解码原始值），返回 base64。',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
@@ -388,7 +438,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ filename, b64: buffer.toString('base64'), bytes: buffer.length }) }] }
     })
     server.registerTool('import_points_xlsx', {
-      title: 'Import point sheet (xlsx)', description: '把 export_points_xlsx 导出的、或手工整理成相同布局（每分组一个 sheet）的 xlsx 点表导回到设备：会重建该设备的全部分组/寄存器（同一位点全量覆盖）。传 content_b64',
+      title: 'Import point sheet (xlsx)', description: '导入 v2 点位表，必须含告警规则 sheet（无告警也保留表头），不兼容旧版。覆盖设备全部分组、点位和告警；告警校验失败时保留原配置。传 content_b64，检查返回 errors。',
       inputSchema: { device_id: zz.number(), content_b64: zz.string() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
@@ -459,7 +509,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('get_device_health', {
-      title: 'Get device health', description: '查某设备的连接状态、轮询是否在跑、最近采样时间',
+      title: 'Get device health', description: '查看设备角色及健康状态。主站 connected 表示连接；从站 connected 表示监听已启动，slave_service 含请求/连接数和服务错误，没有客户端连接不代表故障。从站 polling=false。',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
       const obj = cfg.getObject(args.device_id)
@@ -474,8 +524,9 @@ export function apply(ctx: Context, config: Config): void {
         mode: obj.mode,
         is_active: obj.isActive,
         connected: poller.isDeviceConnected(args.device_id),
-        polling: obj.isActive === 1 && !poller.isPaused(args.device_id),
-        poll_interval_ms: obj.pollIntervalMs,
+        polling: obj.mode !== 'slave' && obj.isActive === 1 && !poller.isPaused(args.device_id),
+        poll_interval_ms: obj.mode === 'slave' ? null : obj.pollIntervalMs,
+        ...(obj.mode === 'slave' ? { slave_service: ctx.get('deviceSlaves', false)?.status(obj.id) ?? null } : {}),
         data_retain_seconds: obj.dataRetainSeconds,
         last_sample_time: ts,
         register_count: cfg.listRegistersByObject(args.device_id).length,
@@ -524,6 +575,39 @@ export function apply(ctx: Context, config: Config): void {
         })
       }
       return { content: [{ type: 'text', text: JSON.stringify(rules) }] }
+    })
+
+    server.registerTool('create_alarm_rule', {
+      title: 'Create alarm rule', description: '为具体点位新增告警，阈值比较类型解码后的原始值，不应用 factor/offset；一个点可设置多个规则。',
+      inputSchema: { register_id: zz.number().int().positive(), operator: zz.enum(['>', '>=', '==', '<=', '<', '!=']), threshold: zz.number().finite(), message: zz.string().max(200).nullable().optional() },
+    }, async args => ({ content: [{ type: 'text', text: JSON.stringify(cfg.createRule(args.register_id, args.operator, args.threshold, args.message ?? null)) }] }))
+    server.registerTool('update_alarm_rule', {
+      title: 'Update alarm rule', description: '修改告警条件、原始值阈值或提示；省略的字段保留原值，message=null 清除提示。',
+      inputSchema: { rule_id: zz.number().int().positive(), operator: zz.enum(['>', '>=', '==', '<=', '<', '!=']).optional(), threshold: zz.number().finite().optional(), message: zz.string().max(200).nullable().optional() },
+    }, async args => {
+      const before = cfg.listRules().find((r: any) => r.id === args.rule_id)
+      if (!before) throw new Error('告警规则不存在')
+      const updated = cfg.updateRule(args.rule_id, { registerId: before.registerId, operator: args.operator ?? before.operator, threshold: args.threshold ?? before.threshold, message: args.message === undefined ? before.message : args.message })
+      return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
+    })
+    server.registerTool('delete_alarm_rule', {
+      title: 'Delete alarm rule', description: '删除单条告警规则，保留点位及其他规则。', annotations: { destructiveHint: true }, inputSchema: { rule_id: zz.number().int().positive() },
+    }, async args => {
+      if (!cfg.listRules().some((r: any) => r.id === args.rule_id)) throw new Error('告警规则不存在')
+      cfg.deleteRule(args.rule_id)
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, rule_id: args.rule_id }) }] }
+    })
+    server.registerTool('ask_ai', {
+      title: 'Ask configured AI', description: '向软件设置中保存的 AI 提问，复用提供商认证；可指定 provider/model/effort，并附 context 或 device_id（最多200点配置与缓存快照）。单次咨询，无工具执行、不修改配置，不加入界面聊天。会消耗提供商 API 额度。回答是模型建议，不能当作已验证的设备事实。',
+      inputSchema: { question: zz.string().min(1).max(8000), context: zz.string().min(1).max(30000).optional(), device_id: zz.number().int().positive().optional(), provider: zz.string().optional(), model: zz.string().optional(), effort: zz.enum(['default', 'off', 'max', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional() },
+    }, async args => {
+      const api = ctx.get('api', false)
+      if (!api) throw new Error('AI 服务未启动，请启用 REST/AI 服务并配置模型')
+      const { device_id, ...input } = args
+      const response = await api.inject({ method: 'POST', url: '/api/ai/ask', headers: { 'x-probestation-ai': '1' }, payload: { ...input, ...(device_id === undefined ? {} : { deviceId: device_id }) } })
+      const result = response.json()
+      if (response.statusCode >= 400) throw new Error(result.message ?? result.error ?? 'AI 提问失败')
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] }
     })
 
     // ── 连续采样 + 触发记录 ─────────────────────────

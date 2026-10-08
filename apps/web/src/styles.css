@@ -495,6 +495,8 @@ table.reg th, .btn { white-space: nowrap; }
 .operation-feedback { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; margin-bottom: 14px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--success-soft); color: var(--success); font-size: 12px; overflow-wrap: anywhere; }
 .operation-feedback.error { background: var(--error-soft); color: var(--error); }
 .operation-feedback > button { background: transparent; border: 0; color: inherit; cursor: pointer; padding: 5px; flex-shrink: 0; }
+.operation-toast-stack { position: fixed; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 1100; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; pointer-events: none; }
+.operation-toast { width: max-content; max-width: 100%; box-sizing: border-box; flex-shrink: 0; margin: 0; box-shadow: 0 8px 24px #0003; pointer-events: auto; }
 .write-context { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg); border-radius: 8px; margin-bottom: 14px; }
 .write-context span, .write-context small { font-size: 12px; color: var(--text-2); }
 .inline-edit { min-width: 100px; }

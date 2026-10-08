@@ -20,6 +20,15 @@ try {
   let poller: any
   applyPoller({ provide: (_name: string, service: any) => { poller = service }, config: cfg, deviceSlaves: manager, on: () => {}, modbus: { createDriver: () => { throw new Error('slave must not open a master driver') } } } as any, { pollIntervalMs: 1000, connectRetryMs: 5000, watchdogTimeoutMs: 30000, autoResetFailThreshold: 3, autoResetCooldownMs: 5000 })
   assert(poller.isDeviceConnected(a.id)); assert(poller.listConnectionStates().some(s=>s.objectId===b.id&&s.connected))
+  // Late master errors and completions must not overwrite the slave service state.
+  poller.setGroupError(a.id, ga.id, 'connect ECONNREFUSED')
+  assert(!poller.groupErrors.has(ga.id))
+  poller.groupErrors.set(ga.id, 'old master error')
+  poller.ctx.emit = (event: string, payload: any) => events.push({event,payload})
+  poller.refreshSchedule()
+  assert(!poller.groupErrors.has(ga.id), 'role reconciliation discards old master errors')
+  assert(events.some(e=>e.event==='poller/group-ok'&&e.payload.groupId===ga.id))
+  await assert.rejects(poller.getDriver(a), /从站不使用主站连接/)
   await poller.write(b.id, 0, [12], 'multiple', 7, 'holding-register')
   const ca=await client(a), cb=await client(b)
   await ca.writeMultipleRegisters(0,[0x4148,0]);assert.deepEqual((await ca.readHoldingRegisters(0,2)).response.body.valuesAsArray,[0x4148,0]);assert.deepEqual((await cb.readHoldingRegisters(0,1)).response.body.valuesAsArray,[12])

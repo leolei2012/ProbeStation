@@ -101,6 +101,14 @@ class PollingEngine {
   /** 从配置重载设备/分组到内存缓存（配置变更时调用）。 */
   private refreshSchedule(): void {
     const objs = this.ctx.config.listObjects().filter((o: any) => o.mode !== 'slave')
+    for (const groupId of [...this.groupErrors.keys()]) {
+      const group = this.ctx.config.getGroup(groupId)
+      if (!group) this.groupErrors.delete(groupId)
+      else if (this.ctx.config.getObject(group.objectId)?.mode === 'slave') {
+        this.groupErrors.delete(groupId)
+        this.ctx.emit('poller/group-ok', { objectId: group.objectId, groupId })
+      }
+    }
     for (const before of this.devices) if (!objs.some((o: any) => o.id === before.id)) this.markDisconnected(before.id)
     this.devices = objs
     const next = new Map<number, any[]>()
@@ -170,6 +178,7 @@ class PollingEngine {
     this.inflight.set(key, (this.inflight.get(key) ?? 0) + 1)
 
     const run = async () => {
+      if (this.ctx.config.getObject(d.id)?.mode === 'slave') return
       let driver: any
       try {
         driver = await this.getDriver(d)
@@ -182,6 +191,7 @@ class PollingEngine {
       try {
         const gapMs = d.pollIntervalMs ?? this.config.pollIntervalMs ?? 0
         const values = await this.readGroup(driver, g, gapMs, d.timeoutMs)
+        if (this.ctx.config.getObject(d.id)?.mode === 'slave') return
         const area = areaForFunction(g.functionCode as ModbusFunctionCode)
         this.clearGroupError(d.id, g.id)
         this.readFailCount.delete(key) // 一次成功说明串口链路当前可用，清零该串口的连续失败
@@ -372,6 +382,7 @@ class PollingEngine {
   }
 
   private setGroupError(objectId: number, groupId: number, msg: string): void {
+    if (this.ctx.config.getObject(objectId)?.mode === 'slave') return
     this.lastOutcomeAt.set(objectId, Date.now())
     if (this.groupErrors.get(groupId) !== msg) {
       this.groupErrors.set(groupId, msg)
@@ -380,6 +391,7 @@ class PollingEngine {
   }
 
   private clearGroupError(objectId: number, groupId: number): void {
+    if (this.ctx.config.getObject(objectId)?.mode === 'slave') return
     if (this.groupErrors.has(groupId)) {
       this.groupErrors.delete(groupId)
       this.ctx.emit('poller/group-ok', { groupId })
@@ -487,6 +499,7 @@ class PollingEngine {
 
   private async getDriver(obj: any): Promise<any> {
     const fresh = this.ctx.config.getObject(obj.id) ?? obj
+    if (fresh.mode === 'slave') throw new Error('从站不使用主站连接')
     const key = this.driverKey(fresh)
     let driver = this.drivers.get(key)
     if (!driver || !driver.isConnected()) {
