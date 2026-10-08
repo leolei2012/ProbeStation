@@ -433,8 +433,7 @@ table.realtime-table th:last-child, table.realtime-table td:last-child { padding
 .realtime-table .rt-value-suffix .rt-unit { margin-left: 0; }
 .realtime-table .rt-value-suffix .rt-inline-enum:first-child { margin-left: 0; }
 .realtime-table .rt-value-label { font-family: var(--font); font-size: 10px; font-weight: 400; color: var(--text-3); }
-.realtime-table .rt-value-line .rt-reading { min-width: 0; text-align: right; line-height: 20px; }
-.realtime-table .rt-physical-line .rt-reading { font-size: 13px; font-weight: 400; }
+.realtime-table .rt-value-line .rt-reading { min-width: 0; text-align: right; line-height: 20px; font-weight: 400; }
 .realtime-table .rt-inline-enum { margin-left: 8px; font-family: var(--font); font-size: 11px; font-weight: 400; }
 .realtime-table input, .realtime-table select { max-width: 100%; box-sizing: border-box; }
 table.reg th { background: var(--sidebar); padding: 10px 18px; font-size: 11px; font-weight: 600; }
