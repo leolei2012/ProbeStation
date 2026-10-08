@@ -901,7 +901,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
           </div>
           <GroupFold collapsed={collapsed.has(g.id)}>{() => (<div className="register-table-scroll"><table className="reg realtime-table" style={{ minWidth: tableWidth }}>
             <colgroup>{shownColumns.address && <col className="rt-address" />}<col className="rt-description" />{shownColumns.type && <col className="rt-type" />}{showValue && <col className="rt-value" />}{shownColumns.action && <col className="rt-action" />}</colgroup>
-            <thead><tr>{shownColumns.address && <th>{t('colAddr')}</th>}<th>{t('colAlias')}</th>{shownColumns.type && <th>{t('colType')}</th>}{showValue && <th className="rt-numeric-cell">{t('colValue')}</th>}{shownColumns.action && <th className="rt-action-cell">{t(configuring ? 'pointSettings' : 'write')}</th>}</tr></thead>
+            <thead><tr>{shownColumns.address && <th>{t('colAddr')}</th>}<th>{t('colAlias')}</th>{shownColumns.type && <th>{t('colType')}</th>}{showValue && <th className="rt-numeric-cell"><div className="rt-value-stack"><div className="rt-value-line"><span className="rt-value-heading">{t('colValue')}</span></div></div></th>}{shownColumns.action && <th className="rt-action-cell">{t(configuring ? 'pointSettings' : 'write')}</th>}</tr></thead>
             <tbody>
               {g.registers.map((r) => {
                 const rv = views.get(r.id)
@@ -923,10 +923,11 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
                         </div>}
                         {shownColumns.physical && <div className="rt-value-line rt-physical-line" title={(rv?.label ? rv.label + '\n' : '') + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : rv?.physical?.issue ? t(({ precision: 'physicalPrecision', invalid: 'physicalInvalid', raw: 'physicalRaw' })[rv.physical.issue]) : t('physicalFormula').replace('{factor}', String(r.factor ?? 1)).replace('{offset}', String(r.offset ?? 0)) + (r.unit ? ' · ' + r.unit : ''))}>
                           <span className="rt-value-label">{t('colPhysicalValue')}</span>
-                          <ValueReading value={rv?.physical?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces, r.factor, r.offset, r.unit])}>
+                          <ValueReading value={rv?.physical?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces, r.factor, r.offset, r.unit])} />
+                          <span className="rt-value-suffix">
                             {rv?.physical?.value != null && r.unit && <span className="rt-unit">{r.unit}</span>}
                             {rv?.label && <span className="rt-inline-enum">{rv.label}</span>}
-                          </ValueReading>
+                          </span>
                         </div>}
                       </div>
                     </td>}

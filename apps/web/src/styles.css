@@ -426,8 +426,12 @@ table.realtime-table th:last-child, table.realtime-table td:last-child { padding
 .realtime-table .rt-reading { display: block; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-code), monospace; font-variant-numeric: tabular-nums lining-nums; font-size: 15px; line-height: 22px; letter-spacing: 0; user-select: text; }
 .realtime-table .rt-reading:focus { outline: 2px solid var(--accent); outline-offset: 2px; overflow-x: auto; text-overflow: clip; }
 .value-reading { border-radius: 4px; }
-.realtime-table .rt-value-stack { display: flex; flex-direction: column; gap: 2px; max-width: 320px; margin: 0 auto; }
-.realtime-table .rt-value-line { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
+.realtime-table .rt-value-stack { display: flex; flex-direction: column; gap: 2px; width: 208px; max-width: 100%; margin: 0 auto; }
+.realtime-table .rt-value-line { display: grid; grid-template-columns: 40px minmax(0, 92px) minmax(0, 1fr); align-items: center; gap: 6px; }
+.realtime-table .rt-value-heading { grid-column: 2; text-align: right; }
+.realtime-table .rt-value-suffix { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.realtime-table .rt-value-suffix .rt-unit { margin-left: 0; }
+.realtime-table .rt-value-suffix .rt-inline-enum:first-child { margin-left: 0; }
 .realtime-table .rt-value-label { font-family: var(--font); font-size: 10px; font-weight: 400; color: var(--text-3); }
 .realtime-table .rt-value-line .rt-reading { min-width: 0; text-align: right; line-height: 20px; }
 .realtime-table .rt-physical-line .rt-reading { font-size: 13px; font-weight: 400; }
@@ -818,7 +822,7 @@ table.reg th, .btn { white-space: nowrap; }
   .realtime-table .rt-reading { font-size: 14px; white-space: normal; overflow-wrap: anywhere; overflow: visible; }
   table.realtime-table td.rt-stacked-cell { display: block; }
   .realtime-table .rt-stacked-cell::before { display: none; }
-  .realtime-table .rt-value-stack { max-width: none; margin: 0; }
+  .realtime-table .rt-value-stack { margin: 0; }
   .realtime-table .rt-value-label { font-size: 11px; }
   .realtime-table tbody tr:hover td { background: transparent; }
   .realtime-table .rt-action-cell > .btn { justify-self: end; min-width: 60px; }
