@@ -1,3 +1,8 @@
+import { ColumnControl, ValueModeControl, useDisplayColumns, useValueMode } from './DataDisplayControls'
+import { AlarmPanel } from './AlarmPanel'
+import { ValueReading } from './ValueReading'
+import { physicalValue, displayNumber, curveValue, type ValueMode } from './physical-value'
+import { PointSettingsEditor } from './PointSettingsEditor'
 import { DeviceIssues, type DataTarget } from './DeviceIssues'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import './styles.css'
@@ -19,7 +24,7 @@ const TYPE_GROUPS = [
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number; dataRetainSeconds: number | null; connected: boolean }
 type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number }
-interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null }
+interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null; decimalPlaces?: number | null }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number; registers: Register[] }
 interface LatestValue extends Sample {}
 
@@ -30,7 +35,15 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
-    histMinutes: "最近 {n} 分钟", histHours: "最近 {n} 小时", histNoNumeric: "所选点位没有可绘制的数值数据，请检查类型或选择其他点位。", histZoomIn: "放大", histZoomOut: "缩小", histMoveEarlier: "向前移动时间窗口", histMoveLater: "向后移动时间窗口", histQueryZoom: "查询放大区间", histRelative: "各曲线相对量程", histInteractionHint: "悬停查看读数 · 左右拖动框选时间范围 · 双击恢复全范围", histNoVisible: "当前范围没有可见曲线，可重置缩放或点击下方图例显示曲线。", histNearest: "最近采样点（实际时间）", histLegendHint: "点击图例隐藏 / 显示曲线", histStatsHint: "当前可见时间范围的显示数据统计", histLastValue: "末值", histSamplingNote: "曲线为分桶后的原始解码值：每桶每地址保留最后一个值。Min / Max 是显示点的统计，可能遗漏瞬时峰值；放大后可点击“查询放大区间”提高时间分辨率。", histRelativeNote: "相对量程将每条曲线映射为 0–100%，恒定值显示在 50%；悬停和统计仍为原始数值。",
+    alarmDelete: '删除', alarmClose: '关闭',
+    alarmLabel: '告警', alarmRules: '告警规则', alarmActive: '{n} 项触发', alarmNormal: '未触发', alarmWaiting: '等待有效数据', alarmNone: '未设置规则', alarmTriggered: '条件触发', alarmUnknown: '{n} 项规则暂无有效数据，设备暂停、通信异常或数据过期时不判断告警。', alarmLoadError: '告警规则加载失败', alarmHelp: '按点位类型解码后的原始值比较，不应用系数、偏移或显示舍入。条件命中时持续提示，恢复后自动消除；同一次持续告警只记录一条日志。', alarmInvalid: '请选择点位，并填写有效的原始值阈值。', alarmAdd: '新增规则', alarmEdit: '编辑规则', alarmPoint: '告警点位', alarmChoose: '选择点位', alarmOperator: '比较条件', alarmThreshold: '原始值阈值', alarmMessage: '告警提示（可选）', alarmMessageHint: '例如：温度过高，请检查散热', alarmCancelEdit: '取消编辑', alarmConfirmDelete: '删除这条告警规则？',
+    displayValueMode: '数值显示模式', pointDecimals: '小数位数', pointDecimalsAuto: '自动', displayColumns: '显示列', displayColumnsHint: '名称列始终显示，至少保留一列数值。设置保存在当前浏览器。', displayColumnsConfigHint: '配置模式保留类型和点位设置列。至少保留一列数值。', displayColumnsCompact: '精简显示', displayColumnsAll: '显示全部', livePhysicalHint: '按原始解码值 × 系数 + 偏移绘制，不因小数位数设置舍入曲线；悬停读数显示工程单位。', mixedUnitsHint: '当前曲线包含不同工程单位，数值共用纵轴。建议分开选择点位；历史曲线也可使用相对量程比较趋势。', exportRaw: '导出原始值', physicalHistoryHint: '历史物理值按当前点位系数、偏移计算；不是采样时的配置快照。',
+
+    colRawValue: '原始值', colPhysicalValue: '物理值', physicalFormula: '原始值 × {factor} + {offset}', physicalPrecision: '该 64 位数值的小数换算无法精确表示', physicalInvalid: '数值或换算结果无效', physicalRaw: '十六进制 / 二进制格式不进行物理值换算',
+    pointSettings: '点位设置', pointSettingsAction: '设置', pointUnit: '工程单位', pointFactor: '系数', pointOffset: '偏移', pointInvalidScale: '系数必须为非零有限数，偏移必须为有限数。', pointScaleHint: '物理值 = 原始值 × 系数 + 偏移。单位留空可清除；默认系数为 1、偏移为 0。实时表格同时显示原始值与物理值；曲线可切换两种模式。小数位数只影响显示，不改变采集和换算精度。',
+    enumConfig: '枚举配置', enumSet: '设置枚举', enumCount: '{n} 项映射', enumValue: '原始数值', enumLabel: '显示文字', enumHint: '按解码后的整数原始值匹配，不应用倍率或偏移。例如 0 → 关闭，1 → 开启；未匹配时仍显示原始值。', enumEmpty: '尚未设置枚举，添加映射即可开始。清空后保存将移除枚举。', enumLabelPlaceholder: '例如：关闭 / 开启', enumAdd: '添加映射', enumRemove: '删除映射', enumClear: '清空映射', enumInvalidValue: '原始数值必须填写十进制整数，可包含负号。', enumDuplicate: '数值 {value} 重复，请为每个数值保留一项映射。', enumEmptyLabel: '请填写每项映射的显示文字。',
+
+    histMinutes: "最近 {n} 分钟", histHours: "最近 {n} 小时", histNoNumeric: "所选点位没有可绘制的数值数据，请检查类型或选择其他点位。", histZoomIn: "放大", histZoomOut: "缩小", histMoveEarlier: "向前移动时间窗口", histMoveLater: "向后移动时间窗口", histQueryZoom: "查询放大区间", histRelative: "各曲线相对量程", histInteractionHint: "悬停查看读数 · 左右拖动框选时间范围 · 双击恢复全范围", histNoVisible: "当前范围没有可见曲线，可重置缩放或点击下方图例显示曲线。", histNearest: "最近采样点（实际时间）", histLegendHint: "点击图例隐藏 / 显示曲线", histStatsHint: "当前可见时间范围的显示数据统计", histLastValue: "末值", histSamplingNote: "曲线为分桶后的解码值，显示模式由上方选择：每桶每地址保留最后一个值。Min / Max 是显示点的统计，可能遗漏瞬时峰值；放大后可点击“查询放大区间”提高时间分辨率。", histRelativeNote: "相对量程将每条曲线映射为 0–100%，恒定值显示在 50%；悬停和统计仍按所选原始值或物理值显示。",
     liveCurve: '实时曲线', liveWindow: '时间窗口', freezeCurve: '暂停画面', resumeCurve: '继续实时', clearCurve: '清空曲线', curveWaiting: '等待新的有效采样数据…', liveCurveHint: '本次打开设备期间缓存；每 250ms 取最新值，最多 8 条曲线、每条 2400 点，保留最近 10 分钟。暂停仅冻结画面，不停止采集。', liveRawHint: '按寄存器类型解码原始值，不应用倍率/偏移；不绘制非有限数和无法精确表示的 64 位整数。', curvePaused: '画面已暂停，后台继续缓存', curveTracking: '实时跟随', curveNoNumeric: '暂无可绘制的数值点位，请先配置寄存器。', curveSelectLimit: '最多选择 {n} 个点位', curveTime: '时间',
 
     groupOldValues: '存在旧值', groupPartialData: '数据不完整', groupCommunicationError: '通信异常', groupTimeHint: '按组内最早的采样时间显示，避免部分数据未更新被掩盖',
@@ -82,7 +95,15 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
-    histMinutes: "Last {n} minutes", histHours: "Last {n} hours", histNoNumeric: "No plottable numeric data. Check types or select other points.", histZoomIn: "Zoom in", histZoomOut: "Zoom out", histMoveEarlier: "Move earlier", histMoveLater: "Move later", histQueryZoom: "Query zoomed range", histRelative: "Relative scale per series", histInteractionHint: "Hover for values · Drag horizontally to select time · Double-click to reset", histNoVisible: "No visible series in this range. Reset zoom or enable a legend item.", histNearest: "Nearest samples (actual times)", histLegendHint: "Click a legend item to hide / show", histStatsHint: "Statistics of displayed samples in the visible range", histLastValue: "Last", histSamplingNote: "Bucketed raw decoded values: the last value per address in each bucket. Min / Max describe displayed samples and may miss transient peaks. Query the zoomed range for finer resolution.", histRelativeNote: "Each series maps to 0–100%; constant values appear at 50%. Readouts and statistics retain raw values.",
+    alarmDelete: 'Delete', alarmClose: 'Close',
+    alarmLabel: 'Alarms', alarmRules: 'Alarm rules', alarmActive: '{n} triggered', alarmNormal: 'Not triggered', alarmWaiting: 'Waiting for valid data', alarmNone: 'No rules configured', alarmTriggered: 'Condition triggered', alarmUnknown: '{n} rules lack valid data. Paused devices, communication faults and stale samples are not evaluated.', alarmLoadError: 'Failed to load alarm rules', alarmHelp: 'Compare decoded raw values without scaling, offsets or display rounding. Show alarms while conditions match and clear when they recover. Log once per continuous alarm.', alarmInvalid: 'Select a point and enter a finite raw threshold.', alarmAdd: 'Add rule', alarmEdit: 'Edit rule', alarmPoint: 'Point', alarmChoose: 'Select a point', alarmOperator: 'Comparison', alarmThreshold: 'Raw threshold', alarmMessage: 'Alarm message (optional)', alarmMessageHint: 'Example: Temperature too high', alarmCancelEdit: 'Cancel editing', alarmConfirmDelete: 'Delete this alarm rule?',
+    displayValueMode: 'Value display mode', pointDecimals: 'Decimal places', pointDecimalsAuto: 'Automatic', displayColumns: 'Columns', displayColumnsHint: 'Names remain visible. Keep at least one value column. Saved in this browser.', displayColumnsConfigHint: 'Type and point settings remain visible while configuring. Keep at least one value column.', displayColumnsCompact: 'Compact view', displayColumnsAll: 'Show all', livePhysicalHint: 'Plot raw value × factor + offset at full precision. Display precision affects text only; readings include engineering units.', mixedUnitsHint: 'These series use different engineering units on a shared axis. Select them separately, or compare trends using relative ranges in history.', exportRaw: 'Export raw values', physicalHistoryHint: 'Historical physical values use the current point factor and offset, not the configuration at sampling time.',
+
+    colRawValue: 'Raw value', colPhysicalValue: 'Physical value', physicalFormula: 'Raw value × {factor} + {offset}', physicalPrecision: 'Decimal scaling of this 64-bit value cannot be represented precisely', physicalInvalid: 'Invalid value or conversion result', physicalRaw: 'Hex / binary formats do not use physical conversion',
+    pointSettings: 'Point settings', pointSettingsAction: 'Settings', pointUnit: 'Engineering unit', pointFactor: 'Scale factor', pointOffset: 'Offset', pointInvalidScale: 'Use a finite, nonzero scale factor and a finite offset.', pointScaleHint: 'Physical value = raw value × scale factor + offset. Leave the unit blank to remove it. Defaults: factor 1, offset 0. Live tables show raw and physical values; curves can switch modes. Decimal places affect display only, not acquisition or conversion precision.',
+    enumConfig: 'Enum mappings', enumSet: 'Set enum', enumCount: '{n} mappings', enumValue: 'Raw value', enumLabel: 'Display text', enumHint: 'Match decoded integer values before scaling or offset. For example, 0 → Off and 1 → On. Unmatched values remain numeric.', enumEmpty: 'No mappings. Add a mapping to start; saving an empty list removes the enum.', enumLabelPlaceholder: 'For example: Off / On', enumAdd: 'Add mapping', enumRemove: 'Remove mapping', enumClear: 'Clear mappings', enumInvalidValue: 'Enter a decimal integer, optionally with a minus sign.', enumDuplicate: 'Duplicate value {value}. Keep one mapping per value.', enumEmptyLabel: 'Enter display text for every mapping.',
+
+    histMinutes: "Last {n} minutes", histHours: "Last {n} hours", histNoNumeric: "No plottable numeric data. Check types or select other points.", histZoomIn: "Zoom in", histZoomOut: "Zoom out", histMoveEarlier: "Move earlier", histMoveLater: "Move later", histQueryZoom: "Query zoomed range", histRelative: "Relative scale per series", histInteractionHint: "Hover for values · Drag horizontally to select time · Double-click to reset", histNoVisible: "No visible series in this range. Reset zoom or enable a legend item.", histNearest: "Nearest samples (actual times)", histLegendHint: "Click a legend item to hide / show", histStatsHint: "Statistics of displayed samples in the visible range", histLastValue: "Last", histSamplingNote: "Bucketed decoded values in the selected display mode: the last value per address in each bucket. Min / Max describe displayed samples and may miss transient peaks. Query the zoomed range for finer resolution.", histRelativeNote: "Each series maps to 0–100%; constant values appear at 50%. Readouts and statistics retain values in the selected display mode.",
     liveCurve: 'Live curves', liveWindow: 'Time window', freezeCurve: 'Freeze view', resumeCurve: 'Resume live', clearCurve: 'Clear curves', curveWaiting: 'Waiting for new valid samples…', liveCurveHint: 'Buffered while this device is open. Latest values sampled every 250ms; up to 8 series, 2400 points each, retained for 10 minutes. Freezing does not stop acquisition.', liveRawHint: 'Raw values decoded by register type, without factor/offset. Non-finite values and unsafe 64-bit integers are omitted.', curvePaused: 'View frozen; buffering continues', curveTracking: 'Following live data', curveNoNumeric: 'No numeric points available. Configure registers first.', curveSelectLimit: 'Select up to {n} points', curveTime: 'Time',
 
     groupOldValues: 'Stale data present', groupPartialData: 'Incomplete data', groupCommunicationError: 'Communication error', groupTimeHint: 'Shows the oldest sample in the group so partial updates do not hide stale data',
@@ -187,19 +208,19 @@ function toLocalInput(d: Date): string {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes())
 }
 
-interface RegView { value: string; label: string | null; covered: boolean; invalid: boolean; writable: boolean }
+interface RegView { physical?: ReturnType<typeof physicalValue>; value: string; label: string | null; covered: boolean; invalid: boolean; writable: boolean }
 
 /** 枚举命中时返回 label（仅枚举，不参与系数/偏移/单位）。 */
 function enumLabelOf(reg: Register, decoded: number | bigint): string | null {
   const map = parseEnum(reg.enumJson)
-  if (!map || typeof decoded === 'bigint' || !Number.isInteger(decoded)) return null
+  if (!map || (typeof decoded !== 'bigint' && !Number.isInteger(decoded))) return null
   const label = map[String(decoded)]
   return label != null ? label : null
 }
 
 /** 原始值优先显示；枚举命中时追加 " → label" 徽标。 */
 function displayRawWithEnum(reg: Register, decoded: number | bigint): string {
-  const raw = formatNumber(decoded)
+  const raw = displayNumber(decoded, reg)
   const label = enumLabelOf(reg, decoded)
   return label != null ? raw + ' → ' + label : raw
 }
@@ -244,9 +265,11 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<string, LatestValue
         continue
       }
       const isRaw = isHexType(r.dataType) || isBinType(r.dataType)
-      const value = formatRegisterValue(r.dataType, words)
-      const label = isRaw ? null : enumLabelOf(r, decodeRegister(r.dataType, words))
-      views.set(r.id, { value, label, covered: false, invalid: false, writable: !isRaw })
+      const decoded = decodeRegister(r.dataType, words)
+      const value = isRaw ? formatRegisterValue(r.dataType, words) : displayNumber(decoded, r)
+      const label = isRaw ? null : enumLabelOf(r, decoded)
+      const physical = physicalValue(decoded, r)
+      views.set(r.id, { value, label, physical, covered: false, invalid: false, writable: !isRaw })
       consumedUpTo = end
     }
   }
@@ -639,6 +662,7 @@ export default function App() {
       </aside>
 
       <main className="main">
+        <div className="mobile-header"><button className="btn" aria-label={t('expandNav')} onClick={() => setCollapsed(false)}>☰ {t('devices')}</button><strong>ProbeStation</strong><button className="btn" aria-label={t('settings')} onClick={() => { setSettingsSection('general'); setShowSettings(true) }}>⚙</button></div>
         <Feedback operation={operation} t={t} />
         {loadError && <div className="operation-feedback error" role="alert">{t('loadFailed')}<button className="btn" onClick={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }}>{t('refresh')}</button></div>}
         <DeviceIssues onNavigate={navigateData} />
@@ -776,6 +800,7 @@ function DeviceView({ target, t, device, connected, groups, latest, groupErrors,
         <span className={groups.some(g => groupErrors[g.id]) ? 'has-fault' : ''}>{t('faultsLabel')}: {groups.filter(g => groupErrors[g.id]).length}</span>
       </div>
       <TabBar tabs={[t('tabLive'), t('liveCurve'), t('tabHistory'), t('tabRaw'), t('tabFirmware')]} active={tab} onChange={setTab} />
+      <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
       {tab === 2 && <HistoryView target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && <RawDataView t={t} device={device} />}
@@ -801,7 +826,12 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
+  const [settingsReg, setSettingsReg] = useState<Register | null>(null)
   const [configuring, setConfiguring] = useState(false)
+  const [columns, setColumns] = useDisplayColumns(device.id)
+  const shownColumns = { ...columns, type: configuring || columns.type, action: configuring || columns.action }
+  const columnCount = 1 + Object.values(shownColumns).filter(Boolean).length
+  const tableWidth = 220 + (shownColumns.address ? 90 : 0) + (shownColumns.type ? 140 : 0) + (shownColumns.raw ? 220 : 0) + (shownColumns.physical ? 220 : 0) + (shownColumns.action ? 90 : 0)
   const [search, setSearch] = useState('')
   const [issuesOnly, setIssuesOnly] = useState(false)
   const operation = useOperation(t)
@@ -849,6 +879,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
         <div className="seg"><button className={!configuring ? 'selected' : ''} aria-pressed={!configuring} onClick={() => setConfiguring(false)}>{t('observe')}</button><button className={configuring ? 'selected' : ''} aria-pressed={configuring} onClick={() => setConfiguring(true)}>{t('configure')}</button></div>
         <input className="hist-input point-search" aria-label={t('searchPoints')} placeholder={t('searchPoints')} value={search} onChange={e => setSearch(e.target.value)} />
         <label className="issues-filter"><input type="checkbox" checked={issuesOnly} onChange={e => setIssuesOnly(e.target.checked)} />{t('onlyIssues')}</label>
+        <ColumnControl t={t} columns={columns} configuring={configuring} onChange={setColumns} />
       </div>
       {configuring && <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
@@ -874,9 +905,9 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
             {configuring && <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>}
             {configuring && <button className="btn danger" disabled={operation.busy} onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>}
           </div>
-          <GroupFold collapsed={collapsed.has(g.id)}>{() => (<div className="register-table-scroll"><table className="reg realtime-table">
-            <colgroup><col className="rt-address" /><col /><col className="rt-type" /><col className="rt-value" />{!configuring && <col className="rt-action" />}</colgroup>
-            <thead><tr><th>{t('colAddr')}</th><th>{t('colAlias')}</th><th>{t('colType')}</th><th>{t('colValue')}</th>{!configuring && <th>{t('write')}</th>}</tr></thead>
+          <GroupFold collapsed={collapsed.has(g.id)}>{() => (<div className="register-table-scroll"><table className="reg realtime-table" style={{ minWidth: tableWidth }}>
+            <colgroup>{shownColumns.address && <col className="rt-address" />}<col className="rt-description" />{shownColumns.type && <col className="rt-type" />}{shownColumns.raw && <col className="rt-value" />}{shownColumns.physical && <col className="rt-physical" />}{shownColumns.action && <col className="rt-action" />}</colgroup>
+            <thead><tr>{shownColumns.address && <th>{t('colAddr')}</th>}<th>{t('colAlias')}</th>{shownColumns.type && <th>{t('colType')}</th>}{shownColumns.raw && <th className="rt-numeric-cell">{t('colRawValue')}</th>}{shownColumns.physical && <th className="rt-numeric-cell">{t('colPhysicalValue')}</th>}{shownColumns.action && <th className="rt-action-cell">{t(configuring ? 'pointSettings' : 'write')}</th>}</tr></thead>
             <tbody>
               {g.registers.map((r) => {
                 const rv = views.get(r.id)
@@ -884,21 +915,27 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
                 const writable = rv?.writable && [1, 3].includes(g.functionCode)
                 return (
                   <tr key={r.id}>
-                    <td className="kv">{r.startAddress}</td>
-                    <td>{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span className="rt-name" title={r.alias || '—'}>{r.alias || '—'}</span>}</td>
-                    <td>{configuring ? <TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /> : <span className="point-type">{r.dataType}</span>}</td>
-                    <td className={'value' + (state.stale ? ' stale-value' : '')} title={(rv?.value ?? '—') + (rv?.label ? ' → ' + rv.label : '') + '\n' + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : writable ? t('valueHint') : t('readOnly'))} onDoubleClick={writable ? () => setWriteReg(r) : undefined}><span className="rt-reading" tabIndex={0}>{rv?.value ?? '—'}</span><span className="rt-enum">{rv?.label || '\u00a0'}</span></td>
-                    {!configuring && <td>{writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
+                    {shownColumns.address && <td className="kv" data-label={t('colAddr')}>{r.startAddress}</td>}
+                    <td className="rt-description-cell">{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span className="rt-name" title={r.alias || '—'}>{r.alias || '—'}</span>}</td>
+                    {shownColumns.type && <td data-label={t('colType')}>{configuring ? <TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /> : <span className="point-type">{r.dataType}</span>}</td>}
+                    {shownColumns.raw && <td data-label={t('colRawValue')} className={'value rt-numeric-cell' + (state.stale ? ' stale-value' : '')} title={(rv?.value ?? '—') + (rv?.label ? ' → ' + rv.label : '') + '\n' + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : writable ? t('valueHint') : t('readOnly'))} onDoubleClick={writable ? () => setWriteReg(r) : undefined}><ValueReading value={rv?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces])} /><span className="rt-enum" aria-hidden={!rv?.label}>{rv?.label || '\u00a0'}</span></td>}
+                    {shownColumns.physical && <td data-label={t('colPhysicalValue')} className={'value physical-reading rt-numeric-cell' + (state.stale ? ' stale-value' : '')} title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : rv?.physical?.issue ? t(({ precision: 'physicalPrecision', invalid: 'physicalInvalid', raw: 'physicalRaw' })[rv.physical.issue]) : t('physicalFormula').replace('{factor}', String(r.factor ?? 1)).replace('{offset}', String(r.offset ?? 0)) + (r.unit ? ' · ' + r.unit : '')}><ValueReading value={rv?.physical?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces, r.factor, r.offset, r.unit])}>{rv?.physical?.value != null && r.unit && <span className="rt-unit">{r.unit}</span>}</ValueReading></td>}
+                    {shownColumns.action && <td className="rt-action-cell" data-label={t(configuring ? 'pointSettings' : 'write')}>{configuring ? <button className="btn" disabled={rv?.covered} title={rv?.covered ? t('valueCovered') : t('pointSettings')} onClick={() => setSettingsReg(r)}>{t('pointSettingsAction')}</button> : writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
                   </tr>
                 )
               })}
-              {g.registers.length === 0 && <tr><td colSpan={configuring ? 4 : 5} className="kv">{t('noRegisters')}</td></tr>}
+              {g.registers.length === 0 && <tr><td colSpan={columnCount} className="kv">{t('noRegisters')}</td></tr>}
             </tbody>
           </table></div>)}</GroupFold>
         </div>
       )})}
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
       {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: t('operationOk') }) }} />}
+      {settingsReg && <PointSettingsEditor name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
+        const saved = await api.put('/api/registers/' + settingsReg.id, fields)
+        if (!saved || Object.entries(fields).some(([field, value]) => saved[field] !== value)) throw new Error(t('operationFailed'))
+        onRefresh(); operation.setNotice({ error: false, text: t('operationOk') })
+      }} />}
       {writeReg && <WriteModal t={t} deviceName={device.name} currentValue={views.get(writeReg.id)?.value ?? '—'} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => { setWriteReg(null); operation.setNotice({ error: false, text: t('writeOk') }) }} />}
     </div>
   )
@@ -1150,7 +1187,7 @@ function RegisterSelectButton({ t, groups, selected, onApply, max }: {
   )
 }
 
-function deriveHistoryRows(pts: Array<{ ts: string; area: string; address: number; rawValue: number }>, registers: Register[], selectedRegisters: Register[]): Array<{ ts: string; values: Record<number, string> }> {
+function deriveHistoryRows(pts: Array<{ ts: string; area: string; address: number; rawValue: number }>, registers: Register[], selectedRegisters: Register[], valueMode: ValueMode): Array<{ ts: string; values: Record<number, string> }> {
   const rawByTs = new Map<string, Map<string, Record<number, number>>>()
   for (const p of pts) {
     if (!rawByTs.has(p.ts)) rawByTs.set(p.ts, new Map())
@@ -1168,9 +1205,10 @@ function deriveHistoryRows(pts: Array<{ ts: string; area: string; address: numbe
       const decoded = decodeRawByAddr(subset, raw)
       const rawText = formatRawByAddr(subset, raw)
       for (const r of subset) {
-        if (isHexType(r.dataType) || isBinType(r.dataType)) { formatted.set(r.id, rawText.get(r.id) ?? '—'); continue }
+        if (isHexType(r.dataType) || isBinType(r.dataType)) { formatted.set(r.id, valueMode === 'physical' ? '—' : rawText.get(r.id) ?? '—'); continue }
         const d = decoded.get(r.id)
-        formatted.set(r.id, d == null ? '—' : displayRawWithEnum(r, d))
+        const physical = d == null ? null : physicalValue(d, r).value
+        formatted.set(r.id, d == null ? '—' : valueMode === 'physical' ? physical == null ? '—' : physical + (r.unit ? ' ' + r.unit : '') : displayRawWithEnum(r, d))
       }
     }
     const values: Record<number, string> = {}
@@ -1183,6 +1221,7 @@ function deriveHistoryRows(pts: Array<{ ts: string; area: string; address: numbe
 function HistoryView({ target, t, device, groups, registers }: { target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
   const localInput = (date: Date) => toLocalInput(date) + ':' + String(date.getSeconds()).padStart(2, '0')
   const [mode, setMode] = useState<'table' | 'chart'>('table')
+  const [valueMode, setValueMode] = useValueMode('ps-history-value-mode-' + device.id)
   const [range, setRange] = useState(() => ({ start: localInput(new Date(Date.now() - 3600_000)), end: localInput(new Date()) }))
   const [preset, setPreset] = useState<number | null>(60)
   const [page, setPage] = useState(0)
@@ -1224,7 +1263,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     const start = minutes === 0 ? new Date(now.getFullYear(), now.getMonth(), now.getDate()) : new Date(now.getTime() - minutes * 60_000)
     setPreset(minutes); changeRange(localInput(start), localInput(now)); setRefresh(v => v + 1)
   }
-  const rows = useMemo(() => deriveHistoryRows(data?.points ?? [], registers, selectedRegisters), [data, registers, selected])
+  const rows = useMemo(() => deriveHistoryRows(data?.points ?? [], registers, selectedRegisters, valueMode), [data, registers, selected, valueMode])
   const doExport = (format: 'csv' | 'xlsx') => {
     if (!valid) return
     const ids = selectedRegisters.map(r => r.id).join(',')
@@ -1234,10 +1273,12 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   return <div className="history-view">
     <div className="toolbar">
       <div className="seg"><button className={mode === 'table' ? 'selected' : ''} onClick={() => { setMode('table'); setPage(0) }}>{t('histTable')}</button><button className={mode === 'chart' ? 'selected' : ''} onClick={() => { setMode('chart'); setPage(0) }}>{t('tabCurve')}</button></div>
+      <ValueModeControl t={t} value={valueMode} onChange={setValueMode} />
       <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
       <div style={{ flex: 1 }} />
-      <button className="btn" disabled={!valid || selected.size === 0} onClick={() => setShowExport(true)}>{t('export')}</button>
+      <button className="btn" disabled={!valid || selected.size === 0} onClick={() => setShowExport(true)}>{t(valueMode === 'physical' ? 'exportRaw' : 'export')}</button>
     </div>
+    {valueMode === 'physical' && <p className="chart-hint">{t('physicalHistoryHint')}</p>}
     <div className="hist-quick history-presets">
       {[5, 30, 60, 360, 1440, 0].map(minutes => <button key={minutes} className={'btn' + (preset === minutes ? ' selected' : '')} onClick={() => applyPreset(minutes)}>{minutes === 0 ? t('histToday') : minutes < 60 ? t('histMinutes').replace('{n}', String(minutes)) : t('histHours').replace('{n}', String(minutes / 60))}</button>)}
     </div>
@@ -1246,7 +1287,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
       <label className="hist-label">{t('histEnd')}<input className="hist-input" type="datetime-local" step="1" value={range.end} onChange={e => { setPreset(null); changeRange(range.start, e.target.value) }} /></label>
       <button className="btn primary" disabled={!valid || currentStatus === 'loading'} onClick={() => setRefresh(v => v + 1)}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
     </div>
-    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={error} range={{ start: startMs, end: endMs }} onQueryRange={(start, end) => { setPreset(null); changeRange(localInput(new Date(start)), localInput(new Date(end))); setRefresh(v => v + 1) }} /> : <>
+    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={error} range={{ start: startMs, end: endMs }} onQueryRange={(start, end) => { setPreset(null); changeRange(localInput(new Date(start)), localInput(new Date(end))); setRefresh(v => v + 1) }} /> : <>
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
       <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={error} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
     </>}
@@ -1268,14 +1309,14 @@ function HistoryTableBody({ t, rows, selectedRegisters, status, error, page, tot
         <div className="hist-empty">{t('histNoRegs')}</div>
       ) : (
         <>
-          <table className="reg hist-table">
+          <div className="history-table-scroll" tabIndex={0} aria-label={t('histTable')}><table className="reg hist-table">
             <thead><tr><th>{t('colTime')}</th>{selectedRegisters.map(r => <th key={r.id}>{r.alias ?? r.id}</th>)}</tr></thead>
             <tbody>
               {shown.map((row, i) => (
                 <tr key={i}><td className="kv" title={row.ts}>{formatLocalTs(row.ts)}</td>{selectedRegisters.map(r => <td key={r.id} className="value">{row.values[r.id] ?? '—'}</td>)}</tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
           <div className="pager">
             <span className="kv">{t('histTotal').replace('{n}', String(total))}</span>
             <button className="btn" onClick={() => onPageChange(0)} disabled={currentPage <= 0}>{t('histFirst')}</button>
@@ -1354,6 +1395,7 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
   t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; threshold: number
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [valueMode, setValueMode] = useValueMode('ps-live-value-mode-' + device.id)
   useEffect(() => {
     if (!expanded) return
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setExpanded(false) }
@@ -1400,7 +1442,8 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
   }, [])
   useEffect(() => () => observer.current?.disconnect(), [])
   const [hover, setHover] = useState<number | null>(null)
-  const series = chosen.map(r => ({ r, color: CHART_COLORS[Math.abs(r.id) % CHART_COLORS.length], points: (visible.buffer[r.id]?.points ?? []).filter(p => p[0] >= startTime && p[0] <= endTime) }))
+  const mixedUnits = valueMode === 'physical' && new Set(chosen.map(r => r.unit?.trim() || '')).size > 1
+  const series = chosen.map(r => ({ r, color: CHART_COLORS[Math.abs(r.id) % CHART_COLORS.length], points: (visible.buffer[r.id]?.points ?? []).filter(p => p[0] >= startTime && p[0] <= endTime).map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) }))
   let low = Infinity, high = -Infinity
   for (const s of series) for (const [, v] of s.points) if (v !== null) { low = Math.min(low, v); high = Math.max(high, v) }
   const hasData = Number.isFinite(low) && Number.isFinite(high)
@@ -1428,6 +1471,7 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
   return <div className={"live-curve-view" + (expanded ? " expanded" : "")}>
     <div className="toolbar">
       <button className="btn" aria-pressed={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '退出铺满' : '铺满窗口'}</button>
+      <ValueModeControl t={t} value={valueMode} onChange={mode => { setValueMode(mode); setHover(null) }} />
       <RegisterSelectButton t={t} groups={numericGroups} selected={selected} max={8} onApply={ids => { setSelection(ids); setFrozen(null); setHover(null) }} />
       <label className="live-window-label">{t('liveWindow')}<select className="hist-input" value={seconds} onChange={e => { setSeconds(Number(e.target.value)); setHover(null) }}>{[30, 60, 300, 600].map(n => <option key={n} value={n}>{n < 60 ? `${n} s` : `${n / 60} min`}</option>)}</select></label>
       <button className="btn" onClick={() => { setFrozen(frozen ? null : frame); setHover(null) }}>{t(frozen ? 'resumeCurve' : 'freezeCurve')}</button>
@@ -1453,16 +1497,16 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
           let sample: [number, number | null] | undefined
           for (const p of s.points) if (p[0] <= at) sample = p
           const value = sample && at - sample[0] <= threshold ? sample[1] : null
-          return <span key={s.r.id} className="live-legend-value"><i style={{ background: s.color }} /><span>{s.r.alias || `#${s.r.startAddress}`} <small>({s.r.startAddress})</small></span><strong>{value == null ? '—' : formatNumber(value)}</strong></span>
+          return <span key={s.r.id} className="live-legend-value"><i style={{ background: s.color }} /><span>{s.r.alias || `#${s.r.startAddress}`} <small>({s.r.startAddress})</small></span><strong>{value == null ? '—' : displayNumber(value, s.r) + (valueMode === 'physical' && s.r.unit ? ' ' + s.r.unit : '')}</strong></span>
         })}
       </div>
     </div>
-    <p className="chart-hint live-curve-footnote">{t('liveRawHint')}</p>
+    <p className="chart-hint live-curve-footnote">{t(valueMode === 'physical' ? 'livePhysicalHint' : 'liveRawHint')}{mixedUnits && ' ' + t('mixedUnitsHint')}</p>
   </div>
 }
 
-function ChartBody({ t, registers, selected, pts, status, error, range, onQueryRange }: {
-  t: T; registers: Register[]; selected: Set<number>; pts: HistoryPoint[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null
+function ChartBody({ valueMode, t, registers, selected, pts, status, error, range, onQueryRange }: {
+  valueMode: ValueMode; t: T; registers: Register[]; selected: Set<number>; pts: HistoryPoint[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null
   range: { start: number; end: number }; onQueryRange: (start: number, end: number) => void
 }) {
   const [view, setView] = useState<{ start: number; end: number } | null>(null)
@@ -1475,7 +1519,10 @@ function ChartBody({ t, registers, selected, pts, status, error, range, onQueryR
   const [size, setSize] = useState({ w: 800, h: 380 })
   const observer = useRef<ResizeObserver | null>(null)
   const clipId = useId()
-  const series = useMemo(() => decodeHistorySeries(registers, pts, selected), [registers, pts, selected])
+  const series = useMemo(() => decodeHistorySeries(registers, pts, selected).map(s => { const r = registers.find(r => r.id === s.id)!; return { ...s, samples: s.samples.map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) } }), [registers, pts, selected, valueMode])
+  const mixedUnits = valueMode === 'physical' && new Set(registers.filter(r => selected.has(r.id)).map(r => r.unit?.trim() || '')).size > 1
+  const reading = (value: number, reg?: Register) => displayNumber(value, reg) + (valueMode === 'physical' && reg?.unit ? ' ' + reg.unit : '')
+  useEffect(() => { setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [valueMode])
   useEffect(() => { setView(null); setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [pts, range.start, range.end])
   const setPlot = useCallback((el: HTMLDivElement | null) => {
     observer.current?.disconnect()
@@ -1588,17 +1635,17 @@ function ChartBody({ t, registers, selected, pts, status, error, range, onQueryR
       {!anyVisible && <div className="live-curve-empty">{t('histNoVisible')}</div>}
       {hover !== null && !drag && <div className="history-tooltip" style={{ left: Math.max(4, Math.min(size.w - 265, x(hover) + 12)) }}>
         <strong>{t('histNearest')}</strong>
-        {tooltipRows.map(s => { const reg = registers.find(r => r.id === s.id); const point = s.point; const valid = point && Math.abs(point[0] - hover) <= s.gapMs / 2; return <div key={s.id}><span style={{ color: s.color }}>{reg?.alias || `#${reg?.startAddress ?? s.id}`}</span><b>{valid && point[1] !== null ? formatNumber(point[1]) : '—'}</b><small>{valid ? formatLocalTs(new Date(point[0]).toISOString()) : t('histEmpty')}</small></div> })}
+        {tooltipRows.map(s => { const reg = registers.find(r => r.id === s.id); const point = s.point; const valid = point && Math.abs(point[0] - hover) <= s.gapMs / 2; return <div key={s.id}><span style={{ color: s.color }}>{reg?.alias || `#${reg?.startAddress ?? s.id}`}</span><b>{valid && point[1] !== null ? reading(point[1], reg) : '—'}</b><small>{valid ? formatLocalTs(new Date(point[0]).toISOString()) : t('histEmpty')}</small></div> })}
       </div>}
     </div>
     <div className="history-legend-head"><span>{t('histLegendHint')}</span><span>{t('histStatsHint')}</span></div>
     <div className="history-legend">
       {visibleSeries.map(s => { const reg = registers.find(r => r.id === s.id); return <button key={s.id} className={'history-series-toggle' + (hidden.has(s.id) ? ' muted' : '')} aria-pressed={!hidden.has(s.id)} onClick={() => setHidden(old => { const next = new Set(old); if (next.has(s.id)) next.delete(s.id); else next.add(s.id); return next })}>
         <span className="legend-swatch" style={{ background: s.color }} /><strong>{reg?.alias || `#${reg?.startAddress ?? s.id}`} <small>({reg?.startAddress})</small></strong>
-        <span>Min <b>{Number.isFinite(s.min) ? formatNumber(s.min) : '—'}</b></span><span>Max <b>{Number.isFinite(s.max) ? formatNumber(s.max) : '—'}</b></span><span>{t('histLastValue')} <b>{s.last === null ? '—' : formatNumber(s.last)}</b></span>
+        <span>Min <b>{Number.isFinite(s.min) ? reading(s.min, reg) : '—'}</b></span><span>Max <b>{Number.isFinite(s.max) ? reading(s.max, reg) : '—'}</b></span><span>{t('histLastValue')} <b>{s.last === null ? '—' : reading(s.last, reg)}</b></span>
       </button> })}
     </div>
-    <p className="chart-hint history-sampling-note">{t('histSamplingNote')}{relative && ' ' + t('histRelativeNote')}</p>
+    <p className="chart-hint history-sampling-note">{t('histSamplingNote')}{relative && ' ' + t('histRelativeNote')}{mixedUnits && !relative && ' ' + t('mixedUnitsHint')}</p>
   </div>
 }
 

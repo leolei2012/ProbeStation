@@ -262,6 +262,7 @@ export function apply(ctx: Context, config: Config): void {
       return cfg.createRule(b.registerId, b.operator ?? '>', b.threshold ?? 0, b.message ?? null)
     })
     fastify.delete('/api/rules/:id', async (req: any) => { cfg.deleteRule(Number((req.params as any).id)); return { ok: true } })
+    fastify.put('/api/rules/:id', async (req: any) => cfg.updateRule(Number(req.params.id), { registerId: req.body?.registerId, operator: req.body?.operator, threshold: req.body?.threshold, message: req.body?.message ?? null }))
 
     // ── Retention ───────────────────────────────────────────
     fastify.get('/api/retention', async () => ({ retention_seconds: store.getRetentionSeconds() }))

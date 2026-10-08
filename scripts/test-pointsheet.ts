@@ -12,7 +12,7 @@ const d = cfg.createObject('BOARD', '', 502, 'master', { transport: 'rtu', seria
 
 // 组1：RO，fc3 地址 0..2 (3点)
 const g1 = cfg.createGroup(d.id, 'RO', 3, 0, 3)
-for (let a = 0; a < 3; a++) cfg.createRegister(g1.id, d.id, a === 0 ? '电源' : (a === 1 ? '模式' : 'tick'), 3, a, 'int16', { unit: a === 0 ? '' : 'rpm', factor: 1, offset: 0, enumJson: a === 1 ? JSON.stringify({ 0: 'OFF', 1: 'ON' }) : null })
+for (let a = 0; a < 3; a++) cfg.createRegister(g1.id, d.id, a === 0 ? '电源' : (a === 1 ? '模式' : 'tick'), 3, a, 'int16', { unit: a === 0 ? '' : 'rpm', factor: 1, offset: 0, decimalPlaces: a === 0 ? 0 : a === 1 ? 2 : null, enumJson: a === 1 ? JSON.stringify({ 0: 'OFF', 1: 'ON' }) : null })
 // 组2：RW fc3 地址 4096..4097
 const g2 = cfg.createGroup(d.id, 'RW', 3, 4096, 2)
 cfg.createRegister(g2.id, d.id, '手动开关', 3, 4096, 'int16', { unit: null })
@@ -36,7 +36,7 @@ assert(aRegs.length === bRegs.length, 'same reg count')
 for (let i = 0; i < aRegs.length; i++) {
   const x = aRegs[i], y = bRegs[i]
   const norm = (v: any) => (v == null || v === '' ? null : v)
-  if (norm(x.alias) !== norm(y.alias) || x.startAddress !== y.startAddress || norm(x.dataType) !== norm(y.dataType) || norm(x.unit) !== norm(y.unit) || norm(x.enumJson) !== norm(y.enumJson) || x.factor !== y.factor || x.offset !== y.offset) {
+  if (norm(x.alias) !== norm(y.alias) || x.startAddress !== y.startAddress || norm(x.dataType) !== norm(y.dataType) || norm(x.unit) !== norm(y.unit) || norm(x.enumJson) !== norm(y.enumJson) || x.factor !== y.factor || x.offset !== y.offset || x.decimalPlaces !== y.decimalPlaces) {
     console.error('mismatch at ' + i, JSON.stringify(x), JSON.stringify(y)); process.exit(1)
   }
 }
@@ -58,6 +58,11 @@ const roSheet = reopened.getWorksheet('RO')
 assert(roSheet && roSheet.rowCount >= 5, 'RO sheet has 分组头+列头+数据 (rowCount=' + (roSheet ? roSheet.rowCount : -1) + ')')
 console.log('reopen OK, sheets =', JSON.stringify(names), '; RO rows =', roSheet.rowCount)
 
+for (const sheet of reopened.worksheets) if (sheet.name !== '设备信息') sheet.spliceColumns(10, 1)
+const legacy = Buffer.from(await reopened.xlsx.writeBuffer())
+const legacyResult = await sink.importPointBook(d2.id, legacy)
+assert(legacyResult.errors.length === 0 && legacyResult.registers === 5, 'legacy nine-column workbook imports')
+assert(cfg.listRegistersByObject(d2.id).every((r: any) => r.decimalPlaces === null), 'legacy workbook uses automatic decimals')
 console.log('POINTSHEET ROUNDTRIP OK (导出/导入对称)')
 process.exit(0)
 

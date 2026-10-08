@@ -155,14 +155,14 @@ export class Sink {
       s.addRow(['从站', g.slaveId ?? obj.slaveId ?? 1, '功能码', g.functionCode, '起始地址', g.startAddress, '数量', g.quantity])
       s.addRow([])
       // 第4行：数据列头
-      const head = ['别名', '数据类型', '单位', '系数', '偏移', '枚举', '功能码', '起始地址', '数量']
+      const head = ['别名', '数据类型', '单位', '系数', '偏移', '枚举', '功能码', '起始地址', '数量', '小数位数']
       s.addRow(head)
       boldRows(s, 4)
       // 第5行起：每行一条寄存器（固定列序；导出值均作字符串便于往返）
       for (const r of regs) {
         s.addRow([
           r.alias ?? '', r.dataType ?? 'int16', r.unit ?? '', String(r.factor ?? 1), String(r.offset ?? 0),
-          r.enumJson ? safeJson(r.enumJson) : '', String(r.functionCode), String(r.startAddress), String(r.quantity ?? 1),
+          r.enumJson ? safeJson(r.enumJson) : '', String(r.functionCode), String(r.startAddress), String(r.quantity ?? 1), r.decimalPlaces == null ? '' : String(r.decimalPlaces),
         ])
       }
       void head
@@ -219,8 +219,8 @@ export class Sink {
       let added = 0
       let lo = Infinity
       let hi = -Infinity
-      const addRowReg = (alias: string, dataType: string, unit: string, factor: number, offset: number, enumJson: string | null, regFc: number, addr: number) => {
-        cfg.createRegister(g.id, objectId, alias || null, regFc, addr, dataType, { unit: unit || null, factor, offset, enumJson })
+      const addRowReg = (alias: string, dataType: string, unit: string, factor: number, offset: number, enumJson: string | null, regFc: number, addr: number, decimalPlaces: number | null) => {
+        cfg.createRegister(g.id, objectId, alias || null, regFc, addr, dataType, { unit: unit || null, factor, offset, enumJson, decimalPlaces })
         added++
         if (addr < lo) lo = addr
         if (addr > hi) hi = addr
@@ -237,6 +237,9 @@ export class Sink {
         const addr = parseInt(cell(row, 8), 10)
         if (!alias && Number.isNaN(addr) && !dtRaw && !unit) continue
         if (Number.isNaN(addr)) { errors.push('sheet ' + groupName + ' 第 ' + ri + ' 行地址非法'); continue }
+        const decimalText = cell(row, 10).trim()
+        const decimalPlaces = decimalText === '' ? null : Number(decimalText)
+        if (decimalPlaces !== null && (!Number.isInteger(decimalPlaces) || decimalPlaces < 0 || decimalPlaces > 8)) { errors.push('sheet ' + groupName + ' 第 ' + ri + ' 行小数位数必须为 0–8'); continue }
         const dataType = dtRaw || 'int16'
         let enumJson: string | null = null
         if (enumRaw) {
@@ -246,7 +249,7 @@ export class Sink {
             enumJson = JSON.stringify(o)
           } catch { enumJson = null }
         }
-        addRowReg(alias, dataType, unit, factor, offset, enumJson, Number.isNaN(rcFc) ? fc : rcFc, addr)
+        addRowReg(alias, dataType, unit, factor, offset, enumJson, Number.isNaN(rcFc) ? fc : rcFc, addr, decimalPlaces)
         registers++
       }
       // 分组 quantity 覆盖该组取读的最宽连续跨度（含可能的 gap 宽读，与人工点表一致）
