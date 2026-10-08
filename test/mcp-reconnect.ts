@@ -3,7 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 
 async function connectOnce(tag: string) {
   try {
-    const transport = new StreamableHTTPClientTransport(new URL('http://127.0.0.1:8081/mcp'))
+    const transport = new StreamableHTTPClientTransport(new URL('http://127.0.0.1:9091/mcp'))
     const client = new Client({ name: 'probe-' + tag, version: '1.0' })
     await client.connect(transport)
     const tools = await client.listTools()

@@ -8,7 +8,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `host` | string | 0.0.0.0 | 监听地址 |
-| `port` | number | 8081 | 监听端口（独立于 REST 的 8080） |
+| `port` | number | 9091 | 监听端口（独立于 REST 的 9090） |
 
 ## 传输
 
@@ -62,7 +62,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
   config:
     serverName: probestation
     transport: streamable-http
-    url: http://192.168.90.34:8081/mcp
+    url: http://192.168.90.34:9091/mcp
 ```
 
 模型会得到 `mcp__probestation__list_devices`、`mcp__probestation__read_register` 等原生工具。
@@ -79,4 +79,4 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 
 - `write_register` 是控制真机的危险操作，目前直接执行 + 记日志；**尚未接入审批/鉴权**。
   接 AI 自动控制前，需补「读全自动 / 写需人工确认」的分级授权（决策 #14）。
-- 无认证：内网任何能访问 8081 的客户端都可调用工具。
+- 无认证：内网任何能访问 9091 的客户端都可调用工具。

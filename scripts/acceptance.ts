@@ -1,4 +1,4 @@
-const base = 'http://127.0.0.1:8080'
+const base = 'http://127.0.0.1:9090'
 const out: string[] = []
 const ok = (label: string, detail: string) => out.push(`✅ ${label}  ${detail}`)
 const bad = (label: string, detail: string) => out.push(`❌ ${label}  ${detail}`)

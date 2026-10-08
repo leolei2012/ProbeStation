@@ -16,7 +16,7 @@ import * as mcpPlugin from '@probebench/mcp'
 import * as slavePlugin from '@probebench/slave'
 import * as otaPlugin from '@probebench/ota'
 
-try { await assertPortsAvailable([8080, 8081]) } catch (error) {
+try { await assertPortsAvailable([9090, 9091]) } catch (error) {
   console.error(`[启动失败] ${(error as Error).message}`)
   process.exit(1)
 }
@@ -39,7 +39,7 @@ await ctx.plugin(slavePlugin, { port: 8502, holdingSize: 5000 })
 await ctx.plugin(pollerPlugin, { pollIntervalMs: 1000 })
 // api 依赖 store/poller/sink/importer/ota 等服务，须在上述 provider 之后注册，
 // 否则 api.apply 同步捕获这些 ctx 服务时会是 undefined（会令其端点如导出/点表 404/报错）。
-await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 8080, staticDir, dataDir })
+await ctx.plugin(apiPlugin, { host: '0.0.0.0', port: 9090, staticDir, dataDir })
 
 // seed demo devices if config empty
 const cfg = ctx.get('config', false)
@@ -57,8 +57,8 @@ slave.setRegister(4098, 1100) // 功率
 // start polling + listen
 ctx.get('poller', false).startAll()
 const app = ctx.get('api', false)
-await app.listen({ host: '0.0.0.0', port: 8080 })
-console.log('ProbeStation running at http://localhost:8080')
+await app.listen({ host: '0.0.0.0', port: 9090 })
+console.log('ProbeStation running at http://localhost:9090')
 
 function seedDemo(ctx: any, cfg: any): void {
   // 测试从站（真实 Modbus slave，192.168.90.176:8899，unit id=1，0x0000 起 10 寄存器）

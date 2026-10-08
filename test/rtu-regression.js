@@ -1,5 +1,5 @@
 const { chromium } = require('playwright-core');
-const BASE = 'http://localhost:8080/';
+const BASE = 'http://localhost:9090/';
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
 const results = [];

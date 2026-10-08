@@ -43,7 +43,7 @@ export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'ota']
 export interface Config { host: string; port: number; staticDir?: string; dataDir?: string }
 export const Config: z<Config> = z.object({
   host: z.string().default('0.0.0.0'),
-  port: z.number().default(8080),
+  port: z.number().default(9090),
   staticDir: z.string(),
   dataDir: z.string().default('data'),
 })

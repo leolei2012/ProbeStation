@@ -1,9 +1,9 @@
-// 规格符合性测试：对运行中的程序（8080 REST + 8081 MCP）逐项验证
+// 规格符合性测试：对运行中的程序（9090 REST + 9091 MCP）逐项验证
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
-const REST = 'http://127.0.0.1:8080'
-const MCP = 'http://127.0.0.1:8081/mcp'
+const REST = 'http://127.0.0.1:9090'
+const MCP = 'http://127.0.0.1:9091/mcp'
 const results: any[] = []
 const ok = (spec: string, label: string, detail: string, pass: boolean) => results.push({ spec, label, detail, pass })
 

@@ -14,7 +14,7 @@ export const inject = ['config', 'store', 'poller']
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `host` | string | 0.0.0.0 | 监听地址 |
-| `port` | number | 8080 | 监听端口 |
+| `port` | number | 9090 | 监听端口 |
 | `staticDir` | string | — | 前端 dist 路径（存在才托管） |
 
 ## REST 端点

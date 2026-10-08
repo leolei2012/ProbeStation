@@ -1,4 +1,4 @@
-const base = 'http://127.0.0.1:8080'
+const base = 'http://127.0.0.1:9090'
 const get = async (url: string) => { const r = await fetch(base + url); return r.status + ' ' + (await r.text()).slice(0, 200) }
 
 console.log('objects:', await get('/api/monitor_objects'))

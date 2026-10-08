@@ -36,7 +36,7 @@ export async function boot(opts: BootOptions = {}): Promise<{ ctx: Context; dir:
   if (opts.rule) await ctx.plugin(rulePlugin)
   if (opts.slave != null) await ctx.plugin(slavePlugin, { port: opts.slave })
   if (opts.mcp) await ctx.plugin(mcpPlugin)
-  if (opts.api) await ctx.plugin(apiPlugin, { host: opts.api.host ?? '127.0.0.1', port: opts.api.port ?? 8080, dataDir: dir })
+  if (opts.api) await ctx.plugin(apiPlugin, { host: opts.api.host ?? '127.0.0.1', port: opts.api.port ?? 9090, dataDir: dir })
   await new Promise((r) => setTimeout(r, 300))
   return { ctx, dir }
 }

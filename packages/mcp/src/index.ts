@@ -26,7 +26,7 @@ export const inject = ['config', 'store', 'poller', 'ota', 'sink']
 export interface Config { host: string; port: number }
 export const Config: z<Config> = z.object({
   host: z.string().default('0.0.0.0'),
-  port: z.number().default(8081),
+  port: z.number().default(9091),
 })
 
 /** MCP 服务器：把 ProbeStation 能力暴露成 MCP 工具（streamable-http，独立端口）。 */

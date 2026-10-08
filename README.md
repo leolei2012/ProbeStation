@@ -36,8 +36,8 @@ npm install
 npm run start   # 构建前端 + 一键启动
 ```
 
-- **8080**：Web UI + REST API + WebSocket → 浏览器开 http://localhost:8080
-- **8081**：MCP 服务器（给 AI agent 的工具）
+- **9090**：Web UI + REST API + WebSocket → 浏览器开 http://localhost:9090
+- **9091**：MCP 服务器（给 AI agent 的工具）
 
 首次启动自动播种「测试从站」（192.168.90.176:8899，两段数据：0x0000 上升 + 0x1000 下降）+「本地模拟器」。数据在 `data/`（删掉即重置）。
 

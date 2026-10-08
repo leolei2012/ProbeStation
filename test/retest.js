@@ -2,7 +2,7 @@ const { chromium } = require('playwright-core');
 const fs = require('fs');
 const path = require('path');
 
-const BASE = 'http://localhost:8080/';
+const BASE = 'http://localhost:9090/';
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const OUT = path.join(__dirname, 'artifacts-retest');
 fs.mkdirSync(OUT, { recursive: true });

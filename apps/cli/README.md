@@ -5,7 +5,7 @@ ProbeStation 启动入口：装配全部插件并启动完整应用。
 ## 运行
 
 ```bash
-# 构建前端 + 启动完整应用（http://localhost:8080）
+# 构建前端 + 启动完整应用（http://localhost:9090）
 npm run start
 
 # 不重建前端，直接启动（若 dist 已存在）
@@ -17,14 +17,14 @@ npm run dev
 1. `config`（SQLite 元数据 → `data/config.db`）
 2. `store`（DuckDB 时序 → `data/poll.duckdb`，2s 定期 flush）
 3. `modbus`（jsmodbus 驱动）
-4. `api`（Fastify REST+WS + 前端静态托管，监听 8080）
+4. `api`（Fastify REST+WS + 前端静态托管，监听 9090）
 5. `poller`（循环轮询，1s 间隔）
 
 ## 启动逻辑
 
 - 若 `data/config.db` 为空，播种「测试从站」（192.168.90.176:8899，unit id=1，10 寄存器）+「本地模拟器」（127.0.0.1:8502）。
 - `poller.startAll()` 开始循环轮询（设备不可达时静默跳过，不阻塞启动）。
-- `app.listen(8080)` 提供 REST + WS + 前端。
+- `app.listen(9090)` 提供 REST + WS + 前端。
 
 ## 数据目录
 

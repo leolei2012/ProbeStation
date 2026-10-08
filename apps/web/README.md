@@ -9,7 +9,7 @@ React 18、Vite 6、@vitejs/plugin-react、TypeScript、纯 CSS（`styles.css`�
 ## 运行
 
 ```bash
-npm run dev --workspace @probebench/web    # vite dev（代理 /api + /ws 到 8080）
+npm run dev --workspace @probebench/web    # vite dev（代理 /api + /ws 到 9090）
 npm run build --workspace @probebench/web  # 产物 apps/web/dist
 ```
 

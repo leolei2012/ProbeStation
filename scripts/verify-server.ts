@@ -1,4 +1,4 @@
-const base = 'http://127.0.0.1:8080'
+const base = 'http://127.0.0.1:9090'
 for (const url of ['/health', '/', '/api/monitor_objects', '/api/monitor_objects/1/groups']) {
   try {
     const res = await fetch(base + url)

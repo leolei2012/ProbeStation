@@ -13,10 +13,10 @@ description: 使用 ProbeStation 操作 Modbus TCP/RTU 主站和从站，通过 
 
 | 服务 | 默认地址 | 用途 |
 |---|---|---|
-| Web / REST | `http://localhost:8080` | 页面及 `/api` 接口 |
-| 健康检查 | `http://localhost:8080/health` | 服务存活，不代表设备通信成功 |
-| MCP | `http://localhost:8081/mcp` | Streamable HTTP、有状态会话 |
-| WebSocket | `ws://localhost:8080/ws` | 配置变化和采集结果推送 |
+| Web / REST | `http://localhost:9090` | 页面及 `/api` 接口 |
+| 健康检查 | `http://localhost:9090/health` | 服务存活，不代表设备通信成功 |
+| MCP | `http://localhost:9091/mcp` | Streamable HTTP、有状态会话 |
+| WebSocket | `ws://localhost:9090/ws` | 配置变化和采集结果推送 |
 | 内置 Modbus 模拟器 | `127.0.0.1:8502` | 示例设备 |
 
 远程使用时将 localhost 换成运行 ProbeStation 的主机地址。MCP 端点不是普通 REST，使用客户端的 MCP 连接流程，发现工具及其当前 schema；工具名前缀由客户端决定。
@@ -128,7 +128,7 @@ MCP 用 `list_alarm_rules` 查询，`create_alarm_rule {register_id, operator, t
 PowerShell 首次只读检查：
 
 ```powershell
-$probeBase = 'http://localhost:8080'
+$probeBase = 'http://localhost:9090'
 Invoke-RestMethod "$probeBase/health"
 Invoke-RestMethod "$probeBase/api/monitor_objects"
 ```
@@ -159,7 +159,7 @@ Invoke-RestMethod "$probeBase/api/monitor_objects"
 
 | 现象 | 优先核对 |
 |---|---|
-| Web 无法打开 / 端口占用 | 现有实例、启动输出、8080；不要重复启动占用同一数据库的实例 |
+| Web 无法打开 / 端口占用 | 现有实例、启动输出、9090；不要重复启动占用同一数据库的实例 |
 | 页面能打开但数据不更新 | 设备启用、组暂停、更新时间、IP/串口/从站号和诊断报文；WS 失败时 UI 可能使用 REST 兜底 |
 | 有值但明显不对 | area、地址基准、类型/字序、多字范围、factor/offset |
 | 历史为空 | 时间及服务器时区、是否曾采集、保留策略、实际数据目录；入库有批量刷新延迟 |
