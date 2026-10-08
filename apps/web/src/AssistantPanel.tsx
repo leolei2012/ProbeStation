@@ -158,7 +158,7 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
           // Preserve normal text insertion for mixed text/file clipboard content.
           if (!e.clipboardData.getData('text/plain')) e.preventDefault()
           void addAttachments(files)
-        }} aria-label="给 AI 助手的消息" placeholder={pending ? '请先确认或拒绝上方修改' : '询问数据或描述配置修改；可粘贴附件，输入 / 查看命令…'} value={input} maxLength={8000} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!active && !pending && selectedConfigured && model) void send() } }} onChange={e => setInput(e.target.value)} disabled={!!active || pending} />
+        }} aria-label="给 AI 助手的消息" placeholder={pending ? '请先确认或拒绝上方修改' : '询问数据或描述配置修改；可粘贴附件，输入 / 查看命令…'} value={input} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!active && !pending && selectedConfigured && model) void send() } }} onChange={e => setInput(e.target.value)} disabled={!!active || pending} />
         <div className="ai-composer-toolbar">
           <button type="button" className="ai-new-chat" aria-label="添加附件" title="添加图片、文本、CSV 或日志（最多 4 个）" disabled={!!active || pending} onClick={() => fileInput.current?.click()}>＋</button>
           <span className="ai-toolbar-spacer" />

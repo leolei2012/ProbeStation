@@ -416,7 +416,6 @@ table.realtime-table { table-layout: fixed; min-width: 910px; }
 .realtime-table .rt-type { width: 140px; }
 .realtime-table .rt-value { width: auto; }
 .realtime-table .rt-action { width: 90px; }
-.realtime-table .rt-physical { width: auto; }
 table.realtime-table th, table.realtime-table td { box-sizing: border-box; padding: 8px 16px; }
 table.realtime-table td { height: 60px; white-space: nowrap; vertical-align: middle; }
 table.realtime-table th:last-child, table.realtime-table td:last-child { padding-right: 20px; }
@@ -427,7 +426,12 @@ table.realtime-table th:last-child, table.realtime-table td:last-child { padding
 .realtime-table .rt-reading { display: block; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-code), monospace; font-variant-numeric: tabular-nums lining-nums; font-size: 15px; line-height: 22px; letter-spacing: 0; user-select: text; }
 .realtime-table .rt-reading:focus { outline: 2px solid var(--accent); outline-offset: 2px; overflow-x: auto; text-overflow: clip; }
 .value-reading { border-radius: 4px; }
-.realtime-table .rt-enum { position: absolute; left: 16px; right: 16px; bottom: 2px; display: block; height: 16px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; font-family: var(--font); font-size: 11px; font-weight: 400; color: var(--text-3); }
+.realtime-table .rt-value-stack { display: flex; flex-direction: column; gap: 2px; max-width: 320px; margin: 0 auto; }
+.realtime-table .rt-value-line { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
+.realtime-table .rt-value-label { font-family: var(--font); font-size: 10px; font-weight: 400; color: var(--text-3); }
+.realtime-table .rt-value-line .rt-reading { min-width: 0; text-align: right; line-height: 20px; }
+.realtime-table .rt-physical-line .rt-reading { font-size: 13px; font-weight: 400; }
+.realtime-table .rt-inline-enum { margin-left: 8px; font-family: var(--font); font-size: 11px; font-weight: 400; }
 .realtime-table input, .realtime-table select { max-width: 100%; box-sizing: border-box; }
 table.reg th { background: var(--sidebar); padding: 10px 18px; font-size: 11px; font-weight: 600; }
 table.reg td { padding: 11px 18px; font-variant-numeric: tabular-nums; }
@@ -812,9 +816,10 @@ table.reg th, .btn { white-space: nowrap; }
   table.realtime-table td.rt-numeric-cell, table.realtime-table td.rt-action-cell { display: grid; grid-column: 1 / -1; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 6px; text-align: right; padding: 4px 0; }
   .realtime-table .rt-numeric-cell::before, .realtime-table .rt-action-cell::before { text-align: left; }
   .realtime-table .rt-reading { font-size: 14px; white-space: normal; overflow-wrap: anywhere; overflow: visible; }
-  .realtime-table .rt-enum { position: static; grid-column: 2; width: 100%; height: auto; min-height: 0; line-height: 16px; overflow-wrap: anywhere; white-space: normal; }
-  .realtime-table .rt-enum:empty { display: none; }
-  .realtime-table .rt-enum[aria-hidden="true"] { display: none; }
+  table.realtime-table td.rt-stacked-cell { display: block; }
+  .realtime-table .rt-stacked-cell::before { display: none; }
+  .realtime-table .rt-value-stack { max-width: none; margin: 0; }
+  .realtime-table .rt-value-label { font-size: 11px; }
   .realtime-table tbody tr:hover td { background: transparent; }
   .realtime-table .rt-action-cell > .btn { justify-self: end; min-width: 60px; }
   table.realtime-table td:last-child { padding-right: 0; }
@@ -855,7 +860,7 @@ table.reg th, .btn { white-space: nowrap; }
 .point-config-actions { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 @media (max-width: 768px) { .point-config-actions { flex-direction: row; } .point-config-actions .btn { flex: 1; } }
 
-.realtime-table .alarm-value, .realtime-table .alarm-value .rt-unit, .realtime-table .alarm-value .rt-enum { color: var(--error); }
+.realtime-table .alarm-value, .realtime-table .alarm-value .rt-unit, .realtime-table .alarm-value .rt-inline-enum { color: var(--error); }
 
 .slave-device-summary { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; border: 1px solid var(--border-2); border-radius: 12px; padding: 14px 16px; margin: 14px 0; font-size: 12px; color: var(--text-2); }
 .slave-device-summary strong { color: var(--text-1); }

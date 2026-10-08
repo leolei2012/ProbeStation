@@ -13,6 +13,7 @@ export function AssistantSettings({ onSaved }: { onSaved: () => void }) {
   const [models, setModels] = useState<string[]>([])
   const lock = useRef(false)
   const custom = !config.provider || config.provider === 'custom'
+  const modelWindow = custom ? config.contextWindow : providers.find(p => p.id === config.provider)?.models.find(m => m.id === config.model)?.contextWindow
   const refresh = async () => { const c = await request('/providers'); setProviders(c.providers); setConfigured(c.configured) }
   useEffect(() => { let alive = true; Promise.all([request('/settings'), request('/providers')]).then(([c, p]) => { if (alive) { setConfig(c); setProviders(p.providers); setConfigured(p.configured) } }).catch(e => { if (alive) setError(e.message) }).finally(() => { if (alive) setBusy(false) }); return () => { alive = false } }, [])
   const edit = async (provider: string) => {
@@ -31,7 +32,7 @@ export function AssistantSettings({ onSaved }: { onSaved: () => void }) {
     <form className="ai-provider-editor" onSubmit={async e => {
       e.preventDefault(); if (lock.current) return
       lock.current = true; setBusy(true); setError(''); setNotice('')
-      try { await request('/settings', { provider: config.provider ?? 'custom', baseUrl: config.baseUrl.trim(), model: config.model.trim(), reasoningProtocol: config.reasoningProtocol ?? 'default', ...(apiKey ? { apiKey } : {}) }); setApiKey(''); onSaved(); setConfig(await request('/settings')); await refresh(); setNotice('已保存，可在聊天中选择此提供商的模型') } catch (e: any) { setError(e.message) } finally { lock.current = false; setBusy(false) }
+      try { await request('/settings', { provider: config.provider ?? 'custom', baseUrl: config.baseUrl.trim(), model: config.model.trim(), reasoningProtocol: config.reasoningProtocol ?? 'default', ...(custom ? { contextWindow: config.contextWindow ?? null } : {}), ...(apiKey ? { apiKey } : {}) }); setApiKey(''); onSaved(); setConfig(await request('/settings')); await refresh(); setNotice('已保存，可在聊天中选择此提供商的模型') } catch (e: any) { setError(e.message) } finally { lock.current = false; setBusy(false) }
     }}>
       <fieldset disabled={busy}>
         <div className="seg"><button type="button" className={!custom ? 'selected' : ''} onClick={() => void edit(providers.find(p => p.id === 'deepseek')?.id ?? providers[0]?.id)}>第三方模型提供商</button><button type="button" className={custom ? 'selected' : ''} onClick={() => void edit('custom')}>自定义模型 API</button></div>
@@ -42,6 +43,8 @@ export function AssistantSettings({ onSaved }: { onSaved: () => void }) {
           <p>修改地址会清除旧密钥，需重新填写。自定义接口使用 Chat Completions 协议。</p>
           {custom && <><label>模型 ID<input required list="ai-settings-models" value={config.model} onChange={e => setConfig({ ...config, model: e.target.value })} /></label><datalist id="ai-settings-models">{models.map(m => <option key={m} value={m} />)}</datalist><button type="button" className="btn" onClick={async () => { if (lock.current) return; lock.current = true; setBusy(true); try { const r = await request('/models', { provider: 'custom', baseUrl: config.baseUrl, ...(apiKey ? { apiKey } : {}) }); setModels(r.models); setNotice(r.models.length ? '模型目录已加载，可在模型 ID 输入框选择' : '未返回模型，请手动填写') } catch (e: any) { setError(e.message) } finally { lock.current = false; setBusy(false) } }}>获取模型列表</button><label>推理参数<select value={config.reasoningProtocol ?? 'default'} onChange={e => setConfig({ ...config, reasoningProtocol: e.target.value as AssistantConfig['reasoningProtocol'] })}><option value="default">服务商默认</option><option value="reasoning_effort">reasoning_effort（需服务商支持）</option></select></label></>}
         </details>
+        {custom && <label>模型上下文窗口（tokens，可选）<input type="number" min={1024} max={2147483647} step={1} value={config.contextWindow ?? ''} placeholder="留空：由 API 决定容量，可手动压缩" onChange={e => setConfig({ ...config, contextWindow: e.target.value ? Number(e.target.value) : null })} /></label>}
+        <p>{modelWindow ? `上下文窗口：${modelWindow.toLocaleString()} tokens。预留回复空间，接近容量时自动压缩较早对话。` : '未指定模型容量，不按固定字符数或消息条数压缩；可使用 /compact 手动压缩。'} Token 使用量为估算，实际容量由模型 API 决定。</p>
         <p>对话及查询到的设备数据会发给所选服务。仅支持 API Key 接入，未接入账号 OAuth 登录。</p>
         <p>连接测试会发送一条简短消息，可能产生少量 API 费用，不包含设备数据。</p>
         <div className="ai-provider-actions"><button className="btn" type="button" onClick={async () => {

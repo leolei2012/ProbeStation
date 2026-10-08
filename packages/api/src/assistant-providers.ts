@@ -15,7 +15,7 @@ export function providerModel(provider: string, id: string) {
   if (!model) throw new Error('模型不在该提供商目录中，请选择目录模型或使用自定义兼容接口')
   return model
 }
-export async function providerCompletion(config: { provider: string; model: string; baseUrl: string; apiKey: string; effort: string }, messages: any[], tools: any[], signal: AbortSignal, fetcher: typeof fetch, onText?: (text: string) => void) {
+export async function providerCompletion(config: { provider: string; model: string; baseUrl: string; apiKey: string; effort: string }, messages: any[], tools: any[], signal: AbortSignal, fetcher: typeof fetch, onText?: (text: string) => void, outputTokenLimit = 8192) {
   const original = providerModel(config.provider, config.model)
   const model = { ...original, baseUrl: config.baseUrl || original.baseUrl }
   if (!config.apiKey) throw new Error('请先保存该提供商的 API Key')
@@ -34,7 +34,7 @@ export async function providerCompletion(config: { provider: string; model: stri
     if (m.role === 'tool') context.messages.push({ role: 'toolResult', toolCallId: m.tool_call_id, toolName: toolNames.get(m.tool_call_id) ?? 'unknown', content: [{ type: 'text', text: m.content }], isError: false, timestamp: Date.now() })
   }
   let httpStatus = 0
-  const stream = runtime.streamSimple(model, context, { apiKey: config.apiKey, signal, fetch: async (url, init) => { const r = await fetcher(url, { ...init, redirect: 'error' }); httpStatus = r.status; return r }, transport: 'sse', maxTokens: Math.min(8192, model.maxTokens), maxRetries: 0, timeoutMs: 120000, ...(effort === 'default' || effort === 'off' ? {} : { reasoning: effort as any }) })
+  const stream = runtime.streamSimple(model, context, { apiKey: config.apiKey, signal, fetch: async (url, init) => { const r = await fetcher(url, { ...init, redirect: 'error' }); httpStatus = r.status; return r }, transport: 'sse', maxTokens: Math.min(outputTokenLimit, model.maxTokens), maxRetries: 0, timeoutMs: 120000, ...(effort === 'default' || effort === 'off' ? {} : { reasoning: effort as any }) })
   for await (const event of stream) if (event.type === 'text_delta') onText?.(event.delta)
   const response = await stream.result()
   signal.throwIfAborted()
