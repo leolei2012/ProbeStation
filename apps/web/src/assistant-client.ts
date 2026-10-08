@@ -1,9 +1,9 @@
 export type AssistantConfig = { provider?: string; baseUrl: string; model: string; hasKey: boolean; reasoningProtocol?: 'default' | 'reasoning_effort' }
 
 export async function assistantRequest(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST') {
-  const res = await fetch('/api/ai' + path, { method, headers: { 'Content-Type': 'application/json', 'X-ProbeStation-AI': '1' }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) })
+  const res = await fetch('/api/ai' + path, { method, headers: { 'X-ProbeStation-AI': '1', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) })
   const result = await res.json()
-  if (!res.ok) throw new Error(result.error || result.message || `HTTP ${res.status}`)
+  if (!res.ok) throw Object.assign(new Error(result.message || result.error || `HTTP ${res.status}`), { status: res.status })
   return result
 }
 

@@ -1,3 +1,4 @@
+import { apiFailure } from './assistant-stream'
 import { builtinModels } from '@earendil-works/pi-ai/providers/all'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import type { Context, AssistantMessage, ModelThinkingLevel } from '@earendil-works/pi-ai'
@@ -14,7 +15,7 @@ export function providerModel(provider: string, id: string) {
   if (!model) throw new Error('模型不在该提供商目录中，请选择目录模型或使用自定义兼容接口')
   return model
 }
-export async function providerCompletion(config: { provider: string; model: string; baseUrl: string; apiKey: string; effort: string }, messages: any[], tools: any[], signal: AbortSignal, fetcher: typeof fetch) {
+export async function providerCompletion(config: { provider: string; model: string; baseUrl: string; apiKey: string; effort: string }, messages: any[], tools: any[], signal: AbortSignal, fetcher: typeof fetch, onText?: (text: string) => void) {
   const original = providerModel(config.provider, config.model)
   const model = { ...original, baseUrl: config.baseUrl || original.baseUrl }
   if (!config.apiKey) throw new Error('请先保存该提供商的 API Key')
@@ -32,9 +33,12 @@ export async function providerCompletion(config: { provider: string; model: stri
     }
     if (m.role === 'tool') context.messages.push({ role: 'toolResult', toolCallId: m.tool_call_id, toolName: toolNames.get(m.tool_call_id) ?? 'unknown', content: [{ type: 'text', text: m.content }], isError: false, timestamp: Date.now() })
   }
-  const response = await runtime.completeSimple(model, context, { apiKey: config.apiKey, signal, fetch: (url, init) => fetcher(url, { ...init, redirect: 'error' }), transport: 'sse', maxTokens: Math.min(8192, model.maxTokens), maxRetries: 0, timeoutMs: 120000, ...(effort === 'default' || effort === 'off' ? {} : { reasoning: effort as any }) })
+  let httpStatus = 0
+  const stream = runtime.streamSimple(model, context, { apiKey: config.apiKey, signal, fetch: async (url, init) => { const r = await fetcher(url, { ...init, redirect: 'error' }); httpStatus = r.status; return r }, transport: 'sse', maxTokens: Math.min(8192, model.maxTokens), maxRetries: 0, timeoutMs: 120000, ...(effort === 'default' || effort === 'off' ? {} : { reasoning: effort as any }) })
+  for await (const event of stream) if (event.type === 'text_delta') onText?.(event.delta)
+  const response = await stream.result()
   signal.throwIfAborted()
-  if (response.stopReason === 'error' || response.stopReason === 'aborted') throw new Error('提供商请求失败，请检查密钥、模型或服务状态')
+  if (response.stopReason === 'error' || response.stopReason === 'aborted') throw Object.assign(new Error(httpStatus >= 400 ? apiFailure(httpStatus) : '提供商请求失败，请检查网络、模型或服务状态'), { statusCode: 400 })
   if (response.stopReason === 'length') throw new Error('模型达到输出上限，请缩小问题或降低推理等级')
   return { content: response.content.filter(c => c.type === 'text').map(c => c.text).join('\n'), tool_calls: response.content.filter(c => c.type === 'toolCall').map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.arguments) } })), _native: response }
 }

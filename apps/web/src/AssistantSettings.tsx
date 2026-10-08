@@ -8,6 +8,7 @@ export function AssistantSettings({ onSaved }: { onSaved: () => void }) {
   const [apiKey, setApiKey] = useState('')
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState('')
+  const [deleting, setDeleting] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
   const [models, setModels] = useState<string[]>([])
   const lock = useRef(false)
@@ -20,8 +21,13 @@ export function AssistantSettings({ onSaved }: { onSaved: () => void }) {
     try { setConfig(await request('/settings?provider=' + encodeURIComponent(provider))) } catch (e: any) { setError(e.message) } finally { lock.current = false; setBusy(false) }
   }
   return <div className="ai-settings">
+    {error && <div className="ai-error" role="alert">{error}</div>}
     <p>选择提供商并填写 API 密钥，即可使用其模型。密钥分别保存在服务端。</p>
-    <div className="ai-provider-cards">{configured.map(c => <div className="ai-provider-card" key={c.provider}><div><strong>{providers.find(p => p.id === c.provider)?.name ?? '自定义 API'}</strong><small>{c.model} · {c.hasKey ? '已保存密钥' : '未设置密钥'}</small></div><button className="btn" disabled={busy} onClick={() => void edit(c.provider ?? 'custom')}>编辑</button></div>)}</div>
+    <div className="ai-provider-cards">{configured.map(c => <div className="ai-provider-card" key={c.provider}><div><strong>{providers.find(p => p.id === c.provider)?.name ?? '自定义 API'}</strong><small>{c.model} · {c.hasKey ? '已保存密钥' : '未设置密钥'}</small></div><div className="ai-provider-card-actions"><button className="btn" disabled={busy} onClick={() => void edit(c.provider ?? 'custom')}>编辑</button><button className="btn" disabled={busy} onClick={() => { setDeleting(c.provider ?? 'custom'); setError('') }}>删除</button></div>{deleting === c.provider && <div className="ai-provider-delete" role="alert"><p>删除此 API 配置和已保存的密钥？聊天记录不受影响，之后需重新配置才能使用。</p><button className="btn" disabled={busy} onClick={() => setDeleting(null)}>取消</button><button className="btn primary" disabled={busy} onClick={async () => {
+      if (lock.current) return
+      lock.current = true; setBusy(true); setError('')
+      try { await request('/settings/' + encodeURIComponent(c.provider ?? 'custom'), undefined, 'DELETE'); setDeleting(null); if (config.provider === c.provider) { setApiKey(''); setModels([]); setConfig(await request('/settings')) }; await refresh(); onSaved(); setNotice('API 配置及密钥已删除') } catch (e: any) { setError(e.message) } finally { lock.current = false; setBusy(false) }
+    }}>{busy ? '删除中…' : '确认删除'}</button></div>}</div>)}</div>
     <form className="ai-provider-editor" onSubmit={async e => {
       e.preventDefault(); if (lock.current) return
       lock.current = true; setBusy(true); setError(''); setNotice('')
@@ -37,9 +43,15 @@ export function AssistantSettings({ onSaved }: { onSaved: () => void }) {
           {custom && <><label>模型 ID<input required list="ai-settings-models" value={config.model} onChange={e => setConfig({ ...config, model: e.target.value })} /></label><datalist id="ai-settings-models">{models.map(m => <option key={m} value={m} />)}</datalist><button type="button" className="btn" onClick={async () => { if (lock.current) return; lock.current = true; setBusy(true); try { const r = await request('/models', { provider: 'custom', baseUrl: config.baseUrl, ...(apiKey ? { apiKey } : {}) }); setModels(r.models); setNotice(r.models.length ? '模型目录已加载，可在模型 ID 输入框选择' : '未返回模型，请手动填写') } catch (e: any) { setError(e.message) } finally { lock.current = false; setBusy(false) } }}>获取模型列表</button><label>推理参数<select value={config.reasoningProtocol ?? 'default'} onChange={e => setConfig({ ...config, reasoningProtocol: e.target.value as AssistantConfig['reasoningProtocol'] })}><option value="default">服务商默认</option><option value="reasoning_effort">reasoning_effort（需服务商支持）</option></select></label></>}
         </details>
         <p>对话及查询到的设备数据会发给所选服务。仅支持 API Key 接入，未接入账号 OAuth 登录。</p>
-        <div className="ai-provider-actions"><button className="btn primary" type="submit">{busy ? '处理中…' : '保存'}</button></div>
+        <p>连接测试会发送一条简短消息，可能产生少量 API 费用，不包含设备数据。</p>
+        <div className="ai-provider-actions"><button className="btn" type="button" onClick={async () => {
+          if (lock.current) return
+          lock.current = true; setBusy(true); setError(''); setNotice('')
+          try { const result = await request('/test', { provider: config.provider ?? 'custom', baseUrl: config.baseUrl.trim(), model: config.model.trim(), ...(apiKey ? { apiKey } : {}) }); setNotice(`${result.message} · ${result.elapsedMs} ms（尚未保存的设置仍需点击保存）`) }
+          catch (e: any) { setError(e.message) } finally { lock.current = false; setBusy(false) }
+        }}>测试连接</button><button className="btn primary" type="submit">{busy ? '处理中…' : '保存'}</button></div>
       </fieldset>
     </form>
-    {error && <div className="ai-error" role="alert">{error}</div>}{notice && <p role="status">{notice}</p>}
+    {notice && <p role="status">{notice}</p>}
   </div>
 }

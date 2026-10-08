@@ -1,3 +1,4 @@
+import type { DataTarget } from './DeviceIssues'
 import { useEffect, useRef, useState } from 'react'
 import { AssistantMessage } from './AssistantMessage'
 export type AssistantTurn = { entryIndex: number; startedAt: number; endedAt?: number; state: 'running' | 'completed' | 'stopped' | 'failed' }
@@ -8,7 +9,7 @@ function TurnStatus({ turn }: { turn: AssistantTurn }) {
   const seconds = Math.max(0, Math.floor(((turn.endedAt ?? now) - turn.startedAt) / 1000))
   return <div className={'ai-turn-status ' + turn.state}><span>{labels[turn.state]}</span><span>用时 {seconds >= 60 ? `${Math.floor(seconds / 60)} 分 ` : ''}{seconds % 60} 秒</span></div>
 }
-export function AssistantConversation({ entries, turns, onNavigate }: { entries: { role: string; content: string }[]; turns: AssistantTurn[]; onNavigate: () => void }) {
+export function AssistantConversation({ entries, turns, onNavigate, sources, onSource }: { entries: { role: string; content: string }[]; turns: AssistantTurn[]; onNavigate: () => void; sources: (DataTarget & { entryIndex: number })[]; onSource: (source: DataTarget) => void }) {
   const anchors = useRef<Map<number, HTMLDivElement>>(new Map())
   const nav = useRef<HTMLDetailsElement>(null)
   const starts = entries.flatMap((e, i) => e.role === 'user' ? [i] : [])
@@ -24,6 +25,7 @@ export function AssistantConversation({ entries, turns, onNavigate }: { entries:
         {turn && <TurnStatus turn={turn} />}
         <>
           {!!tools.length && <details className="ai-turn-process"><summary>{turn?.state === 'running' ? '正在执行' : '执行过程'} · {tools.length} 次工具调用</summary>{tools.map((e, i) => <AssistantMessage key={i} {...e} />)}</details>}
+          {!!sources.filter(s => s.entryIndex === start).length && <div className="ai-sources"><small>查询来源（点击查看）</small>{sources.filter(s => s.entryIndex === start).map((source, i) => <button className="btn" key={i} onClick={() => onSource(source)}>{source.label}{source.start && <small>{new Date(source.start).toLocaleString()} — {new Date(source.end!).toLocaleString()}</small>}</button>)}</div>}
           {batch.filter(e => e.role !== 'tool').map((e, i) => <AssistantMessage key={i} {...e} />)}
         </>
       </div>

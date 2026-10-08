@@ -147,6 +147,13 @@ try {
   assert.equal((await request('POST', `/sessions/${id}/messages`, { provider: 'minimax-cn', model: 'wrong-model', message: 'test' })).statusCode, 400)
   await request('POST', '/settings', { provider: 'custom', baseUrl: 'https://different.example/v1', model: 'test' })
   assert.equal((await request('GET', '/settings?provider=minimax-cn')).json().hasKey, true)
+  assert.equal((await request('DELETE', '/settings/minimax-cn')).statusCode, 200)
+  assert.equal((await request('GET', '/settings?provider=minimax-cn')).json().hasKey, false)
+  assert(!readFileSync(join(dir, 'ai-settings.json'), 'utf8').includes('native-secret'))
+  assert.equal((await request('DELETE', '/settings/minimax-cn')).statusCode, 404)
+  assert.equal((await request('DELETE', '/settings/custom')).statusCode, 200)
+  assert.equal((await request('GET', '/settings')).json().model, '')
+  assert.equal((await request('GET', '/providers')).json().configured.length, 0)
   console.log('ASSISTANT TEST OK: scope, multiword reads, tool allowlist, proposals, confirmation, conflict, replay, cancellation, settings and secret isolation')
 } finally {
   await app.close()

@@ -1,3 +1,4 @@
+import { DeviceIssues, type DataTarget } from './DeviceIssues'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
@@ -365,6 +366,8 @@ export default function App() {
   const [realtime, setRealtime] = useState<{ status: RealtimeStatus; attempt: number }>({ status: 'connecting', attempt: 0 })
   const [deviceConnected, setDeviceConnected] = useState<Record<number, boolean>>({})
   const [view, setView] = useState<'monitor' | 'database'>('monitor')
+  const [dataTarget, setDataTarget] = useState<DataTarget | null>(null)
+  const navigateData = (target: DataTarget) => { setSelectedId(target.deviceId); setView('monitor'); setDataTarget({ ...target, token: Date.now() }) }
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const operation = useOperation(t)
@@ -638,15 +641,16 @@ export default function App() {
       <main className="main">
         <Feedback operation={operation} t={t} />
         {loadError && <div className="operation-feedback error" role="alert">{t('loadFailed')}<button className="btn" onClick={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }}>{t('refresh')}</button></div>}
+        <DeviceIssues onNavigate={navigateData} />
         <GlobalTabBar t={t} view={view} onChange={setView} />
         {view === 'database'
           ? <DatabaseView t={t} devices={devices} />
           : (selected
-              ? <DeviceView key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+              ? <DeviceView target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
               : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
       </main>
 
-      <AssistantPanel configRevision={aiConfigRevision} onOpenSettings={() => { setSettingsSection('ai'); setShowSettings(true) }} key={selected?.id ?? 'all'} device={selected} onChanged={() => { refreshDevices(); if (selected) refreshRegisters(selected.id) }} />
+      <AssistantPanel onNavigate={navigateData} configRevision={aiConfigRevision} onOpenSettings={() => { setSettingsSection('ai'); setShowSettings(true) }} key={selected?.id ?? 'all'} device={selected} onChanged={() => { refreshDevices(); if (selected) refreshRegisters(selected.id) }} />
       {showAdd && <DeviceModal t={t} initial={null} onClose={() => setShowAdd(false)} onSave={addDevice} />}
       {showSettings && <SettingsModal initialSection={settingsSection} onAISaved={() => setAiConfigRevision(v => v + 1)} t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} onClose={() => setShowSettings(false)} />}
     </div>
@@ -738,13 +742,14 @@ function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
   )
 }
 
-function DeviceView({ t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
-  t: T; device: Device; connected: boolean; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
+function DeviceView({ target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
+  target: DataTarget | null; t: T; device: Device; connected: boolean; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
   realtime: { status: RealtimeStatus; attempt: number }
   fallbackOk?: boolean
   busy: boolean; onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => Promise<void>; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
+  useEffect(() => { if (target) setTab(target.view === 'history' ? 2 : target.view === 'diagnostics' ? 3 : 0) }, [target?.token])
   const [showEdit, setShowEdit] = useState(false)
   const registers = useMemo(() => groups.flatMap((g) => g.registers), [groups])
   const now = useNow()
@@ -772,7 +777,7 @@ function DeviceView({ t, device, connected, groups, latest, groupErrors, realtim
       </div>
       <TabBar tabs={[t('tabLive'), t('liveCurve'), t('tabHistory'), t('tabRaw'), t('tabFirmware')]} active={tab} onChange={setTab} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
-      {tab === 2 && <HistoryView t={t} device={device} groups={groups} registers={registers} />}
+      {tab === 2 && <HistoryView target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && <RawDataView t={t} device={device} />}
       {tab === 4 && <FirmwareView t={t} device={device} />}
       <div hidden={tab !== 1}><LiveCurve t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
@@ -1175,7 +1180,7 @@ function deriveHistoryRows(pts: Array<{ ts: string; area: string; address: numbe
   return nextRows
 }
 
-function HistoryView({ t, device, groups, registers }: { t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
+function HistoryView({ target, t, device, groups, registers }: { target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
   const localInput = (date: Date) => toLocalInput(date) + ':' + String(date.getSeconds()).padStart(2, '0')
   const [mode, setMode] = useState<'table' | 'chart'>('table')
   const [range, setRange] = useState(() => ({ start: localInput(new Date(Date.now() - 3600_000)), end: localInput(new Date()) }))
@@ -1187,6 +1192,11 @@ function HistoryView({ t, device, groups, registers }: { t: T; device: Device; g
   const [error, setError] = useState<string | null>(null)
   const [showExport, setShowExport] = useState(false)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
+  useEffect(() => {
+    if (target?.view !== 'history' || !target.start || !target.end) return
+    setRange({ start: localInput(new Date(target.start)), end: localInput(new Date(target.end)) }); setPreset(null); setPage(0); setMode('chart')
+    if (target.registerId && registers.some(r => r.id === target.registerId)) setSelected(new Set([target.registerId]))
+  }, [target?.token, registers])
   const selectedRegisters = registers.filter(r => selected.has(r.id))
   const startMs = Date.parse(range.start), endMs = Date.parse(range.end)
   const valid = Number.isFinite(startMs) && Number.isFinite(endMs) && startMs < endMs

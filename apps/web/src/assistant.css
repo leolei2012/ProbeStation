@@ -139,3 +139,16 @@
 .ai-command-menu button { display: flex; gap: 12px; align-items: center; border: 0; background: var(--item-active); color: var(--text-1); padding: 12px; border-radius: 8px; cursor: pointer; text-align: left; }
 .ai-command-menu span, .ai-command-menu small { font-size: 11px; color: var(--text-3); }
 .ai-command-menu small { padding: 4px 8px; line-height: 1.6; }
+.ai-provider-card { flex-wrap: wrap; }
+.ai-provider-card-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.ai-provider-delete { flex-basis: 100%; padding-top: 10px; border-top: 1px solid var(--border-2); }
+.ai-provider-delete .btn + .btn { margin-left: 8px; }
+
+.ai-sources { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.ai-sources > small { width: 100%; color: var(--text-3); }
+.ai-sources .btn { white-space: normal; text-align: left; }
+.ai-sources .btn small { display: block; font-size: 10px; color: var(--text-3); }
+.device-issues { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; color: var(--text-2); }
+.device-issues summary { cursor: pointer; font-size: 12px; }
+.device-issues > div { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; }
+.device-issues .btn { display: flex; gap: 10px; align-items: center; white-space: normal; }

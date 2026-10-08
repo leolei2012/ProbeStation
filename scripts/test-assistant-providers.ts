@@ -25,7 +25,9 @@ for (const provider of ['deepseek', 'anthropic', 'minimax-cn']) {
   const first = await providerCompletion(config, messages, tools, new AbortController().signal, mock)
   assert.equal(first.tool_calls[0].function.name, 'list_devices')
   messages.push({ role: 'assistant', ...first }, { role: 'tool', tool_call_id: first.tool_calls[0].id, content: '[]' })
-  const last = await providerCompletion(config, messages, tools, new AbortController().signal, mock)
+  let streamed = ''
+  const last = await providerCompletion(config, messages, tools, new AbortController().signal, mock, text => { streamed += text })
+  assert.equal(streamed, '完成')
   assert.equal(last.content, '完成'); assert.equal(count, 2)
   console.log(provider + ': native tools + replay OK')
 }
