@@ -849,3 +849,12 @@ table.reg th, .btn { white-space: nowrap; }
   .alarm-condition { grid-template-columns: 90px minmax(0, 1fr); }
   .db-card { min-width: 0; }
 }
+
+.point-config-actions { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+@media (max-width: 768px) { .point-config-actions { flex-direction: row; } .point-config-actions .btn { flex: 1; } }
+
+.realtime-table .alarm-value, .realtime-table .alarm-value .rt-unit, .realtime-table .alarm-value .rt-enum { color: var(--error); }
+
+.slave-device-summary { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; border: 1px solid var(--border-2); border-radius: 12px; padding: 14px 16px; margin: 14px 0; font-size: 12px; color: var(--text-2); }
+.slave-device-summary strong { color: var(--text-1); }
+.slave-device-summary small, .slave-device-summary .error { flex-basis: 100%; }

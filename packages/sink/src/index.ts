@@ -1,5 +1,6 @@
 import type { Context } from 'cordis'
 import ExcelJS from 'exceljs'
+import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
 import { areaForFunction, formatRawByAddr } from '@probebench/core'
 
 export const name = 'sink'
@@ -123,7 +124,7 @@ export class Sink {
    *   第1行：分组,<名>
    *   第2行：从站,<v>, 功能码,<v>, 起始地址,<v>, 数量,<v>
    *   第3行空
-   *   第4行：列头  功能码 | 起始地址 | 数量 | 别名 | 数据类型 | 单位 | 系数 | 偏移 | 枚举
+   *   第4行：别名 | 数据类型 | 单位 | 系数 | 偏移 | 枚举 | 功能码 | 起始地址 | 数量 | 小数位数 | 告警数量
    *   第5行起：每行一条寄存器
    * 另有「设备信息」sheet 存连接参数（导入用于可选建连接）。
    */
@@ -131,12 +132,14 @@ export class Sink {
     const obj = this.ctx.config.getObject(objectId)
     if (!obj) throw new Error('device not found: ' + objectId)
     const groups = this.ctx.config.listGroups(objectId)
+    const rules = this.ctx.config.listRules()
     const wb = new ExcelJS.Workbook()
 
     // 设备信息 sheet
     const info = wb.addWorksheet('设备信息')
     info.columns = [{ header: 'key', key: 'k', width: 20 }, { header: 'value', key: 'v', width: 44 }]
     ;[
+      ['点位表版本', '2'],
       ['设备名', obj.name],
       ['连接', obj.transport === 'rtu' ? 'RTU:' + (obj.serialPath ?? '') : ((obj.ip ?? '') + ':' + obj.port)],
       ['从站', String(obj.slaveId ?? 1)],
@@ -145,34 +148,57 @@ export class Sink {
     ].forEach(([k, v]) => info.addRow({ k, v }))
     boldRows(info, 1)
 
+    const alarmSheet = wb.addWorksheet('告警规则')
+    alarmSheet.addRow(['分组', '功能码', '起始地址', '告警条件', '原始值阈值', '告警提示'])
+    alarmSheet.columns = [{ width: 24 }, { width: 12 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 48 }]
+    boldRows(alarmSheet, 1)
+    alarmSheet.views = [{ state: 'frozen', ySplit: 1 }]
     // 每分组一个 sheet
     for (const g of groups) {
       const regs = [...this.ctx.config.listRegisters(g.id)].sort((a: any, b: any) => a.startAddress - b.startAddress)
-      const name = sanitizeSheetName(g.name || ('分组' + g.id))
+      const label = g.name || ('分组' + g.id)
+      const name = sanitizeSheetName(['设备信息', '告警规则'].includes(label) ? '分组_' + label : label)
       const s = wb.addWorksheet(name)
       // 第1、2行：分组头；(第3行留空)
       s.addRow(['分组', g.name])
       s.addRow(['从站', g.slaveId ?? obj.slaveId ?? 1, '功能码', g.functionCode, '起始地址', g.startAddress, '数量', g.quantity])
       s.addRow([])
       // 第4行：数据列头
-      const head = ['别名', '数据类型', '单位', '系数', '偏移', '枚举', '功能码', '起始地址', '数量', '小数位数']
+      const head = ['别名', '数据类型', '单位', '系数', '偏移', '枚举', '功能码', '起始地址', '数量', '小数位数', '告警数量']
       s.addRow(head)
       boldRows(s, 4)
       // 第5行起：每行一条寄存器（固定列序；导出值均作字符串便于往返）
       for (const r of regs) {
+        const alarms = rules.filter((rule: any) => rule.registerId === r.id).map(({ operator, threshold, message }: any) => ({ operator, threshold, message }))
+        for (const alarm of alarms) alarmSheet.addRow([g.name, r.functionCode, r.startAddress, alarm.operator, String(alarm.threshold), alarm.message ?? ''])
         s.addRow([
           r.alias ?? '', r.dataType ?? 'int16', r.unit ?? '', String(r.factor ?? 1), String(r.offset ?? 0),
-          r.enumJson ? safeJson(r.enumJson) : '', String(r.functionCode), String(r.startAddress), String(r.quantity ?? 1), r.decimalPlaces == null ? '' : String(r.decimalPlaces),
+          r.enumJson ? safeJson(r.enumJson) : '', String(r.functionCode), String(r.startAddress), String(r.quantity ?? 1), r.decimalPlaces == null ? '' : String(r.decimalPlaces), alarms.length || '',
         ])
       }
-      void head
+      s.columns = [24, 18, 12, 12, 12, 32, 12, 14, 10, 12, 12].map(width => ({ width }))
+      s.views = [{ state: 'frozen', ySplit: 4, xSplit: 1 }]
+      s.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: head.length } }
+      s.getColumn(11).eachCell((cell, row) => { if (row >= 5) cell.font = { color: { argb: 'FF777777' } } })
+    }
+    alarmSheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 6 } }
+    for (const sheet of wb.worksheets) {
+      sheet.eachRow((row, index) => {
+        row.height = 26
+        const header = ['设备信息', '告警规则'].includes(sheet.name) ? index === 1 : index === 4
+        row.eachCell(cell => {
+          cell.alignment = { vertical: 'middle', wrapText: true }
+          if (header) { cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF303030' } } }
+          else if (index % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F4' } }
+        })
+      })
     }
     const buf = await wb.xlsx.writeBuffer()
     return { buffer: Buffer.from(buf), filename: `${obj.name || ('device' + objectId)}_点表_${new Date().toISOString().slice(0, 10)}.xlsx` }
   }
 
   /**
-   * 从 exportPointSheet 产出的 xlsx 导入点位：每个非「设备信息」sheet = 一个分组，
+   * 从 exportPointSheet 产出的 xlsx 导入点位：除「设备信息」「告警规则」之外，每个 sheet = 一个分组，
    * 布局与 exportPointSheet 严格对应（见其文档注释）。
    * replace=true 会先删除该设备现有全部分组/寄存器再建（X 幂等覆盖）。
    */
@@ -181,11 +207,6 @@ export class Sink {
     const wb = new ExcelJS.Workbook()
     await wb.xlsx.load(buffer as any)
     const cfg = this.ctx.config
-    if (replace) {
-      // 删除旧点（分组/寄存器级联）
-      const oldGroups = cfg.listGroups(objectId)
-      for (const g of oldGroups) cfg.deleteGroup(g.id)
-    }
     const errors: string[] = []
     let groups = 0
     let registers = 0
@@ -194,8 +215,48 @@ export class Sink {
       if (c == null) return ''
       return typeof c === 'object' ? String((c as any).text ?? (c as any).result ?? '') : String(c)
     }
+    type Alarm = { operator: string; threshold: number; message: string | null }
+    const alarmsBySheet = new Map<string, Map<number, Alarm[]>>()
+    const pointLocations = new Map<string, { sheet: string; row: number }[]>()
+    const key = (group: string, fc: number, address: number) => JSON.stringify([group, fc, address])
     wb.eachSheet((ws: any) => {
-      if (ws.name === '设备信息') return
+      if (['设备信息', '告警规则'].includes(ws.name)) return
+      alarmsBySheet.set(ws.name, new Map())
+      const group = cell(ws.getRow(1), 2) || ws.name
+      const fc = Number(cell(ws.getRow(2), 4)) || 3
+      for (let ri = 5; ri <= ws.rowCount; ri++) {
+        const row = ws.getRow(ri), addr = cell(row, 8).trim()
+        if (!/^\d+$/.test(addr)) continue
+        const id = key(group, Number(cell(row, 7)) || fc, Number(addr))
+        pointLocations.set(id, [...(pointLocations.get(id) ?? []), { sheet: ws.name, row: ri }])
+      }
+    })
+    const alarmSheet = wb.getWorksheet('告警规则')
+    if (!alarmSheet) errors.push('缺少「告警规则」页，请使用新版点位表模板；无告警时保留空表头。')
+    else {
+      const headers = ['分组', '功能码', '起始地址', '告警条件', '原始值阈值', '告警提示']
+      if (headers.some((h, i) => cell(alarmSheet.getRow(1), i + 1).trim() !== h)) errors.push('「告警规则」页列头不正确，请使用新版模板。')
+      for (let ri = 2; ri <= alarmSheet.rowCount; ri++) {
+        const row = alarmSheet.getRow(ri)
+        const fields = Array.from({ length: 6 }, (_, i) => cell(row, i + 1))
+        if (fields.every(f => !f.trim())) continue
+        try {
+          const [group, fc, addr, op, limit, message] = fields
+          const operator = op.trim().replace('≥', '>=').replace('≤', '<=').replace('≠', '!=').replace(/^=$/, '==')
+          if (!group.trim() || !/^\d+$/.test(fc.trim()) || !/^\d+$/.test(addr.trim()) || !ALARM_OPERATORS.includes(operator as any) || !limit.trim() || !Number.isFinite(Number(limit)) || message.length > 200) throw new Error('分组、功能码、地址、条件、阈值或提示无效')
+          const matches = pointLocations.get(key(group.trim(), Number(fc), Number(addr))) ?? []
+          if (matches.length !== 1) throw new Error(matches.length ? '对应点位不唯一' : '找不到对应点位')
+          const location = matches[0], rows = alarmsBySheet.get(location.sheet)!
+          rows.set(location.row, [...(rows.get(location.row) ?? []), { operator, threshold: Number(limit), message: message.trim() || null }])
+        } catch (e: any) { errors.push('告警规则第 ' + ri + ' 行：' + e.message) }
+      }
+    }
+    if (errors.length) return { groups: 0, registers: 0, errors }
+    if (replace) {
+      for (const g of cfg.listGroups(objectId)) cfg.deleteGroup(g.id)
+    }
+    wb.eachSheet((ws: any) => {
+      if (['设备信息', '告警规则'].includes(ws.name)) return
       const nRows = ws.rowCount
       if (nRows < 2) { errors.push('sheet "' + ws.name + '" 空，跳过'); return }
       const r1 = ws.getRow(1)
@@ -220,10 +281,11 @@ export class Sink {
       let lo = Infinity
       let hi = -Infinity
       const addRowReg = (alias: string, dataType: string, unit: string, factor: number, offset: number, enumJson: string | null, regFc: number, addr: number, decimalPlaces: number | null) => {
-        cfg.createRegister(g.id, objectId, alias || null, regFc, addr, dataType, { unit: unit || null, factor, offset, enumJson, decimalPlaces })
+        const reg = cfg.createRegister(g.id, objectId, alias || null, regFc, addr, dataType, { unit: unit || null, factor, offset, enumJson, decimalPlaces })
         added++
         if (addr < lo) lo = addr
         if (addr > hi) hi = addr
+        return reg
       }
       for (let ri = dataStart; ri <= nRows; ri++) {
         const row = ws.getRow(ri)
@@ -249,7 +311,8 @@ export class Sink {
             enumJson = JSON.stringify(o)
           } catch { enumJson = null }
         }
-        addRowReg(alias, dataType, unit, factor, offset, enumJson, Number.isNaN(rcFc) ? fc : rcFc, addr, decimalPlaces)
+        const reg = addRowReg(alias, dataType, unit, factor, offset, enumJson, Number.isNaN(rcFc) ? fc : rcFc, addr, decimalPlaces)
+        for (const alarm of alarmsBySheet.get(ws.name)?.get(ri) ?? []) cfg.createRule(reg.id, alarm.operator, alarm.threshold, alarm.message)
         registers++
       }
       // 分组 quantity 覆盖该组取读的最宽连续跨度（含可能的 gap 宽读，与人工点表一致）

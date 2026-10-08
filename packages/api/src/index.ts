@@ -8,6 +8,7 @@ import { existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { areaForFunction, baseType, encodeRegister, functionCodeForArea, registerWidth, smartParseCsv, smartParseTable, type ModbusArea } from '@probebench/core'
 import ExcelJS from 'exceljs'
+import { registerSlave } from './slave.ts'
 import { registerAssistant } from './assistant.ts'
 
 /** 把 exceljs 单元格转成字符串（处理公式/数字/文本）。 */
@@ -86,6 +87,7 @@ export function apply(ctx: Context, config: Config): void {
 
     fastify.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
     registerAssistant(fastify, { cfg, store, poller }, dataDir)
+    registerSlave(fastify, ctx.get('slave', false))
 
     // ── 固件上传（OTA，PRD 07）──────────────────────────────
     fastify.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req: any, body: any, done: any) => done(null, body))
@@ -111,20 +113,27 @@ export function apply(ctx: Context, config: Config): void {
     })
     fastify.post('/api/monitor_objects', async (req: any) => {
       const b = req.body as any
-      return cfg.createObject(b.name, b.ip, b.port, b.mode ?? 'master', {
+      const device = cfg.createObject(b.name, b.ip, b.port, b.mode ?? 'master', {
         transport: b.transport, serialPath: b.serialPath, baudRate: b.baudRate,
         parity: b.parity, stopBits: b.stopBits, dataBits: b.dataBits, flowControl: b.flowControl,
         slaveId: b.slaveId, pollIntervalMs: b.pollIntervalMs, timeoutMs: b.timeoutMs, dataRetainSeconds: b.dataRetainSeconds,
       })
+      await ctx.get('deviceSlaves', false)?.sync(); return device
     })
     fastify.put('/api/monitor_objects/:id', async (req: any) => {
       const id = Number((req.params as any).id)
       const updated = cfg.updateObject(id, req.body as any)
-      await poller.reconnectDevice(id) // 编辑 ip/port 后立即用新地址重连
+      await poller.reconnectDevice(id)
+      await ctx.get('deviceSlaves', false)?.sync()
+      // 编辑参数后重建对应监听或连接
       return updated
     })
-    fastify.delete('/api/monitor_objects/:id', async (req: any) => { cfg.deleteObject(Number((req.params as any).id)); return { ok: true } })
-    fastify.post('/api/monitor_objects/:id/toggle', async (req: any) => cfg.toggleObject(Number((req.params as any).id)))
+    fastify.delete('/api/monitor_objects/:id', async (req: any) => { cfg.deleteObject(Number((req.params as any).id)); await ctx.get('deviceSlaves', false)?.sync(); return { ok: true } })
+    fastify.post('/api/monitor_objects/:id/toggle', async (req: any) => { const result = cfg.toggleObject(Number(req.params.id)); await ctx.get('deviceSlaves', false)?.sync(); return result })
+    fastify.get('/api/monitor_objects/:id/slave', async (req: any) => {
+      if (!ctx.get('deviceSlaves', false)) throw Object.assign(new Error('从站服务未启用'), { statusCode: 503 })
+      await ctx.get('deviceSlaves', false).sync(); return ctx.get('deviceSlaves', false).status(Number(req.params.id))
+    })
 
     // ── Modbus diagnostics ─────────────────────────────────
     fastify.get('/api/monitor_objects/:id/diagnostics', async (req: any) =>

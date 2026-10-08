@@ -7,6 +7,7 @@
   "dependencies": {
     "cordis": "^4.0.0-rc.8",
     "schemastery": "^3.18.0",
-    "jsmodbus": "^4.0.10"
+    "jsmodbus": "^4.0.10",
+    "serialport": "^13.0.0"
   }
 }

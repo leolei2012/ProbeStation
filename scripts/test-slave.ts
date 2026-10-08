@@ -15,7 +15,7 @@ slave.setRegister(1, 5678)
 console.log('slave set: addr0=1234 addr1=5678')
 
 const driver = ctx.get('modbus', false).createDriver()
-await driver.connect('127.0.0.1', 18502)
+await driver.connect({ host: '127.0.0.1', port: 18502 })
 const values = await driver.readHoldingRegisters(0, 2)
 console.log('client read:', values)
 
@@ -23,7 +23,7 @@ console.log('client read:', values)
 await driver.writeRegisters(5, [42, 43])
 const written = await driver.readHoldingRegisters(5, 2)
 console.log('after write addr5..6:', written, '| slave getRegister(5)=', slave.getRegister(5))
-driver.disconnect()
+await driver.disconnect()
 
 console.log('SLAVE TEST OK')
-slave.stop()
+await slave.stop()

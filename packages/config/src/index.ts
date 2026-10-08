@@ -1,3 +1,4 @@
+import net from 'node:net'
 import type { Context } from 'cordis'
 import z from 'schemastery'
 import { DatabaseSync } from 'node:sqlite'
@@ -134,6 +135,7 @@ export class ConfigStore {
   listObjects(): DeviceRecord[] { return this.db.prepare(OBJECT_SELECT + ' ORDER BY id').all() as unknown as DeviceRecord[] }
   getObject(id: number): DeviceRecord | undefined { return this.db.prepare(OBJECT_SELECT + ' WHERE id = ?').get(id) as unknown as DeviceRecord | undefined }
   createObject(name: string, ip: string, port: number, mode = 'master', extra?: Partial<Pick<DeviceRecord, 'transport' | 'serialPath' | 'baudRate' | 'parity' | 'stopBits' | 'dataBits' | 'flowControl' | 'slaveId' | 'pollIntervalMs' | 'timeoutMs' | 'dataRetainSeconds'>>): DeviceRecord {
+    this.validateDevice({ mode, ip, port, ...extra })
     const transport = extra?.transport ?? 'tcp'
     const serialPath = extra?.serialPath ?? null
     const baudRate = extra?.baudRate ?? 9600
@@ -151,9 +153,21 @@ export class ConfigStore {
     return this.getObject(id)!
   }
   updateObject(id: number, fields: Record<string, unknown>): DeviceRecord | undefined {
+    const before = this.getObject(id)
+    if (before) this.validateDevice({ ...before, ...fields })
     this.update('monitor_objects', id, fields, OBJECT_MAP)
     this.notify('object', id)
     return this.getObject(id)
+  }
+  private validateDevice(device: any): void {
+    const fail = (message: string) => { throw Object.assign(new Error(message), { statusCode: 400 }) }
+    if (!['master', 'slave'].includes(device.mode)) fail('设备角色必须为 master 或 slave')
+    if (device.mode !== 'slave') return
+    const transport = device.transport ?? 'tcp', unitId = device.slaveId ?? 1
+    if (!['tcp', 'rtu'].includes(transport)) fail('从站连接方式必须为 TCP 或 RTU')
+    if (!Number.isInteger(unitId) || unitId < 1 || unitId > 247) fail('从站地址必须为 1–247')
+    if (transport === 'tcp' && (typeof device.ip !== 'string' || !net.isIP(device.ip) || !Number.isInteger(device.port) || device.port < 1 || device.port > 65535)) fail('从站请填写有效的本机监听 IP 和端口')
+    if (transport === 'rtu' && (typeof device.serialPath !== 'string' || !device.serialPath.trim() || (device.dataBits ?? 8) !== 8 || !['none', 'even', 'odd'].includes(device.parity ?? 'even') || ![1, 2].includes(device.stopBits ?? 1) || !Number.isInteger(device.baudRate ?? 9600) || (device.baudRate ?? 9600) < 300 || (device.baudRate ?? 9600) > 4000000)) fail('RTU 从站请填写有效串口参数，数据位必须为 8')
   }
   deleteObject(id: number): void {
     this.db.prepare('DELETE FROM alarm_rules WHERE register_id IN (SELECT id FROM registers WHERE object_id = ?)').run(id)

@@ -1,5 +1,8 @@
+import { DeviceSlaveStatus } from './DeviceSlaveStatus'
 import { ColumnControl, ValueModeControl, useDisplayColumns, useValueMode } from './DataDisplayControls'
-import { AlarmPanel } from './AlarmPanel'
+import { alarmMatches } from '../../../packages/core/src/alarm.ts'
+import { readAlarmValue } from './alarm-value'
+import { AlarmPanel, useAlarmRules } from './AlarmPanel'
 import { ValueReading } from './ValueReading'
 import { physicalValue, displayNumber, curveValue, type ValueMode } from './physical-value'
 import { PointSettingsEditor } from './PointSettingsEditor'
@@ -23,7 +26,7 @@ const TYPE_GROUPS = [
 ]
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number; dataRetainSeconds: number | null; connected: boolean }
-type DeviceFields = { name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number }
+type DeviceFields = { mode: string; name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number }
 interface Register { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null; decimalPlaces?: number | null }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number; registers: Register[] }
 interface LatestValue extends Sample {}
@@ -786,25 +789,26 @@ function DeviceView({ target, t, device, connected, groups, latest, groupErrors,
       <div className="section-eyebrow">{t('overview')}</div>
       <div className="device-head">
         <span className="name">{device.name}</span>
-        <span className={'status-badge' + (device.isActive && connected ? ' on' : '')}>{!device.isActive ? t('pausedData') : !groups.some(g => g.isActive) ? t('noActiveGroups') : connected ? t('sampling') : t('connectionPending')}</span>
+        <span className={'status-badge' + (device.isActive && connected ? ' on' : '')}>{device.mode === 'slave' ? !device.isActive ? '从站已停止' : connected ? '从站运行中' : '从站未启动' : !device.isActive ? t('pausedData') : !groups.some(g => g.isActive) ? t('noActiveGroups') : connected ? t('sampling') : t('connectionPending')}</span>
         <div style={{ flex: 1 }} />
-        <button className="btn" disabled={busy} onClick={() => onToggle(device.id)}>{device.isActive ? t('disconnect') : t('connect')}</button>
+        <button className="btn" disabled={busy} onClick={() => onToggle(device.id)}>{device.mode === 'slave' ? device.isActive ? '停止从站' : '启动从站' : device.isActive ? t('disconnect') : t('connect')}</button>
         <button className="btn" onClick={() => setShowEdit(true)}>{t('edit')}</button>
         <button className="btn danger" disabled={busy} onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
       </div>
-      <div className="main-sub">Modbus {device.transport.toUpperCase()} · {device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
+      <div className="main-sub">{device.mode === 'slave' ? '从站 / Slave' : '主站 / Master'} · Modbus {device.transport.toUpperCase()} · {device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
       {realtime.status !== 'connected' && <div className="connection-notice" role="status">{t(fallbackOk === true ? 'pageConnection' : fallbackOk === false ? 'pageUpdateFailed' : 'pageUpdateTrying')}</div>}
       <div className="sampling-summary" title={t('ageHint').replace('{n}', String(Math.round(threshold / 1000)))}>
         <span>{t('lastSample')}: <strong>{age === null ? t('notSampled') : t('secondsAgo').replace('{n}', String(age))}</strong></span>
         <span>{lastSample === null ? '—' : formatLocalTs(new Date(lastSample).toISOString())}</span>
         <span className={groups.some(g => groupErrors[g.id]) ? 'has-fault' : ''}>{t('faultsLabel')}: {groups.filter(g => groupErrors[g.id]).length}</span>
       </div>
-      <TabBar tabs={[t('tabLive'), t('liveCurve'), t('tabHistory'), t('tabRaw'), t('tabFirmware')]} active={tab} onChange={setTab} />
+      <TabBar tabs={[t('tabLive'), t('liveCurve'), t('tabHistory'), t('tabRaw'), ...(device.mode === 'slave' ? [] : [t('tabFirmware')])]} active={tab} onChange={setTab} />
       <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
       {tab === 2 && <HistoryView target={target} t={t} device={device} groups={groups} registers={registers} />}
-      {tab === 3 && <RawDataView t={t} device={device} />}
-      {tab === 4 && <FirmwareView t={t} device={device} />}
+      {device.mode === 'slave' && <DeviceSlaveStatus deviceId={device.id} />}
+      {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
+      {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
       <div hidden={tab !== 1}><LiveCurve t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
       {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f) => { await onEdit(device.id, f); setShowEdit(false) }} />}
     </div>
@@ -827,6 +831,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [settingsReg, setSettingsReg] = useState<Register | null>(null)
+  const { rules: alarmRules } = useAlarmRules(device.id)
+  const [alarmReg, setAlarmReg] = useState<Register | null>(null)
   const [configuring, setConfiguring] = useState(false)
   const [columns, setColumns] = useDisplayColumns(device.id)
   const shownColumns = { ...columns, type: configuring || columns.type, action: configuring || columns.action }
@@ -898,7 +904,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
           <div className="group-head">
             <button className="group-collapse" aria-label={g.name} aria-expanded={!collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}><span className={'group-chevron' + (collapsed.has(g.id) ? ' is-collapsed' : '')}>▾</span></button>
             <button className="group-name group-name-toggle" aria-expanded={!collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}>{g.name}</button>
-            <span className="kv">FC{g.functionCode} · 从站 {g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个</span>
+            <span className="kv">FC{g.functionCode} · 从站 {device.mode === 'slave' ? device.slaveId : g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个</span>
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id] === 'Disconnected' ? t('groupDisconnected') : groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
             <button className="btn" disabled={operation.busy} onClick={() => toggleGroupPause(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
@@ -912,15 +918,18 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
               {g.registers.map((r) => {
                 const rv = views.get(r.id)
                 const state = health(g, r)
-                const writable = rv?.writable && [1, 3].includes(g.functionCode)
+                const words = Array.from({ length: registerWidth(r.dataType) }, (_, i) => latest[device.id + ':' + areaForFunctionCode(g.functionCode) + ':' + (r.startAddress + i)])
+                const alarmValue = rv?.covered ? null : readAlarmValue(r.dataType, words, now, threshold, !device.isActive || !g.isActive, !!groupErrors[g.id])
+                const alarmActive = alarmValue !== null && alarmRules.some(rule => rule.registerId === r.id && alarmMatches(alarmValue, rule.operator, rule.threshold))
+                const writable = rv?.writable && (device.mode === 'slave' || [1, 3].includes(g.functionCode))
                 return (
                   <tr key={r.id}>
                     {shownColumns.address && <td className="kv" data-label={t('colAddr')}>{r.startAddress}</td>}
                     <td className="rt-description-cell">{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span className="rt-name" title={r.alias || '—'}>{r.alias || '—'}</span>}</td>
                     {shownColumns.type && <td data-label={t('colType')}>{configuring ? <TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /> : <span className="point-type">{r.dataType}</span>}</td>}
-                    {shownColumns.raw && <td data-label={t('colRawValue')} className={'value rt-numeric-cell' + (state.stale ? ' stale-value' : '')} title={(rv?.value ?? '—') + (rv?.label ? ' → ' + rv.label : '') + '\n' + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : writable ? t('valueHint') : t('readOnly'))} onDoubleClick={writable ? () => setWriteReg(r) : undefined}><ValueReading value={rv?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces])} /><span className="rt-enum" aria-hidden={!rv?.label}>{rv?.label || '\u00a0'}</span></td>}
-                    {shownColumns.physical && <td data-label={t('colPhysicalValue')} className={'value physical-reading rt-numeric-cell' + (state.stale ? ' stale-value' : '')} title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : rv?.physical?.issue ? t(({ precision: 'physicalPrecision', invalid: 'physicalInvalid', raw: 'physicalRaw' })[rv.physical.issue]) : t('physicalFormula').replace('{factor}', String(r.factor ?? 1)).replace('{offset}', String(r.offset ?? 0)) + (r.unit ? ' · ' + r.unit : '')}><ValueReading value={rv?.physical?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces, r.factor, r.offset, r.unit])}>{rv?.physical?.value != null && r.unit && <span className="rt-unit">{r.unit}</span>}</ValueReading></td>}
-                    {shownColumns.action && <td className="rt-action-cell" data-label={t(configuring ? 'pointSettings' : 'write')}>{configuring ? <button className="btn" disabled={rv?.covered} title={rv?.covered ? t('valueCovered') : t('pointSettings')} onClick={() => setSettingsReg(r)}>{t('pointSettingsAction')}</button> : writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
+                    {shownColumns.raw && <td data-label={t('colRawValue')} className={'value rt-numeric-cell' + (state.stale ? ' stale-value' : '') + (alarmActive ? ' alarm-value' : '')} title={(rv?.value ?? '—') + (rv?.label ? ' → ' + rv.label : '') + '\n' + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : writable ? t('valueHint') : t('readOnly'))} onDoubleClick={writable ? () => setWriteReg(r) : undefined}><ValueReading value={rv?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces])} /><span className="rt-enum" aria-hidden={!rv?.label}>{rv?.label || '\u00a0'}</span></td>}
+                    {shownColumns.physical && <td data-label={t('colPhysicalValue')} className={'value physical-reading rt-numeric-cell' + (state.stale ? ' stale-value' : '') + (alarmActive ? ' alarm-value' : '')} title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : rv?.physical?.issue ? t(({ precision: 'physicalPrecision', invalid: 'physicalInvalid', raw: 'physicalRaw' })[rv.physical.issue]) : t('physicalFormula').replace('{factor}', String(r.factor ?? 1)).replace('{offset}', String(r.offset ?? 0)) + (r.unit ? ' · ' + r.unit : '')}><ValueReading value={rv?.physical?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces, r.factor, r.offset, r.unit])}>{rv?.physical?.value != null && r.unit && <span className="rt-unit">{r.unit}</span>}</ValueReading></td>}
+                    {shownColumns.action && <td className="rt-action-cell" data-label={t(configuring ? 'pointSettings' : 'write')}>{configuring ? <div className="point-config-actions"><button className="btn" disabled={rv?.covered} title={rv?.covered ? t('valueCovered') : t('pointSettings')} onClick={() => setSettingsReg(r)}>{t('pointSettingsAction')}</button><button className="btn" disabled={rv?.covered} title={t('alarmRules')} onClick={() => setAlarmReg(r)}>{t('alarmLabel')}</button></div> : writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
                   </tr>
                 )
               })}
@@ -931,12 +940,13 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
       )})}
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
       {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: t('operationOk') }) }} />}
+      {alarmReg && <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} point={alarmReg} onClose={() => setAlarmReg(null)} />}
       {settingsReg && <PointSettingsEditor name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
         const saved = await api.put('/api/registers/' + settingsReg.id, fields)
         if (!saved || Object.entries(fields).some(([field, value]) => saved[field] !== value)) throw new Error(t('operationFailed'))
         onRefresh(); operation.setNotice({ error: false, text: t('operationOk') })
       }} />}
-      {writeReg && <WriteModal t={t} deviceName={device.name} currentValue={views.get(writeReg.id)?.value ?? '—'} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => { setWriteReg(null); operation.setNotice({ error: false, text: t('writeOk') }) }} />}
+      {writeReg && <WriteModal t={t} deviceName={device.name} local={device.mode === 'slave'} currentValue={views.get(writeReg.id)?.value ?? '—'} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => { setWriteReg(null); operation.setNotice({ error: false, text: t('writeOk') }) }} />}
     </div>
   )
 }
@@ -961,14 +971,14 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
   t: T; device: Device; initial: DeviceGroup | null; onClose: () => void; onSaved: () => void
 }) {
   const [name, setName] = useState(initial?.name ?? '')
-  const [slaveId, setSlaveId] = useState(String(initial?.slaveId ?? 1))
+  const [slaveId, setSlaveId] = useState(String(initial?.slaveId ?? device.slaveId ?? 1))
   const [functionCode, setFunctionCode] = useState(String(initial?.functionCode ?? 3))
   const [startAddress, setStartAddress] = useState(String(initial?.startAddress ?? 0))
   const [quantity, setQuantity] = useState(String(initial?.quantity ?? 1))
   const [isActive, setIsActive] = useState(initial ? initial.isActive === 1 : true)
   const operation = useOperation(t)
   const save = () => operation.run(async () => {
-    const body = { name, slaveId: Number(slaveId), functionCode: Number(functionCode), startAddress: Number(startAddress), quantity: Number(quantity), isActive: isActive ? 1 : 0 }
+    const body = { name, slaveId: device.mode === 'slave' ? device.slaveId : Number(slaveId), functionCode: Number(functionCode), startAddress: Number(startAddress), quantity: Number(quantity), isActive: isActive ? 1 : 0 }
     if (initial) await api.put('/api/groups/' + initial.id, body)
     else await api.post('/api/monitor_objects/' + device.id + '/groups', body)
     onSaved()
@@ -981,7 +991,7 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
         <label>{t('groupName')}</label>
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         <label>{t('slaveId')}</label>
-        <input value={slaveId} onChange={(e) => setSlaveId(e.target.value)} />
+        <input value={device.mode === 'slave' ? device.slaveId : slaveId} disabled={device.mode === 'slave'} onChange={(e) => setSlaveId(e.target.value)} />
         <label>{t('functionCode')}</label>
         <select value={functionCode} onChange={(e) => setFunctionCode(e.target.value)}>
           <option value="1">FC01 · {t('fcReadCoils')}</option>
@@ -1006,7 +1016,7 @@ function GroupModal({ t, device, initial, onClose, onSaved }: {
   )
 }
 
-function WriteModal({ t, reg, deviceName, currentValue, onClose, onSaved }: { t: T; reg: Register; deviceName: string; currentValue: string; onClose: () => void; onSaved: () => void }) {
+function WriteModal({ t, reg, deviceName, currentValue, local, onClose, onSaved }: { t: T; reg: Register; deviceName: string; currentValue: string; local?: boolean; onClose: () => void; onSaved: () => void }) {
   const [value, setValue] = useState('')
   const [method, setMethod] = useState<'single' | 'multiple'>('multiple')
   const [busy, setBusy] = useState(false)
@@ -1031,16 +1041,16 @@ function WriteModal({ t, reg, deviceName, currentValue, onClose, onSaved }: { t:
   return (
     <div className="modal-mask">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{t('writeReg')}</h3>
-        <div className="write-context"><strong>{deviceName}</strong><span>{t('currentValue')}: {currentValue}</span><small>{t('pointWriteHint')}</small></div>
+        <h3>{local ? '设置从站点位值' : t('writeReg')}</h3>
+        <div className="write-context"><strong>{deviceName}</strong><span>{t('currentValue')}: {currentValue}</span><small>{local ? '修改本设备的从站内存，不向外部设备写入。' : t('pointWriteHint')}</small></div>
         <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}{width > 1 ? '（' + width + ' 寄存器）' : ''}</div>
         <label>{t('valuePh')}</label>
         <input value={value} onChange={(e) => { setValue(e.target.value); setErr(null); setOk(false) }} autoFocus placeholder={t('valuePh')} />
-        <label>{t('functionCode')}</label>
+        {!local && <><label>{t('functionCode')}</label>
         <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')} disabled={width > 1}>
           <option value="multiple">{reg.functionCode === 1 ? 'FC05' : t('fc16')}</option>
           {width === 1 && reg.functionCode !== 1 && <option value="single">{t('fc06')}</option>}
-        </select>
+        </select></>}
         {err && <div className="write-msg error">{err}</div>}
         {ok && <div className="write-msg ok">{t('writeOk')}</div>}
         <div className="modal-actions">
@@ -1892,6 +1902,7 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose, initialSect
 
 function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | null; onClose: () => void; onSave: (f: DeviceFields) => Promise<void> }) {
   const [name, setName] = useState(initial?.name ?? '')
+  const [mode, setMode] = useState(initial?.mode ?? 'master')
   const [transport, setTransport] = useState(initial?.transport ?? 'tcp')
   const [ip, setIp] = useState(initial?.ip ?? '')
   const [port, setPort] = useState(initial ? String(initial.port) : '8899')
@@ -1907,7 +1918,7 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
   const titleId = useId()
   const operation = useOperation(t)
   const save = () => operation.run(async () => {
-    await onSave({ name: name.trim(), ip: ip.trim(), port: transport === 'tcp' ? Number(port) : initial?.port ?? 8899, transport, serialPath: serialPath.trim(), baudRate: Number(baudRate), parity, stopBits: Number(stopBits), dataBits: Number(dataBits), flowControl, slaveId: Number(slaveId), pollIntervalMs: Number(pollInterval), timeoutMs: Number(timeout) })
+    await onSave({ mode, name: name.trim(), ip: ip.trim(), port: transport === 'tcp' ? Number(port) : initial?.port ?? 8899, transport, serialPath: serialPath.trim(), baudRate: Number(baudRate), parity, stopBits: Number(stopBits), dataBits: Number(dataBits), flowControl, slaveId: Number(slaveId), pollIntervalMs: Number(pollInterval), timeoutMs: Number(timeout) })
   })
   const textField = (label: string, value: string, change: (value: string) => void, placeholder = '', numeric?: { min: number; max?: number }, unit?: string) => (
     <label className="device-field"><span>{label}</span><span className="device-input-wrap">
@@ -1933,6 +1944,7 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
           <fieldset disabled={operation.busy}>
             <legend>基本信息 / General</legend>
             <label className="device-field"><span>{t('name')}</span><input aria-label={t('name')} required pattern={'.*\\S.*'} value={name} onChange={e => setName(e.target.value)} autoFocus /></label>
+            <label className="device-field"><span>{t('cancel') === 'Cancel' ? 'Device role' : '设备角色'}</span><select aria-label={t('cancel') === 'Cancel' ? 'Device role' : '设备角色'} value={mode} onChange={e => { const next = e.target.value; setMode(next); if (next === 'slave') { setIp('0.0.0.0'); setDataBits('8') } }}><option value="master">{t('cancel') === 'Cancel' ? 'Master · Poll external devices' : '主站 · 主动轮询外部设备'}</option><option value="slave">{t('cancel') === 'Cancel' ? 'Slave · Respond to external masters' : '从站 · 等待外部主站读写'}</option></select></label>
             <div className="device-transport" role="group" aria-label={t('transport')}>
               <button type="button" className={'btn' + (transport === 'tcp' ? ' selected' : '')} aria-pressed={transport === 'tcp'} onClick={() => setTransport('tcp')}>{t('transportTcp')}</button>
               <button type="button" className={'btn' + (transport === 'rtu' ? ' selected' : '')} aria-pressed={transport === 'rtu'} onClick={() => setTransport('rtu')}>{t('transportRtu')}</button>
@@ -1942,27 +1954,26 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
             <legend>连接参数 / Connection</legend>
             <div className="device-field-grid">
               {transport === 'tcp' ? <>
-                {textField(t('ip'), ip, setIp, '192.168.1.10')}
-                {textField(t('port'), port, setPort, '8899', { min: 1, max: 65535 })}
+                {textField(mode === 'slave' ? '监听地址 / Bind address' : t('ip'), ip, setIp, mode === 'slave' ? '0.0.0.0' : '192.168.1.10')}
+                {textField(mode === 'slave' ? '监听端口 / Listen port' : t('port'), port, setPort, '8899', { min: 1, max: 65535 })}
               </> : <>
                 {textField(t('serialPath'), serialPath, setSerialPath, 'COM3 / /dev/ttyUSB0')}
                 {textField(t('baudRate'), baudRate, setBaudRate, '9600', { min: 1 })}
                 {selectField(t('parity'), parity, setParity, ['even', 'odd', 'none'])}
-                {selectField('数据位 / Data bits', dataBits, setDataBits, ['5', '6', '7', '8'])}
+                {selectField('数据位 / Data bits', dataBits, setDataBits, mode === 'slave' ? ['8'] : ['5', '6', '7', '8'])}
                 {selectField(t('stopBits'), stopBits, setStopBits, ['1', '2'])}
                 {selectField(t('flowControl'), flowControl, setFlowControl, ['none', 'rtscts', 'xonxoff'])}
               </>}
             </div>
           </fieldset>
           <fieldset disabled={operation.busy}>
-            <legend>采集设置 / Sampling</legend>
+            <legend>{mode === 'slave' ? '从站设置 / Slave' : '采集设置 / Sampling'}</legend>
             <div className="device-field-grid">
-              {textField(t('slaveIdLabel'), slaveId, setSlaveId, '1', { min: 0, max: 247 })}
+              {textField(t('slaveIdLabel'), slaveId, setSlaveId, '1', { min: mode === 'slave' ? 1 : 0, max: 247 })}
               {textField(t('pollIntervalLabel'), pollInterval, setPollInterval, '1000', { min: 1, max: 2147483647 }, 'ms')}
-              {textField(t('timeoutLabel'), timeout, setTimeout_, '3000', { min: 1, max: 2147483647 }, 'ms')}
+              {mode === 'master' && textField(t('timeoutLabel'), timeout, setTimeout_, '3000', { min: 1, max: 2147483647 }, 'ms')}
             </div>
-            <p className="device-field-hint">{t('pollIntervalHint')}</p>
-            <p className="device-field-hint">{t('timeoutHint')}</p>
+            {mode === 'slave' ? <p className="device-field-hint">从站按上方间隔刷新并记录本地数据。TCP 的 0.0.0.0 接受本机所有网卡连接；外部主站使用本机实际 IP。RTU 使用独占串口。</p> : <><p className="device-field-hint">{t('pollIntervalHint')}</p><p className="device-field-hint">{t('timeoutHint')}</p></>}
           </fieldset>
         </div>
         <div className="modal-actions device-modal-footer">

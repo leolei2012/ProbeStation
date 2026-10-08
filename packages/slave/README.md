@@ -1,36 +1,42 @@
 # @probebench/slave
 
-Modbus TCP 从站模拟器（jsmodbus）。holding 缓冲区即寄存器内存，支持 FC03 读 / FC06 单写 / FC16 多写。
-用于本地测试与设备仿真。提供 `ctx.slave`。
+每台设备可以选择 `master`（主站）或 `slave`（从站），配置保存在设备记录中。
 
-## 配置（schemastery）
+## 使用
 
-| 字段 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `port` | number | 8502 | 监听端口 |
-| `holdingSize` | number | 5000 | holding 寄存器数量 |
+在「新建设备 / 编辑设备」中选择设备角色：
 
-## 服务 `ctx.slave`
+- **主站**：主动连接外部设备并轮询；连接地址是外部设备 IP 或本机主站串口。
+- **从站**：按该设备参数监听，供外部主站读写。TCP 的 IP 是本机监听地址（`0.0.0.0` 表示所有网卡）；端口是监听端口。外部主站连接本机实际 IP。RTU 使用本机独占串口、8 数据位和设备的从站地址（1–247）。
 
-```ts
-interface Slave {
-  start(): Promise<void>      // 开始监听
-  stop(): void                // 停止
-  setRegister(address, value) // 写一个 holding 寄存器（uint16）
-  getRegister(address): number// 读一个 holding 寄存器
-}
-```
+从站设备也在左侧设备列表中，使用现有分组、点位设置、点位表导入导出、实时显示、曲线、历史和告警。设备按钮显示「启动从站 / 停止从站」。分组从站地址使用设备地址；分组启停控制本地显示/记录，不停止整个从站服务。
 
-## 用法
+每台从站有独立内存，TCP 与 RTU 均支持；多个 TCP 从站需使用不同的监听地址/端口，多个 RTU 从站需使用不同串口，不与启用的主站共享串口。支持四数据区，地址 0–65535：保持寄存器、输入寄存器、线圈、离散输入。
 
-```ts
-await ctx.plugin(slavePlugin, { port: 8502 })
-const slave = ctx.get('slave', false)
-slave.setRegister(0, 1234)   // 主站读地址 0 得到 1234
-```
+- 功能码：FC01、02、03、04、05、06、15、16。
+- 寄存器值为 uint16 原始字，位值为 0/1。点位类型决定多字解码与写入编码。
+- 点位的「写」在从站角色下修改本设备内存，可在本机设置输入寄存器和离散输入；外部主站只能写线圈与保持寄存器。
+- RTU 验证 CRC、过滤从站地址、支持地址 0 广播写入且不回复；TCP 只响应设备配置的 unit ID。
+- 按设备刷新间隔将已启用分组的完整点位字发布到现有 latest、历史和告警流程。外部主站写入可在下一次刷新看到。
+- 停止/重启或修改监听参数保留当前进程中的内存；切为主站、删除设备或退出程序后不保留模拟数据。设备角色及通信参数保存在配置库，重启按启用状态重新监听。
+- 端口/串口冲突显示启动错误，服务每 5 秒重试；修改参数或启停时立即重新核对配置。
 
-## 与 poller 的关系
+## 服务与接口
 
-slave 插件本身是**从站服务器**；要让它被轮询，需在 config 里建一个 `mode=master` 的设备
-指向 `127.0.0.1:8502`（见 `apps/cli` 的「本地模拟器」播种）。config 的 `mode=slave` 是另一种语义
-（平台对外模拟设备），poller 会跳过 slave 设备。
+`ctx.deviceSlaves` 管理配置设备，提供 `sync() / status(id) / connected(id) / write(id, area, address, values) / stop()`。启停与角色切换通过原有设备 CRUD、toggle 接口完成。
+
+- `POST /api/monitor_objects`、`PUT /api/monitor_objects/:id`：支持 `mode: "master" | "slave"`。
+- `POST /api/monitor_objects/:id/toggle`：从站角色下启停监听。
+- `GET /api/monitor_objects/:id/slave`：该设备监听状态、错误、请求数、最近请求时间、TCP 连接数。
+- `POST /api/registers/:id/write`：从站角色下编码为原始字并修改本地内存；主站角色保持原有外部写入。
+
+原有 `ctx.slave` 是内部兼容的演示模拟器，默认 TCP 8502，供既有「本地模拟器」主站设备使用。新的从站设备不要占用此端口。不存在独立的从站界面入口。
+
+## 验证
+
+- `npx tsx scripts/test-device-slaves.ts`：多设备隔离、外部 TCP 主站写入、本地值、RTU、完整多字采样、暂停/恢复、角色切换、删除及配置验证。
+- `npx tsx scripts/test-device-slave-api.ts`：完整 Cordis 装配、设备 CRUD 角色、启停、点位写入与 latest 流程。
+- `npx tsx scripts/test-slave-control.ts`：四数据区、TCP 读写、RTU 串口模拟绑定、分包/合包、CRC、广播、错误请求和端口占用。
+- `npx tsx scripts/test-slave.ts`：既有主站驱动互通。
+
+RTU 通过模拟串口收发测试；真实硬件仍需要两端串口与 RS485 接线验证。

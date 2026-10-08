@@ -16,7 +16,7 @@ import * as mcpPlugin from '@probebench/mcp'
 import * as slavePlugin from '@probebench/slave'
 import * as otaPlugin from '@probebench/ota'
 
-try { await assertPortsAvailable([8080, 8081, 8502]) } catch (error) {
+try { await assertPortsAvailable([8080, 8081]) } catch (error) {
   console.error(`[启动失败] ${(error as Error).message}`)
   process.exit(1)
 }
@@ -52,8 +52,7 @@ slave.setRegister(2, 800) // 转速
 slave.setRegister(4096, 220) // 电压（0x1000）
 slave.setRegister(4097, 5) // 电流
 slave.setRegister(4098, 1100) // 功率
-let counter = 0
-setInterval(() => slave.setRegister(0, (counter++) % 1000), 1000)
+// Values remain editable in the slave simulator; no timer overwrites manual edits.
 
 // start polling + listen
 ctx.get('poller', false).startAll()

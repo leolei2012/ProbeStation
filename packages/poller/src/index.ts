@@ -101,6 +101,7 @@ class PollingEngine {
   /** 从配置重载设备/分组到内存缓存（配置变更时调用）。 */
   private refreshSchedule(): void {
     const objs = this.ctx.config.listObjects().filter((o: any) => o.mode !== 'slave')
+    for (const before of this.devices) if (!objs.some((o: any) => o.id === before.id)) this.markDisconnected(before.id)
     this.devices = objs
     const next = new Map<number, any[]>()
     for (const o of objs) next.set(o.id, this.ctx.config.listGroups(o.id).filter((g: any) => g.isActive))
@@ -212,6 +213,7 @@ class PollingEngine {
 
   /** 某设备当前是否有已建立（未断开）的 Modbus 连接。 */
   isDeviceConnected(objectId: number): boolean {
+    if (this.ctx.config.getObject(objectId)?.mode === 'slave') return !!(this.ctx.get ? this.ctx.get('deviceSlaves', false) : this.ctx.deviceSlaves)?.connected(objectId)
     const obj = this.ctx.config.getObject(objectId)
     if (!obj) return false
     const d = this.drivers.get(this.driverKey(obj))
@@ -220,7 +222,6 @@ class PollingEngine {
 
   listConnectionStates(): Array<{ objectId: number; connected: boolean }> {
     return this.ctx.config.listObjects()
-      .filter((o: any) => o.mode !== 'slave')
       .map((o: any) => ({ objectId: o.id, connected: o.isActive === 1 && this.isDeviceConnected(o.id) }))
   }
 
@@ -228,9 +229,10 @@ class PollingEngine {
     const out: Array<{ objectId: number; groupId: number; error: string }> = []
     for (const [groupId, error] of this.groupErrors) {
       const g = this.ctx.config.getGroup(groupId)
-      if (g) out.push({ objectId: g.objectId, groupId, error })
+      if (g && this.ctx.config.getObject(g.objectId)?.mode !== 'slave') out.push({ objectId: g.objectId, groupId, error })
     }
-    return out
+    const slaveDevices = this.ctx.get ? this.ctx.get('deviceSlaves', false) : this.ctx.deviceSlaves
+    return [...out, ...(slaveDevices?.listGroupErrors() ?? [])]
   }
 
   /** 连接状态变化时发 device/status（仅在状态翻转时发，避免刷屏）。 */
@@ -293,6 +295,12 @@ class PollingEngine {
   async write(objectId: number, address: number, values: number[], method: 'single' | 'multiple' = 'multiple', slaveId = 1, area: ModbusArea = 'holding-register'): Promise<void> {
     const obj = this.ctx.config.getObject(objectId)
     if (!obj) throw new Error('object ' + objectId + ' not found')
+    if (obj.mode === 'slave') {
+      const service = (this.ctx.get ? this.ctx.get('deviceSlaves', false) : this.ctx.deviceSlaves)
+      if (!service) throw new Error('从站服务未启用')
+      await service.write(objectId, area, address, values)
+      return
+    }
     const key = this.driverKey(obj)
     this.writeLocks.add(key) // 写时停读（该设备/串口）
     try {
@@ -444,7 +452,7 @@ class PollingEngine {
     for (const g of groups) this.setGroupError(objectId, g.id, 'Disconnected')
     const obj = this.ctx.config.getObject(objectId)
     if (obj) this.connectCooldown.delete(this.driverKey(obj))
-    if (!obj || obj.transport !== 'rtu') {
+    {
       const key = 'tcp:' + objectId
       const d = this.drivers.get(key)
       if (d) { this.drivers.delete(key); void d.disconnect() }
