@@ -222,13 +222,6 @@ function enumLabelOf(reg: Register, decoded: number | bigint): string | null {
   return label != null ? label : null
 }
 
-/** 原始值优先显示；枚举命中时追加 " → label" 徽标。 */
-function displayRawWithEnum(reg: Register, decoded: number | bigint): string {
-  const raw = displayNumber(decoded, reg)
-  const label = enumLabelOf(reg, decoded)
-  return label != null ? raw + ' → ' + label : raw
-}
-
 function areaForFunctionCode(fc: number): string {
   if (fc === 1 || fc === 5 || fc === 15) return 'coil'
   if (fc === 2) return 'discrete-input'
@@ -921,8 +914,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
                     {shownColumns.address && <td className="kv" data-label={t('colAddr')}>{r.startAddress}</td>}
                     <td className="rt-description-cell">{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span className="rt-name" title={r.alias || '—'}>{r.alias || '—'}</span>}</td>
                     {shownColumns.type && <td data-label={t('colType')}>{configuring ? <TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /> : <span className="point-type">{r.dataType}</span>}</td>}
-                    {shownColumns.raw && <td data-label={t('colRawValue')} className={'value rt-numeric-cell' + (state.stale ? ' stale-value' : '') + (alarmActive ? ' alarm-value' : '')} title={(rv?.value ?? '—') + (rv?.label ? ' → ' + rv.label : '') + '\n' + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : writable ? t('valueHint') : t('readOnly'))} onDoubleClick={writable ? () => setWriteReg(r) : undefined}><ValueReading value={rv?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces])} /><span className="rt-enum" aria-hidden={!rv?.label}>{rv?.label || '\u00a0'}</span></td>}
-                    {shownColumns.physical && <td data-label={t('colPhysicalValue')} className={'value physical-reading rt-numeric-cell' + (state.stale ? ' stale-value' : '') + (alarmActive ? ' alarm-value' : '')} title={rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : rv?.physical?.issue ? t(({ precision: 'physicalPrecision', invalid: 'physicalInvalid', raw: 'physicalRaw' })[rv.physical.issue]) : t('physicalFormula').replace('{factor}', String(r.factor ?? 1)).replace('{offset}', String(r.offset ?? 0)) + (r.unit ? ' · ' + r.unit : '')}><ValueReading value={rv?.physical?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces, r.factor, r.offset, r.unit])}>{rv?.physical?.value != null && r.unit && <span className="rt-unit">{r.unit}</span>}</ValueReading></td>}
+                    {shownColumns.raw && <td data-label={t('colRawValue')} className={'value rt-numeric-cell' + (state.stale ? ' stale-value' : '') + (alarmActive ? ' alarm-value' : '')} title={(rv?.value ?? '—') + '\n' + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : writable ? t('valueHint') : t('readOnly'))} onDoubleClick={writable ? () => setWriteReg(r) : undefined}><ValueReading value={rv?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces])} /></td>}
+                    {shownColumns.physical && <td data-label={t('colPhysicalValue')} className={'value physical-reading rt-numeric-cell' + (state.stale ? ' stale-value' : '') + (alarmActive ? ' alarm-value' : '')} title={(rv?.label ? rv.label + '\n' : '') + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : rv?.physical?.issue ? t(({ precision: 'physicalPrecision', invalid: 'physicalInvalid', raw: 'physicalRaw' })[rv.physical.issue]) : t('physicalFormula').replace('{factor}', String(r.factor ?? 1)).replace('{offset}', String(r.offset ?? 0)) + (r.unit ? ' · ' + r.unit : ''))}><ValueReading value={rv?.physical?.value ?? null} fresh={!state.stale && !rv?.invalid && !rv?.covered} identity={JSON.stringify([r.id, r.dataType, r.decimalPlaces, r.factor, r.offset, r.unit])}>{rv?.physical?.value != null && r.unit && <span className="rt-unit">{r.unit}</span>}</ValueReading><span className="rt-enum" aria-hidden={!rv?.label}>{rv?.label || '\u00a0'}</span></td>}
                     {shownColumns.action && <td className="rt-action-cell" data-label={t(configuring ? 'pointSettings' : 'write')}>{configuring ? <div className="point-config-actions"><button className="btn" disabled={rv?.covered} title={rv?.covered ? t('valueCovered') : t('pointSettings')} onClick={() => setSettingsReg(r)}>{t('pointSettingsAction')}</button><button className="btn" disabled={rv?.covered} title={t('alarmRules')} onClick={() => setAlarmReg(r)}>{t('alarmLabel')}</button></div> : writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
                   </tr>
                 )
@@ -1212,7 +1205,8 @@ function deriveHistoryRows(pts: Array<{ ts: string; area: string; address: numbe
         if (isHexType(r.dataType) || isBinType(r.dataType)) { formatted.set(r.id, valueMode === 'physical' ? '—' : rawText.get(r.id) ?? '—'); continue }
         const d = decoded.get(r.id)
         const physical = d == null ? null : physicalValue(d, r).value
-        formatted.set(r.id, d == null ? '—' : valueMode === 'physical' ? physical == null ? '—' : physical + (r.unit ? ' ' + r.unit : '') : displayRawWithEnum(r, d))
+        const label = d == null ? null : enumLabelOf(r, d)
+        formatted.set(r.id, d == null ? '—' : valueMode === 'physical' ? (physical == null ? '—' : physical + (r.unit ? ' ' + r.unit : '')) + (label ? ' → ' + label : '') : displayNumber(d, r))
       }
     }
     const values: Record<number, string> = {}
