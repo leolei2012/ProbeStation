@@ -1,12 +1,14 @@
 import { useId, useRef, useState } from 'react'
+import { registerWidth } from '../../../packages/core/src/codec'
 
 type Row = { id: number; value: string; label: string }
-export type PointSettings = { unit: string | null; factor: number; offset: number; enumJson: string | null; decimalPlaces?: number | null }
-export function PointSettingsEditor({ name, address, settings, t, onClose, onSave }: {
-  name: string; address: number; settings: PointSettings; t: (key: string) => string
+export type PointSettings = { dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null; decimalPlaces?: number | null }
+export function PointSettingsEditor({ name, address, settings, available, typeGroups, t, onClose, onSave }: {
+  name: string; address: number; settings: PointSettings; available: number; typeGroups: { key: string; types: string[] }[]; t: (key: string) => string
   onClose: () => void; onSave: (value: PointSettings) => Promise<void>
 }) {
   const titleId = useId()
+  const [dataType, setDataType] = useState(settings.dataType)
   const [unit, setUnit] = useState(settings.unit ?? '')
   const [factor, setFactor] = useState(String(settings.factor ?? 1))
   const [offset, setOffset] = useState(String(settings.offset ?? 0))
@@ -28,6 +30,7 @@ export function PointSettingsEditor({ name, address, settings, t, onClose, onSav
   }
   const save = async () => {
     if (lock.current) return
+    if (dataType !== settings.dataType && registerWidth(dataType) > available) { setError(t('valueShort')); return }
     const numericFactor = Number(factor), numericOffset = Number(offset)
     if (!factor.trim() || !offset.trim() || !Number.isFinite(numericFactor) || !Number.isFinite(numericOffset) || numericFactor === 0) { setError(t('pointInvalidScale')); return }
     const map: Record<string, string> = Object.create(null)
@@ -39,7 +42,7 @@ export function PointSettingsEditor({ name, address, settings, t, onClose, onSav
       map[key] = row.label.trim()
     }
     lock.current = true; setBusy(true); setError('')
-    try { await onSave({ unit: unit.trim() || null, factor: numericFactor, offset: numericOffset, enumJson: rows.length ? JSON.stringify(map) : null, decimalPlaces: decimalPlaces === '' ? null : Number(decimalPlaces) }); onClose() }
+    try { await onSave({ dataType, unit: unit.trim() || null, factor: numericFactor, offset: numericOffset, enumJson: rows.length ? JSON.stringify(map) : null, decimalPlaces: decimalPlaces === '' ? null : Number(decimalPlaces) }); onClose() }
     catch (e: any) { setError(e.message || t('operationFailed')) }
     finally { lock.current = false; setBusy(false) }
   }
@@ -47,8 +50,11 @@ export function PointSettingsEditor({ name, address, settings, t, onClose, onSav
     <form className="modal enum-editor point-settings-editor" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); void save() }}>
       <div className="modal-head"><h3 id={titleId}>{t('pointSettings')}</h3><button className="modal-close" type="button" aria-label={t('cancel')} disabled={busy} onClick={onClose}>×</button></div>
       <p className="enum-context">{name} · {t('colAddr')} {address}</p>
+      <label>{t('colType')}<select autoFocus aria-label={t('colType')} value={dataType} disabled={busy} onChange={e => { setDataType(e.target.value); setError('') }}>
+        {typeGroups.map(group => <optgroup key={group.key} label={t(group.key)}>{group.types.map(type => <option key={type} value={type} disabled={type !== settings.dataType && registerWidth(type) > available}>{type}</option>)}</optgroup>)}
+      </select></label>
       <div className="point-semantic-fields">
-        <label>{t('pointUnit')}<input autoFocus aria-label={t('pointUnit')} value={unit} maxLength={64} placeholder="℃ / V / rpm" disabled={busy} onChange={e => { setUnit(e.target.value); setError('') }} /></label>
+        <label>{t('pointUnit')}<input aria-label={t('pointUnit')} value={unit} maxLength={64} placeholder="℃ / V / rpm" disabled={busy} onChange={e => { setUnit(e.target.value); setError('') }} /></label>
         <label>{t('pointFactor')}<input aria-label={t('pointFactor')} type="number" step="any" value={factor} disabled={busy} onChange={e => { setFactor(e.target.value); setError('') }} /></label>
         <label>{t('pointOffset')}<input aria-label={t('pointOffset')} type="number" step="any" value={offset} disabled={busy} onChange={e => { setOffset(e.target.value); setError('') }} /></label>
       </div>

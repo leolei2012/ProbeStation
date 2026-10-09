@@ -41,7 +41,7 @@ const I18N: Record<Lang, Record<string, string>> = {
   zh: {
     alarmDelete: '删除', alarmClose: '关闭',
     alarmLabel: '告警', alarmRules: '告警规则', alarmActive: '{n} 项触发', alarmNormal: '未触发', alarmWaiting: '等待有效数据', alarmNone: '未设置规则', alarmTriggered: '条件触发', alarmUnknown: '{n} 项规则暂无有效数据，设备暂停、通信异常或数据过期时不判断告警。', alarmLoadError: '告警规则加载失败', alarmHelp: '按点位类型解码后的原始值比较，不应用系数、偏移或显示舍入。条件命中时持续提示，恢复后自动消除；同一次持续告警只记录一条日志。', alarmInvalid: '请选择点位，并填写有效的原始值阈值。', alarmAdd: '新增规则', alarmEdit: '编辑规则', alarmPoint: '告警点位', alarmChoose: '选择点位', alarmOperator: '比较条件', alarmThreshold: '原始值阈值', alarmMessage: '告警提示（可选）', alarmMessageHint: '例如：温度过高，请检查散热', alarmCancelEdit: '取消编辑', alarmConfirmDelete: '删除这条告警规则？',
-    displayValueMode: '数值显示模式', pointDecimals: '物理值小数位数', pointDecimalsAuto: '自动', displayColumns: '显示列', displayColumnsHint: '原始值与物理值共用一列，至少保留一种数值。设置保存在当前浏览器。', displayColumnsConfigHint: '配置模式保留类型和点位设置列。原始值在上、物理值在下。', displayColumnsCompact: '精简显示', displayColumnsAll: '显示全部', livePhysicalHint: '按原始解码值 × 系数 + 偏移绘制，不因小数位数设置舍入曲线；悬停读数显示工程单位。', mixedUnitsHint: '当前曲线包含不同工程单位，数值共用纵轴。建议分开选择点位；历史曲线也可使用相对量程比较趋势。', exportRaw: '导出原始值', physicalHistoryHint: '历史物理值按当前点位系数、偏移计算；不是采样时的配置快照。',
+    displayValueMode: '数值显示模式', pointDecimals: '物理值小数位数', pointDecimalsAuto: '自动', displayColumns: '显示列', displayColumnsHint: '原始值与物理值共用一列，至少保留一种数值。设置保存在当前浏览器。', displayColumnsConfigHint: '配置模式保留点位设置列，类型在点位设置中修改。原始值在上、物理值在下。', displayColumnsCompact: '精简显示', displayColumnsAll: '显示全部', livePhysicalHint: '按原始解码值 × 系数 + 偏移绘制，不因小数位数设置舍入曲线；悬停读数显示工程单位。', mixedUnitsHint: '当前曲线包含不同工程单位，数值共用纵轴。建议分开选择点位；历史曲线也可使用相对量程比较趋势。', exportRaw: '导出原始值', physicalHistoryHint: '历史物理值按当前点位系数、偏移计算；不是采样时的配置快照。',
 
     colRawValue: '原始值', colPhysicalValue: '物理值', physicalFormula: '原始值 × {factor} + {offset}', physicalPrecision: '该 64 位数值的小数换算无法精确表示', physicalInvalid: '数值或换算结果无效', physicalRaw: '十六进制 / 二进制格式不进行物理值换算',
     pointSettings: '点位设置', pointSettingsAction: '设置', pointUnit: '工程单位', pointFactor: '系数', pointOffset: '偏移', pointInvalidScale: '系数必须为非零有限数，偏移必须为有限数。', pointScaleHint: '物理值 = 原始值 × 系数 + 偏移。单位留空可清除；默认系数为 1、偏移为 0。实时表格同时显示原始值与物理值；曲线可切换两种模式。小数位数仅影响物理值显示，原始值保持解码结果，不改变采集和换算精度。',
@@ -101,7 +101,7 @@ const I18N: Record<Lang, Record<string, string>> = {
   en: {
     alarmDelete: 'Delete', alarmClose: 'Close',
     alarmLabel: 'Alarms', alarmRules: 'Alarm rules', alarmActive: '{n} triggered', alarmNormal: 'Not triggered', alarmWaiting: 'Waiting for valid data', alarmNone: 'No rules configured', alarmTriggered: 'Condition triggered', alarmUnknown: '{n} rules lack valid data. Paused devices, communication faults and stale samples are not evaluated.', alarmLoadError: 'Failed to load alarm rules', alarmHelp: 'Compare decoded raw values without scaling, offsets or display rounding. Show alarms while conditions match and clear when they recover. Log once per continuous alarm.', alarmInvalid: 'Select a point and enter a finite raw threshold.', alarmAdd: 'Add rule', alarmEdit: 'Edit rule', alarmPoint: 'Point', alarmChoose: 'Select a point', alarmOperator: 'Comparison', alarmThreshold: 'Raw threshold', alarmMessage: 'Alarm message (optional)', alarmMessageHint: 'Example: Temperature too high', alarmCancelEdit: 'Cancel editing', alarmConfirmDelete: 'Delete this alarm rule?',
-    displayValueMode: 'Value display mode', pointDecimals: 'Physical value decimal places', pointDecimalsAuto: 'Automatic', displayColumns: 'Columns', displayColumnsHint: 'Raw and physical values share one column. Keep at least one value type. Saved in this browser.', displayColumnsConfigHint: 'Type and point settings remain visible while configuring. Raw values above physical values.', displayColumnsCompact: 'Compact view', displayColumnsAll: 'Show all', livePhysicalHint: 'Plot raw value × factor + offset at full precision. Display precision affects text only; readings include engineering units.', mixedUnitsHint: 'These series use different engineering units on a shared axis. Select them separately, or compare trends using relative ranges in history.', exportRaw: 'Export raw values', physicalHistoryHint: 'Historical physical values use the current point factor and offset, not the configuration at sampling time.',
+    displayValueMode: 'Value display mode', pointDecimals: 'Physical value decimal places', pointDecimalsAuto: 'Automatic', displayColumns: 'Columns', displayColumnsHint: 'Raw and physical values share one column. Keep at least one value type. Saved in this browser.', displayColumnsConfigHint: 'Point settings remain visible while configuring; edit the type in point settings. Raw values above physical values.', displayColumnsCompact: 'Compact view', displayColumnsAll: 'Show all', livePhysicalHint: 'Plot raw value × factor + offset at full precision. Display precision affects text only; readings include engineering units.', mixedUnitsHint: 'These series use different engineering units on a shared axis. Select them separately, or compare trends using relative ranges in history.', exportRaw: 'Export raw values', physicalHistoryHint: 'Historical physical values use the current point factor and offset, not the configuration at sampling time.',
 
     colRawValue: 'Raw value', colPhysicalValue: 'Physical value', physicalFormula: 'Raw value × {factor} + {offset}', physicalPrecision: 'Decimal scaling of this 64-bit value cannot be represented precisely', physicalInvalid: 'Invalid value or conversion result', physicalRaw: 'Hex / binary formats do not use physical conversion',
     pointSettings: 'Point settings', pointSettingsAction: 'Settings', pointUnit: 'Engineering unit', pointFactor: 'Scale factor', pointOffset: 'Offset', pointInvalidScale: 'Use a finite, nonzero scale factor and a finite offset.', pointScaleHint: 'Physical value = raw value × scale factor + offset. Leave the unit blank to remove it. Defaults: factor 1, offset 0. Live tables show raw and physical values; curves can switch modes. Decimal places affect physical value display only. Raw values keep their decoded form; acquisition and conversion precision are unchanged.',
@@ -822,7 +822,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
   const [alarmReg, setAlarmReg] = useState<Register | null>(null)
   const [configuring, setConfiguring] = useState(false)
   const [columns, setColumns] = useDisplayColumns(device.id)
-  const shownColumns = { ...columns, type: configuring || columns.type, action: configuring || columns.action }
+  const shownColumns = { ...columns, type: columns.type, action: configuring || columns.action }
   const showValue = shownColumns.raw || shownColumns.physical
   const columnCount = 1 + Number(shownColumns.address) + Number(shownColumns.type) + Number(showValue) + Number(shownColumns.action)
   const tableWidth = 220 + (shownColumns.address ? 90 : 0) + (shownColumns.type ? 140 : 0) + (showValue ? 240 : 0) + (shownColumns.action ? 90 : 0)
@@ -914,7 +914,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
                   <tr key={r.id}>
                     {shownColumns.address && <td className="kv" data-label={t('colAddr')}>{r.startAddress}</td>}
                     <td className="rt-description-cell">{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span className="rt-name" title={r.alias || '—'}>{r.alias || '—'}</span>}</td>
-                    {shownColumns.type && <td data-label={t('colType')}>{configuring ? <TypeCell t={t} reg={r} available={g.startAddress + g.quantity - r.startAddress} disabled={rv?.covered} onRefresh={onRefresh} /> : <span className="point-type">{r.dataType}</span>}</td>}
+                    {shownColumns.type && <td data-label={t('colType')}><span className="point-type">{r.dataType}</span></td>}
                     {showValue && <td data-label={t('colValue')} className={'value rt-numeric-cell rt-stacked-cell' + (state.stale ? ' stale-value' : '') + (alarmActive ? ' alarm-value' : '')}>
                       <div className="rt-value-stack">
                         {shownColumns.raw && <div className="rt-value-line" title={(rv?.value ?? '—') + '\n' + (rv?.covered ? t('valueCovered') : rv?.invalid ? t('valueShort') : writable ? t('valueHint') : t('readOnly'))} onDoubleClick={writable ? () => setWriteReg(r) : undefined}>
@@ -943,7 +943,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
       {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: t('operationOk') }) }} />}
       {alarmReg && <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} point={alarmReg} onClose={() => setAlarmReg(null)} />}
-      {settingsReg && <PointSettingsEditor name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
+      {settingsReg && <PointSettingsEditor name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} typeGroups={TYPE_GROUPS} available={(() => { const group = groups.find(g => g.id === settingsReg.groupId); return group ? group.startAddress + group.quantity - settingsReg.startAddress : 0 })()} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
         const saved = await api.put('/api/registers/' + settingsReg.id, fields)
         if (!saved || Object.entries(fields).some(([field, value]) => saved[field] !== value)) throw new Error(t('operationFailed'))
         onRefresh(); operation.setNotice({ error: false, text: t('operationOk') })
@@ -1084,30 +1084,6 @@ function AliasCell({ t, reg, onRefresh }: { t: T; reg: Register; onRefresh: () =
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} /></div>
   )
 }
-
-function TypeCell({ t, reg, available, disabled, onRefresh }: { t: T; reg: Register; available: number; disabled?: boolean; onRefresh: () => void }) {
-  const [err, setErr] = useState(false)
-  const operation = useOperation(t)
-  const change = async (v: string) => {
-    if (v === reg.dataType) return
-    if (registerWidth(v) > available) { setErr(true); setTimeout(() => setErr(false), 1600); return }
-    await operation.run(async () => { await api.put('/api/registers/' + reg.id, { dataType: v }); onRefresh() })
-  }
-  return (
-    <div className="inline-edit">
-      <select className="cell-select" value={reg.dataType} onChange={(e) => change(e.target.value)} disabled={disabled || operation.busy}>
-        {TYPE_GROUPS.map((grp) => (
-          <optgroup key={grp.key} label={t(grp.key)}>
-            {grp.types.map((d) => <option key={d} value={d}>{d}</option>)}
-          </optgroup>
-        ))}
-      </select>
-      {err && <span className="cell-err" title={t('valueShort')}>⚠</span>}
-
-    </div>
-  )
-}
-
 
 function useRegisterSelection(deviceId: number, registers: Register[]): [Set<number>, (s: Set<number>) => void] {
   const key = 'ps-regs-' + deviceId
