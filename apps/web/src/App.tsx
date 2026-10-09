@@ -15,7 +15,7 @@ import { AssistantSettings } from './AssistantSettings'
 import { decodeHistorySeries, nearestHistorySample, type HistoryPoint } from './history-curve'
 import { sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, staleAfterMs, type Sample } from './observation'
-import { baseType, decodeRawByAddr, decodeRegister, formatNumber, formatRawByAddr, formatRegisterValue, isBinType, isHexType, parseEnum, registerWidth } from '../../../packages/core/src/codec.ts'
+import { baseType, decodeRawByAddr, decodeRegister, formatNumber, formatRawByAddr, formatRegisterValue, isBinType, isHexType, parseEnum, parseRawRegisterInput, registerWidth } from '../../../packages/core/src/codec.ts'
 
 const TYPE_GROUPS = [
   { key: 'grp16BE', types: ['int16', 'uint16', 'float16', 'hex16', 'bin16'] },
@@ -41,10 +41,10 @@ const I18N: Record<Lang, Record<string, string>> = {
   zh: {
     alarmDelete: '删除', alarmClose: '关闭',
     alarmLabel: '告警', alarmRules: '告警规则', alarmActive: '{n} 项触发', alarmNormal: '未触发', alarmWaiting: '等待有效数据', alarmNone: '未设置规则', alarmTriggered: '条件触发', alarmUnknown: '{n} 项规则暂无有效数据，设备暂停、通信异常或数据过期时不判断告警。', alarmLoadError: '告警规则加载失败', alarmHelp: '按点位类型解码后的原始值比较，不应用系数、偏移或显示舍入。条件命中时持续提示，恢复后自动消除；同一次持续告警只记录一条日志。', alarmInvalid: '请选择点位，并填写有效的原始值阈值。', alarmAdd: '新增规则', alarmEdit: '编辑规则', alarmPoint: '告警点位', alarmChoose: '选择点位', alarmOperator: '比较条件', alarmThreshold: '原始值阈值', alarmMessage: '告警提示（可选）', alarmMessageHint: '例如：温度过高，请检查散热', alarmCancelEdit: '取消编辑', alarmConfirmDelete: '删除这条告警规则？',
-    displayValueMode: '数值显示模式', pointDecimals: '小数位数', pointDecimalsAuto: '自动', displayColumns: '显示列', displayColumnsHint: '原始值与物理值共用一列，至少保留一种数值。设置保存在当前浏览器。', displayColumnsConfigHint: '配置模式保留类型和点位设置列。原始值在上、物理值在下。', displayColumnsCompact: '精简显示', displayColumnsAll: '显示全部', livePhysicalHint: '按原始解码值 × 系数 + 偏移绘制，不因小数位数设置舍入曲线；悬停读数显示工程单位。', mixedUnitsHint: '当前曲线包含不同工程单位，数值共用纵轴。建议分开选择点位；历史曲线也可使用相对量程比较趋势。', exportRaw: '导出原始值', physicalHistoryHint: '历史物理值按当前点位系数、偏移计算；不是采样时的配置快照。',
+    displayValueMode: '数值显示模式', pointDecimals: '物理值小数位数', pointDecimalsAuto: '自动', displayColumns: '显示列', displayColumnsHint: '原始值与物理值共用一列，至少保留一种数值。设置保存在当前浏览器。', displayColumnsConfigHint: '配置模式保留类型和点位设置列。原始值在上、物理值在下。', displayColumnsCompact: '精简显示', displayColumnsAll: '显示全部', livePhysicalHint: '按原始解码值 × 系数 + 偏移绘制，不因小数位数设置舍入曲线；悬停读数显示工程单位。', mixedUnitsHint: '当前曲线包含不同工程单位，数值共用纵轴。建议分开选择点位；历史曲线也可使用相对量程比较趋势。', exportRaw: '导出原始值', physicalHistoryHint: '历史物理值按当前点位系数、偏移计算；不是采样时的配置快照。',
 
     colRawValue: '原始值', colPhysicalValue: '物理值', physicalFormula: '原始值 × {factor} + {offset}', physicalPrecision: '该 64 位数值的小数换算无法精确表示', physicalInvalid: '数值或换算结果无效', physicalRaw: '十六进制 / 二进制格式不进行物理值换算',
-    pointSettings: '点位设置', pointSettingsAction: '设置', pointUnit: '工程单位', pointFactor: '系数', pointOffset: '偏移', pointInvalidScale: '系数必须为非零有限数，偏移必须为有限数。', pointScaleHint: '物理值 = 原始值 × 系数 + 偏移。单位留空可清除；默认系数为 1、偏移为 0。实时表格同时显示原始值与物理值；曲线可切换两种模式。小数位数只影响显示，不改变采集和换算精度。',
+    pointSettings: '点位设置', pointSettingsAction: '设置', pointUnit: '工程单位', pointFactor: '系数', pointOffset: '偏移', pointInvalidScale: '系数必须为非零有限数，偏移必须为有限数。', pointScaleHint: '物理值 = 原始值 × 系数 + 偏移。单位留空可清除；默认系数为 1、偏移为 0。实时表格同时显示原始值与物理值；曲线可切换两种模式。小数位数仅影响物理值显示，原始值保持解码结果，不改变采集和换算精度。',
     enumConfig: '枚举配置', enumSet: '设置枚举', enumCount: '{n} 项映射', enumValue: '原始数值', enumLabel: '显示文字', enumHint: '按解码后的整数原始值匹配，不应用倍率或偏移。例如 0 → 关闭，1 → 开启；未匹配时仍显示原始值。', enumEmpty: '尚未设置枚举，添加映射即可开始。清空后保存将移除枚举。', enumLabelPlaceholder: '例如：关闭 / 开启', enumAdd: '添加映射', enumRemove: '删除映射', enumClear: '清空映射', enumInvalidValue: '原始数值必须填写十进制整数，可包含负号。', enumDuplicate: '数值 {value} 重复，请为每个数值保留一项映射。', enumEmptyLabel: '请填写每项映射的显示文字。',
 
     histMinutes: "最近 {n} 分钟", histHours: "最近 {n} 小时", histNoNumeric: "所选点位没有可绘制的数值数据，请检查类型或选择其他点位。", histZoomIn: "放大", histZoomOut: "缩小", histMoveEarlier: "向前移动时间窗口", histMoveLater: "向后移动时间窗口", histQueryZoom: "查询放大区间", histRelative: "各曲线相对量程", histInteractionHint: "悬停查看读数 · 左右拖动框选时间范围 · 双击恢复全范围", histNoVisible: "当前范围没有可见曲线，可重置缩放或点击下方图例显示曲线。", histNearest: "最近采样点（实际时间）", histLegendHint: "点击图例隐藏 / 显示曲线", histStatsHint: "当前可见时间范围的显示数据统计", histLastValue: "末值", histSamplingNote: "曲线为分桶后的解码值，显示模式由上方选择：每桶每地址保留最后一个值。Min / Max 是显示点的统计，可能遗漏瞬时峰值；放大后可点击“查询放大区间”提高时间分辨率。", histRelativeNote: "相对量程将每条曲线映射为 0–100%，恒定值显示在 50%；悬停和统计仍按所选原始值或物理值显示。",
@@ -101,10 +101,10 @@ const I18N: Record<Lang, Record<string, string>> = {
   en: {
     alarmDelete: 'Delete', alarmClose: 'Close',
     alarmLabel: 'Alarms', alarmRules: 'Alarm rules', alarmActive: '{n} triggered', alarmNormal: 'Not triggered', alarmWaiting: 'Waiting for valid data', alarmNone: 'No rules configured', alarmTriggered: 'Condition triggered', alarmUnknown: '{n} rules lack valid data. Paused devices, communication faults and stale samples are not evaluated.', alarmLoadError: 'Failed to load alarm rules', alarmHelp: 'Compare decoded raw values without scaling, offsets or display rounding. Show alarms while conditions match and clear when they recover. Log once per continuous alarm.', alarmInvalid: 'Select a point and enter a finite raw threshold.', alarmAdd: 'Add rule', alarmEdit: 'Edit rule', alarmPoint: 'Point', alarmChoose: 'Select a point', alarmOperator: 'Comparison', alarmThreshold: 'Raw threshold', alarmMessage: 'Alarm message (optional)', alarmMessageHint: 'Example: Temperature too high', alarmCancelEdit: 'Cancel editing', alarmConfirmDelete: 'Delete this alarm rule?',
-    displayValueMode: 'Value display mode', pointDecimals: 'Decimal places', pointDecimalsAuto: 'Automatic', displayColumns: 'Columns', displayColumnsHint: 'Raw and physical values share one column. Keep at least one value type. Saved in this browser.', displayColumnsConfigHint: 'Type and point settings remain visible while configuring. Raw values above physical values.', displayColumnsCompact: 'Compact view', displayColumnsAll: 'Show all', livePhysicalHint: 'Plot raw value × factor + offset at full precision. Display precision affects text only; readings include engineering units.', mixedUnitsHint: 'These series use different engineering units on a shared axis. Select them separately, or compare trends using relative ranges in history.', exportRaw: 'Export raw values', physicalHistoryHint: 'Historical physical values use the current point factor and offset, not the configuration at sampling time.',
+    displayValueMode: 'Value display mode', pointDecimals: 'Physical value decimal places', pointDecimalsAuto: 'Automatic', displayColumns: 'Columns', displayColumnsHint: 'Raw and physical values share one column. Keep at least one value type. Saved in this browser.', displayColumnsConfigHint: 'Type and point settings remain visible while configuring. Raw values above physical values.', displayColumnsCompact: 'Compact view', displayColumnsAll: 'Show all', livePhysicalHint: 'Plot raw value × factor + offset at full precision. Display precision affects text only; readings include engineering units.', mixedUnitsHint: 'These series use different engineering units on a shared axis. Select them separately, or compare trends using relative ranges in history.', exportRaw: 'Export raw values', physicalHistoryHint: 'Historical physical values use the current point factor and offset, not the configuration at sampling time.',
 
     colRawValue: 'Raw value', colPhysicalValue: 'Physical value', physicalFormula: 'Raw value × {factor} + {offset}', physicalPrecision: 'Decimal scaling of this 64-bit value cannot be represented precisely', physicalInvalid: 'Invalid value or conversion result', physicalRaw: 'Hex / binary formats do not use physical conversion',
-    pointSettings: 'Point settings', pointSettingsAction: 'Settings', pointUnit: 'Engineering unit', pointFactor: 'Scale factor', pointOffset: 'Offset', pointInvalidScale: 'Use a finite, nonzero scale factor and a finite offset.', pointScaleHint: 'Physical value = raw value × scale factor + offset. Leave the unit blank to remove it. Defaults: factor 1, offset 0. Live tables show raw and physical values; curves can switch modes. Decimal places affect display only, not acquisition or conversion precision.',
+    pointSettings: 'Point settings', pointSettingsAction: 'Settings', pointUnit: 'Engineering unit', pointFactor: 'Scale factor', pointOffset: 'Offset', pointInvalidScale: 'Use a finite, nonzero scale factor and a finite offset.', pointScaleHint: 'Physical value = raw value × scale factor + offset. Leave the unit blank to remove it. Defaults: factor 1, offset 0. Live tables show raw and physical values; curves can switch modes. Decimal places affect physical value display only. Raw values keep their decoded form; acquisition and conversion precision are unchanged.',
     enumConfig: 'Enum mappings', enumSet: 'Set enum', enumCount: '{n} mappings', enumValue: 'Raw value', enumLabel: 'Display text', enumHint: 'Match decoded integer values before scaling or offset. For example, 0 → Off and 1 → On. Unmatched values remain numeric.', enumEmpty: 'No mappings. Add a mapping to start; saving an empty list removes the enum.', enumLabelPlaceholder: 'For example: Off / On', enumAdd: 'Add mapping', enumRemove: 'Remove mapping', enumClear: 'Clear mappings', enumInvalidValue: 'Enter a decimal integer, optionally with a minus sign.', enumDuplicate: 'Duplicate value {value}. Keep one mapping per value.', enumEmptyLabel: 'Enter display text for every mapping.',
 
     histMinutes: "Last {n} minutes", histHours: "Last {n} hours", histNoNumeric: "No plottable numeric data. Check types or select other points.", histZoomIn: "Zoom in", histZoomOut: "Zoom out", histMoveEarlier: "Move earlier", histMoveLater: "Move later", histQueryZoom: "Query zoomed range", histRelative: "Relative scale per series", histInteractionHint: "Hover for values · Drag horizontally to select time · Double-click to reset", histNoVisible: "No visible series in this range. Reset zoom or enable a legend item.", histNearest: "Nearest samples (actual times)", histLegendHint: "Click a legend item to hide / show", histStatsHint: "Statistics of displayed samples in the visible range", histLastValue: "Last", histSamplingNote: "Bucketed decoded values in the selected display mode: the last value per address in each bucket. Min / Max describe displayed samples and may miss transient peaks. Query the zoomed range for finer resolution.", histRelativeNote: "Each series maps to 0–100%; constant values appear at 50%. Readouts and statistics retain values in the selected display mode.",
@@ -263,10 +263,10 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<string, LatestValue
       }
       const isRaw = isHexType(r.dataType) || isBinType(r.dataType)
       const decoded = decodeRegister(r.dataType, words)
-      const value = isRaw ? formatRegisterValue(r.dataType, words) : displayNumber(decoded, r)
+      const value = isRaw ? formatRegisterValue(r.dataType, words) : displayNumber(decoded)
       const label = isRaw ? null : enumLabelOf(r, decoded)
       const physical = physicalValue(decoded, r)
-      views.set(r.id, { value, label, physical, covered: false, invalid: false, writable: !isRaw })
+      views.set(r.id, { value, label, physical, covered: false, invalid: false, writable: true })
       consumedUpTo = end
     }
   }
@@ -1027,10 +1027,15 @@ function WriteModal({ t, reg, deviceName, currentValue, local, onClose, onSaved 
   const width = registerWidth(reg.dataType)
   const base = baseType(reg.dataType)
   const is64 = base === 'int64' || base === 'uint64'
+  const isRaw = isHexType(reg.dataType) || isBinType(reg.dataType)
   const write = async () => {
     if (value.trim() === '') { setErr(t('writeErrEmpty')); return }
-    const num = is64 ? value : Number(value)
-    if (!is64 && (Number.isNaN(num) || !Number.isFinite(num))) { setErr(t('writeErrNaN')); return }
+    let num: string | number
+    try {
+      const raw = isRaw ? parseRawRegisterInput(reg.dataType, value) : null
+      num = raw !== null ? (width === 4 ? (isHexType(reg.dataType) ? '0x' + raw.toString(16) : '0b' + raw.toString(2)) : Number(raw)) : is64 ? value : Number(value)
+    } catch (error) { setErr((error as Error).message); return }
+    if (typeof num === 'number' && !Number.isFinite(num)) { setErr(t('writeErrNaN')); return }
     setBusy(true); setErr(null)
     try {
       await api.post('/api/registers/' + reg.id + '/write', { value: num, method: width > 1 ? 'multiple' : method })
@@ -1047,7 +1052,8 @@ function WriteModal({ t, reg, deviceName, currentValue, local, onClose, onSaved 
         <div className="write-context"><strong>{deviceName}</strong><span>{t('currentValue')}: {currentValue}</span><small>{local ? '修改本设备的从站内存，不向外部设备写入。' : t('pointWriteHint')}</small></div>
         <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}{width > 1 ? '（' + width + ' 寄存器）' : ''}</div>
         <label>{t('valuePh')}</label>
-        <input value={value} onChange={(e) => { setValue(e.target.value); setErr(null); setOk(false) }} autoFocus placeholder={t('valuePh')} />
+        <input value={value} onChange={(e) => { setValue(e.target.value); setErr(null); setOk(false) }} autoFocus placeholder={isHexType(reg.dataType) ? '0x1234' : isBinType(reg.dataType) ? '0b1010' : t('valuePh')} />
+        {isRaw && <div className="kv">{isHexType(reg.dataType) ? '输入十六进制整数，可带 0x 前缀。' : '输入二进制整数，可带 0b 前缀。'} {width * 16} 位无符号值；直接写入原始数据，不应用系数或偏移。</div>}
         {!local && <><label>{t('functionCode')}</label>
         <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')} disabled={width > 1}>
           <option value="multiple">{reg.functionCode === 1 ? 'FC05' : t('fc16')}</option>
@@ -1221,7 +1227,7 @@ function deriveHistoryRows(pts: Array<{ ts: string; area: string; address: numbe
         const d = decoded.get(r.id)
         const physical = d == null ? null : physicalValue(d, r).value
         const label = d == null ? null : enumLabelOf(r, d)
-        formatted.set(r.id, d == null ? '—' : valueMode === 'physical' ? (physical == null ? '—' : physical + (r.unit ? ' ' + r.unit : '')) + (label ? ' → ' + label : '') : displayNumber(d, r))
+        formatted.set(r.id, d == null ? '—' : valueMode === 'physical' ? (physical == null ? '—' : physical + (r.unit ? ' ' + r.unit : '')) + (label ? ' → ' + label : '') : displayNumber(d))
       }
     }
     const values: Record<number, string> = {}
@@ -1510,7 +1516,7 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
           let sample: [number, number | null] | undefined
           for (const p of s.points) if (p[0] <= at) sample = p
           const value = sample && at - sample[0] <= threshold ? sample[1] : null
-          return <span key={s.r.id} className="live-legend-value"><i style={{ background: s.color }} /><span>{s.r.alias || `#${s.r.startAddress}`} <small>({s.r.startAddress})</small></span><strong>{value == null ? '—' : displayNumber(value, s.r) + (valueMode === 'physical' && s.r.unit ? ' ' + s.r.unit : '')}</strong></span>
+          return <span key={s.r.id} className="live-legend-value"><i style={{ background: s.color }} /><span>{s.r.alias || `#${s.r.startAddress}`} <small>({s.r.startAddress})</small></span><strong>{value == null ? '—' : displayNumber(value, valueMode === 'physical' ? s.r : undefined) + (valueMode === 'physical' && s.r.unit ? ' ' + s.r.unit : '')}</strong></span>
         })}
       </div>
     </div>
@@ -1534,7 +1540,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
   const clipId = useId()
   const series = useMemo(() => decodeHistorySeries(registers, pts, selected).map(s => { const r = registers.find(r => r.id === s.id)!; return { ...s, samples: s.samples.map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) } }), [registers, pts, selected, valueMode])
   const mixedUnits = valueMode === 'physical' && new Set(registers.filter(r => selected.has(r.id)).map(r => r.unit?.trim() || '')).size > 1
-  const reading = (value: number, reg?: Register) => displayNumber(value, reg) + (valueMode === 'physical' && reg?.unit ? ' ' + reg.unit : '')
+  const reading = (value: number, reg?: Register) => displayNumber(value, valueMode === 'physical' ? reg : undefined) + (valueMode === 'physical' && reg?.unit ? ' ' + reg.unit : '')
   useEffect(() => { setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [valueMode])
   useEffect(() => { setView(null); setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [pts, range.start, range.end])
   const setPlot = useCallback((el: HTMLDivElement | null) => {

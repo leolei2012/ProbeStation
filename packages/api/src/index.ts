@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static'
 import compress from '@fastify/compress'
 import { existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { areaForFunction, baseType, encodeRegister, functionCodeForArea, registerWidth, smartParseCsv, smartParseTable, type ModbusArea } from '@probebench/core'
+import { areaForFunction, baseType, encodeRegister, functionCodeForArea, isHexType, isBinType, parseRawRegisterInput, registerWidth, smartParseCsv, smartParseTable, type ModbusArea } from '@probebench/core'
 import ExcelJS from 'exceljs'
 import { registerSlave } from './slave.ts'
 import { registerAssistant } from './assistant.ts'
@@ -234,15 +234,19 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     // ── Write ───────────────────────────────────────────────
-    fastify.post('/api/registers/:id/write', async (req: any) => {
+    fastify.post('/api/registers/:id/write', async (req: any, reply: any) => {
       const id = Number((req.params as any).id)
       const reg = cfg.getRegister(id)
       if (!reg) return { code: 404, error: 'register not found' }
       const b = req.body as any
       const base = baseType(reg.dataType ?? 'int16')
       const is64 = base.endsWith('64') && base !== 'float64'
-      const value = is64 ? BigInt(String(b.value)) : Number(b.value)
-      const words = encodeRegister(reg.dataType ?? 'int16', value)
+      let value: number | bigint, words: number[]
+      try {
+        if ((isHexType(base) || isBinType(base)) && !['string', 'number', 'bigint'].includes(typeof b?.value)) throw new Error('请输入原始整数值')
+        value = isHexType(base) || isBinType(base) ? parseRawRegisterInput(reg.dataType, b.value) : is64 ? BigInt(String(b.value)) : Number(b.value)
+        words = encodeRegister(reg.dataType ?? 'int16', value)
+      } catch (error) { return reply.code(400).send({ error: (error as Error).message }) }
       const requested = b.method === 'single' ? 'single' : 'multiple'
       const method = words.length > 1 ? 'multiple' : requested
       const grp = cfg.getGroup(reg.groupId)

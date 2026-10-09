@@ -137,9 +137,32 @@ function encodeBE(type: string, value: number | bigint): number[] {
 
 function encodeRaw(base: string, value: number | bigint): number[] {
   const w = registerWidth(base)
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) throw new Error('Raw register value must be a safe integer')
+  const integer = BigInt(value)
+  if (integer < 0n || integer >= (1n << BigInt(w * 16))) throw new Error(`Raw register value must fit an unsigned ${w * 16}-bit integer`)
   if (w === 1) return [Number(value) & 0xffff]
   if (w === 2) { const v = Number(value) >>> 0; return [Math.floor(v / 0x10000) & 0xffff, v & 0xffff] }
   return uint64ToWords(BigInt(value))
+}
+
+/** Text follows the point radix; numeric inputs remain unsigned decimal values. */
+export function parseRawRegisterInput(type: string, input: string | number | bigint): bigint {
+  if (!isHexType(type) && !isBinType(type)) throw new Error('Expected a hexadecimal or binary point type')
+  let value: bigint
+  if (typeof input === 'string') {
+    const text = input.trim()
+    const hex = isHexType(type)
+    const groups = text.split(/\s+/)
+    const pattern = hex ? /^(?:0x)?[0-9a-f]+$/i : /^(?:0b)?[01]+$/i
+    if (!groups.every(group => pattern.test(group))) throw new Error(hex ? '请输入十六进制整数，例如 0x1234' : '请输入二进制整数，例如 0b1010')
+    value = BigInt((hex ? '0x' : '0b') + groups.map(group => group.replace(hex ? /^0x/i : /^0b/i, '')).join(''))
+  } else {
+    if (typeof input === 'number' && !Number.isSafeInteger(input)) throw new Error('Raw register value must be a safe integer')
+    value = BigInt(input)
+  }
+  const bits = registerWidth(type) * 16
+  if (value < 0n || value >= (1n << BigInt(bits))) throw new Error(`数值必须在 0 到 ${(1n << BigInt(bits)) - 1n} 之间（${bits} 位）`)
+  return value
 }
 
 function decodeRaw(base: string, words: number[]): RegisterValue {

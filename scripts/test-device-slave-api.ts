@@ -17,6 +17,17 @@ try {
   const write=await app.inject({method:'POST',url:`/api/registers/${reg.id}/write`,payload:{value:1234}})
   assert.equal(write.statusCode,200,write.body)
   assert.equal(store.getLatest()[`${device.id}:holding-register:0`].rawValue,1234)
+  for (const [dataType, value, expected] of [['hex16', '0xABCD', 43981], ['bin16', '0b1010', 10]] as const) {
+    cfg.updateRegister(reg.id, { dataType })
+    const rawWrite = await app.inject({method:'POST',url:`/api/registers/${reg.id}/write`,payload:{value}})
+    assert.equal(rawWrite.statusCode,200,rawWrite.body)
+    assert.equal(store.getLatest()[`${device.id}:holding-register:0`].rawValue,expected)
+    for (const invalid of ['invalid', -1, 65536, 1.5]) {
+      const rejected = await app.inject({method:'POST',url:`/api/registers/${reg.id}/write`,payload:{value:invalid}})
+      assert.equal(rejected.statusCode,400,rejected.body)
+      assert.equal(store.getLatest()[`${device.id}:holding-register:0`].rawValue,expected)
+    }
+  }
   const objects=(await app.inject({method:'GET',url:'/api/monitor_objects'})).json()
   assert(objects.find((o:any)=>o.id===device.id).connected)
   assert((await app.inject({method:'GET',url:`/api/monitor_objects/${device.id}/slave`})).json().connected)

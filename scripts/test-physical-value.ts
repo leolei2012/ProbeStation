@@ -19,6 +19,10 @@ assert.equal(physicalValue(254n, { dataType: 'uint64', factor: 0.1 }).value, '25
 console.log('PHYSICAL VALUE OK: scale, offset, defaults, floating-point formatting, invalid samples and exact 64-bit transformations')
 
 assert.equal(displayNumber(25.3, { decimalPlaces: 2 }), '25.30')
+assert.equal(displayNumber(583), '583')
+assert.equal(physicalValue(583, { ...reg, decimalPlaces: 1 }).value, '58.3')
+assert.equal(displayNumber(583.25), '583.25')
+assert.equal(displayNumber(large), '18446744073709551615')
 assert.equal(displayNumber(-0.001, { decimalPlaces: 2 }), '0.00')
 assert.equal(displayNumber(2.9, { decimalPlaces: 0 }), '3')
 assert.equal(displayNumber(large, { decimalPlaces: 2 }), '18446744073709551615.00')
