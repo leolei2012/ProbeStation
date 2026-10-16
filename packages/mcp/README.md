@@ -41,7 +41,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `create_alarm_rule` | `register_id, operator, threshold, message?` | 比较解码原始值，支持六种比较符 |
 | `update_alarm_rule` | `rule_id, operator?, threshold?, message?` | 编辑规则，省略字段保留 |
 | `delete_alarm_rule` | `rule_id` | 删除指定规则 |
-| `ask_ai` | `question, context?, device_id?, provider?, model?, effort?` | 复用 AI 设置进行单次咨询，可附最多 200 点缓存；没有工具执行，不修改配置，消耗 API 额度 |
+| `ask_ai` | `question, context?, device_id?, provider?, model?, effort?` | 复用 AI 设置进行单次咨询，可附设备全部点位缓存；没有工具执行，不修改配置，消耗 API 额度 |
 | `start_recording` | `device_id, interval_ms, duration_ms, addresses?` | 连续采样：录 duration_ms，事后 get_recording 回放 |
 | `start_trigger_recording` | `device_id, interval_ms, trigger_address, operator, threshold?, before_ms, after_ms, addresses?` | 触发记录：条件命中缓存前后窗口（operator 支持 > < >= <= == != changed） |
 | `get_recording` | `recording_id` | 取录制完整采样序列（原始 16 位字） |
@@ -73,7 +73,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
   触发 `config/changed` 事件 → api 经 WS 广播 → 前端刷新设备/寄存器列表。
 - 因此 MCP 连接/断开设备时，Web UI 的「已连接/未连接」徽标会实时同步，无需手动刷新。
 
-`ask_ai` 依赖 REST/AI 服务和已保存的提供商设置。回答返回 answer、provider、model、effort、elapsedMs；单次调用不加入 UI 聊天历史，调用方提供后续上下文。设备配置和快照若指定会发送至选定提供商；模型建议不等于实际设备事实。调用约 55 秒超时，错误不返回 API 密钥或提供商原始错误正文。
+`ask_ai` 依赖 REST/AI 服务和已保存的提供商设置。回答返回 answer、provider、model、effort、elapsedMs；单次调用不加入 UI 聊天历史，调用方提供后续上下文。设备配置和快照若指定会发送至选定提供商；模型建议不等于实际设备事实。软件不设置调用超时，错误不返回 API 密钥或提供商原始错误正文。
 
 ## 安全（TODO）
 

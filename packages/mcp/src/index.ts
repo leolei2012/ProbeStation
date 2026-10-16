@@ -598,8 +598,8 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, rule_id: args.rule_id }) }] }
     })
     server.registerTool('ask_ai', {
-      title: 'Ask configured AI', description: '向软件设置中保存的 AI 提问，复用提供商认证；可指定 provider/model/effort，并附 context 或 device_id（最多200点配置与缓存快照）。单次咨询，无工具执行、不修改配置，不加入界面聊天。会消耗提供商 API 额度。回答是模型建议，不能当作已验证的设备事实。',
-      inputSchema: { question: zz.string().min(1).max(8000), context: zz.string().min(1).max(30000).optional(), device_id: zz.number().int().positive().optional(), provider: zz.string().optional(), model: zz.string().optional(), effort: zz.enum(['default', 'off', 'max', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional() },
+      title: 'Ask configured AI', description: '向软件设置中保存的 AI 提问，复用提供商认证；可指定 provider/model/effort，并附 context 或 device_id（全部点位配置与缓存快照）。单次咨询，无工具执行、不修改配置，不加入界面聊天。会消耗提供商 API 额度。回答是模型建议，不能当作已验证的设备事实。',
+      inputSchema: { question: zz.string().min(1), context: zz.string().min(1).optional(), device_id: zz.number().int().positive().optional(), provider: zz.string().optional(), model: zz.string().optional(), effort: zz.enum(['default', 'off', 'max', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional() },
     }, async args => {
       const api = ctx.get('api', false)
       if (!api) throw new Error('AI 服务未启动，请启用 REST/AI 服务并配置模型')

@@ -4,14 +4,13 @@ export async function chatResponse(response: Response, signal: AbortSignal, onTe
   if (!response.headers.get('content-type')?.includes('text/event-stream')) {
     const text = await response.text()
     signal.throwIfAborted()
-    if (text.length > 1_000_000) throw new Error('模型响应过大')
     const choice = JSON.parse(text)?.choices?.[0]
     if (choice?.finish_reason === 'length') throw new Error('模型输出不完整，请缩小问题范围')
     return choice?.message
   }
   if (!response.body) throw new Error('模型返回了空数据流')
   const reader = response.body.getReader(), decoder = new TextDecoder()
-  let buffer = '', size = 0, content = '', reasoning = '', finished = false
+  let buffer = '', content = '', reasoning = '', finished = false
   const calls: any[] = []
   const line = (line: string) => {
     if (!line.startsWith('data:')) return
@@ -28,7 +27,7 @@ export async function chatResponse(response: Response, signal: AbortSignal, onTe
     if (d.content) { content += d.content; onText?.(d.content) }
     if (d.reasoning_content) reasoning += d.reasoning_content
     for (const c of d.tool_calls ?? []) {
-      if (!Number.isInteger(c.index) || c.index < 0 || c.index > 12) throw new Error('无效工具序号')
+      if (!Number.isInteger(c.index) || c.index < 0 || !Number.isSafeInteger(c.index)) throw new Error('无效工具序号')
       const target = calls[c.index] ??= { id: '', type: 'function', function: { name: '', arguments: '' } }
       if (c.id) target.id += c.id
       if (c.function?.name) target.function.name += c.function.name
@@ -40,8 +39,6 @@ export async function chatResponse(response: Response, signal: AbortSignal, onTe
       signal.throwIfAborted()
       const chunk = await reader.read()
       if (chunk.done) break
-      size += chunk.value.length
-      if (size > 1_000_000) throw new Error('模型响应过大')
       buffer += decoder.decode(chunk.value, { stream: true })
       const lines = buffer.split('\n'); buffer = lines.pop()!
       for (const value of lines) line(value.trimEnd())

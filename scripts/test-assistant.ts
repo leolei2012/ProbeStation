@@ -9,6 +9,7 @@ const dir = mkdtempSync(join(tmpdir(), 'probestation-ai-test-'))
 const device: any = { id: 1, name: '台架', pollIntervalMs: 1000, timeoutMs: 3000 }
 const reg = { id: 10, objectId: 1, groupId: 2, alias: '计数', dataType: 'uint32', functionCode: 3, startAddress: 0, factor: 1, offset: 0 }
 const logs: string[] = []
+let historyCount = 1
 const cfg = {
   getObject: (id: number) => id === 1 ? device : id === 3 ? { id: 3, name: '其他设备' } : undefined,
   listObjects: () => [device, { id: 3, name: '其他设备' }],
@@ -19,7 +20,7 @@ const cfg = {
 }
 const store = {
   getLatestByObjectAll: () => ({ 'holding-register:0': { rawValue: 1, timestamp: '2026-10-06 10:00:00', quality: 'good' }, 'holding-register:1': { rawValue: 2, timestamp: '2026-10-06 10:00:00', quality: 'good' } }),
-  queryWithOffset: async (_id: number, address: number) => [{ ts: '2026-10-06 10:00:00', timestampMs: 1791242400000, rawValue: address === 0 ? 1 : 2, quality: 'good' }],
+  queryWithOffset: async (_id: number, address: number) => Array.from({ length: historyCount }, (_, i) => ({ ts: '2026-10-06 10:00:00', timestampMs: 1791242400000 + i, rawValue: address === 0 ? 1 : 2, quality: 'good' })),
   statsByObject: async () => ({ totalRows: 2 }),
 }
 let responses: any[] = []
@@ -70,6 +71,12 @@ try {
   assert(s.entries.some((e: any) => e.role === 'tool' && e.content.includes('台架') && !e.content.includes('其他设备')))
   s = await turn(id, call('get_snapshot', { device_id: 1 }))
   assert(s.entries.at(-2).content.includes('65538'))
+  historyCount = 600
+  s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-01T00:00:00Z', end: '2026-10-10T00:00:00Z' }))
+  const completeHistory = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
+  assert.equal(completeHistory.points.length, 600)
+  assert.equal(completeHistory.truncated, false)
+  historyCount = 1
   s = await turn(id, call('get_snapshot', { device_id: 3 }))
   assert(s.entries.at(-2).content.includes('超出当前会话'))
   s = await turn(id, call('write_register', { device_id: 1, address: 0, value: 5 }))
@@ -107,6 +114,15 @@ try {
   await request('POST', '/settings', { baseUrl: 'https://different.example/v1', model: 'test' })
   assert.equal((await request('GET', '/settings')).json().hasKey, false)
   mode = 'normal'
+  const longChainId = await session()
+  responses = Array.from({ length: 8 }, () => ({ content: null, tool_calls: Array.from({ length: 20 }, (_, i) => ({ id: 'batch-' + Math.random(), type: 'function', function: { name: 'list_devices', arguments: '{}' } })) }))
+  responses.push({ content: '长任务完成' })
+  assert.equal((await request('POST', `/sessions/${longChainId}/messages`, { message: '查询完整数据' })).statusCode, 200)
+  let longState: any
+  for (let n = 0; n < 300; n++) { longState = (await request('GET', `/sessions/${longChainId}`)).json(); if (!longState.running) break; await new Promise(r => setTimeout(r, 5)) }
+  assert(!longState.running && !longState.error, JSON.stringify(longState.error))
+  assert.equal(longState.entries.filter((e: any) => e.role === 'tool').length, 160, 'more than 12 tools and 6 rounds complete')
+  assert.equal(longState.entries.at(-1).content, '长任务完成')
   const compactId = await session()
   await turn(compactId, call('list_devices', {}))
   await turn(compactId, call('get_snapshot', { device_id: 1 }))
@@ -131,9 +147,12 @@ try {
   const attached = await turn(attachmentId, { content: '已读取附件' }, { attachments: [attachment] })
   assert(attached.entries.some((e: any) => e.content.includes('sample.csv')))
   assert(sent.at(-1).messages.some((m: any) => typeof m.content === 'string' && m.content.includes('time,value')))
-  assert.equal((await request('POST', `/sessions/${attachmentId}/messages`, { message: 'test', attachments: Array(5).fill(attachment) })).statusCode, 400)
+  assert(!(await turn(attachmentId, { content: '附件已读取' }, { attachments: Array(5).fill(attachment) })).error)
   assert.equal((await request('POST', `/sessions/${attachmentId}/messages`, { message: 'test', attachments: [{ name: 'fake.png', data: attachment.data }] })).statusCode, 400)
-  assert.equal((await request('POST', `/sessions/${attachmentId}/messages`, { message: 'test', attachments: [{ name: 'large.txt', data: Buffer.alloc(20001, 65).toString('base64') }] })).statusCode, 400)
+  assert(!(await turn(attachmentId, { content: '文本已读取' }, { attachments: [{ name: 'large.txt', data: Buffer.alloc(20001, 65).toString('base64') }] })).error)
+  const huge = await turn(attachmentId, { content: '完整回答：' + 'A'.repeat(1_100_000) }, { attachments: [{ name: 'huge.txt', data: Buffer.alloc(7 * 1024 * 1024, 65).toString('base64') }] })
+  assert(!huge.error, huge.error)
+  assert(huge.entries.at(-1).content.length > 1_000_000, 'large request bodies and model responses are not rejected')
   const png = { name: 'plot.png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=' }
   await turn(attachmentId, { content: '图片已读取' }, { attachments: [png] })
   assert(sent.at(-1).messages.some((m: any) => Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url' && c.image_url.url.includes(png.data))))

@@ -112,14 +112,11 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
           attachmentLock.current = true
           setError(''); setReadingFiles(true)
           try {
-            if (attachments.length + files.length > 4) throw new Error('每条消息最多添加 4 个附件')
-            if (attachments.reduce((n, f) => n + f.size, 0) + files.reduce((n, f) => n + f.size, 0) > 6 * 1024 * 1024) throw new Error('附件总大小不能超过 6 MB')
             const next = await Promise.all(files.map(async file => {
               const imageExt = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' } as Record<string, string>)[file.type]
               const name = imageExt && !/\.(png|jpe?g|webp)$/i.test(file.name) ? `${file.name || '粘贴图片'}.${imageExt}` : file.name
               if (!/\.(png|jpe?g|webp|txt|md|csv|json|log|yaml|yml|xml|ini|c|h|cpp|py|js|ts)$/i.test(name)) throw new Error(`${name}：暂不支持此附件格式`)
-              const isImage = /\.(png|jpe?g|webp)$/i.test(name)
-              if (!file.size || file.size > (isImage ? 2 * 1024 * 1024 : 20000)) throw new Error(`${file.name}：图片限 2 MB，文本限 20 KB，不能上传空文件`)
+              if (!file.size) throw new Error(`${file.name}：不能上传空文件`)
               const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = () => reject(new Error('读取附件失败')); reader.readAsDataURL(file) })
               return { name, size: file.size, data }
             }))
@@ -160,7 +157,7 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
           void addAttachments(files)
         }} aria-label="给 AI 助手的消息" placeholder={pending ? '请先确认或拒绝上方修改' : '询问数据或描述配置修改；可粘贴附件，输入 / 查看命令…'} value={input} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!active && !pending && selectedConfigured && model) void send() } }} onChange={e => setInput(e.target.value)} disabled={!!active || pending} />
         <div className="ai-composer-toolbar">
-          <button type="button" className="ai-new-chat" aria-label="添加附件" title="添加图片、文本、CSV 或日志（最多 4 个）" disabled={!!active || pending} onClick={() => fileInput.current?.click()}>＋</button>
+          <button type="button" className="ai-new-chat" aria-label="添加附件" title="添加图片、文本、CSV 或日志" disabled={!!active || pending} onClick={() => fileInput.current?.click()}>＋</button>
           <span className="ai-toolbar-spacer" />
           <AssistantModelPicker provider={provider} model={model} effort={effort} providers={providers} configured={configured} disabled={!!active} onSelect={(p, m) => { setProvider(p); setModel(m); setEffort('default') }} onEffort={setEffort} />
           {session?.running ? <button type="button" className="ai-send" aria-label="停止生成" disabled={busy} onClick={() => void act(async () => { await request('/sessions/' + session.id + '/stop', {}) })}>■</button> : <button className="ai-send" aria-label="发送消息" disabled={!!active || (!input.trim() && !attachments.length) || pending || !selectedConfigured || !model}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6" /></svg></button>}

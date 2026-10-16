@@ -1445,7 +1445,7 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
   if (!hasData) { low = 0; high = 1 }
   const pad = low === high ? Math.max(1, Math.abs(low) * .05) : (high - low) * .08
   low -= pad; high += pad
-  const left = 70, top = 16, bottom = 32, right = 16
+  const left = 70, top = 16, bottom = 58, right = 16
   const plotWidth = Math.max(1, size.w - left - right), plotHeight = Math.max(1, size.h - top - bottom)
   const x = (time: number) => left + (time - startTime) / (endTime - startTime) * plotWidth
   const y = (value: number) => top + (high - value) / (high - low) * plotHeight
@@ -1458,7 +1458,14 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
     }
     return path
   }
-  const cursorTime = hover === null ? null : startTime + hover * (endTime - startTime)
+  const cursorTime = hover
+  const liveReadings = series.map(s => {
+    const at = cursorTime ?? endTime
+    let sample: [number, number | null] | undefined
+    for (const p of visible.buffer[s.r.id]?.points ?? []) if (p[0] <= at) sample = p
+    const value = sample && at - sample[0] <= threshold ? curveValue(sample[1], s.r, valueMode) : null
+    return { id: s.r.id, name: s.r.alias || '#' + s.r.startAddress, address: s.r.startAddress, color: s.color, value: value === null ? '—' : displayNumber(value, valueMode === 'physical' ? s.r : undefined) + (valueMode === 'physical' && s.r.unit ? ' ' + s.r.unit : ''), time: value !== null && sample ? sample[0] : null, point: sample && value !== null ? [sample[0], value] as [number, number] : null }
+  })
   const clear = () => {
     buffer.current = Object.fromEntries(Object.entries(buffer.current).map(([id, track]) => [id, { ...track, points: [] }]))
     setFrame({ buffer: buffer.current, now: Date.now() }); setFrozen(null); setHover(null)
@@ -1475,28 +1482,51 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
     </div>
     <p className="chart-hint">{t('liveCurveHint')}</p>
     <div className="chart-wrap">
+      <ChartReadout t={t} time={cursorTime} rows={liveReadings} />
       <div className="live-curve-plot" ref={setPlot}>
         <svg width="100%" height="100%" role="img" aria-label={t('liveCurve')}
-          onMouseMove={e => { const rect = e.currentTarget.getBoundingClientRect(); setHover(Math.max(0, Math.min(1, (e.clientX - rect.left - left) / plotWidth))) }} onMouseLeave={() => setHover(null)}>
+          style={{ touchAction: 'pan-y' }}
+          onPointerDown={e => { if (e.pointerType !== 'mouse') e.currentTarget.setPointerCapture(e.pointerId); const rect = e.currentTarget.getBoundingClientRect(); setHover(startTime + Math.max(0, Math.min(1, (e.clientX - rect.left - left) / plotWidth)) * (endTime - startTime)) }}
+          onPointerMove={e => { const rect = e.currentTarget.getBoundingClientRect(); setHover(startTime + Math.max(0, Math.min(1, (e.clientX - rect.left - left) / plotWidth)) * (endTime - startTime)) }}>
           {yTicks(low, high, 5).map(v => <g key={v}><line x1={left} x2={size.w - right} y1={y(v)} y2={y(v)} stroke="var(--border-1)" /><text x={left - 9} y={y(v) + 4} textAnchor="end" fill="var(--text-3)" fontSize={11}>{tickNum(v)}</text></g>)}
-          {timeTicks(startTime, endTime, Math.max(2, Math.floor(plotWidth / 110))).map(time => <text key={time} x={x(time)} y={size.h - 9} textAnchor="middle" fill="var(--text-3)" fontSize={11}>{tickTime(time, endTime - startTime)}</text>)}
+          {timeTicks(startTime, endTime, Math.max(2, Math.floor(plotWidth / 110))).map(time => <text key={time} x={x(time)} y={size.h - bottom + 20} textAnchor="middle" fill="var(--text-3)" fontSize={11}>{tickTime(time, endTime - startTime)}</text>)}
           {series.map(s => <g key={s.r.id}><path data-live-series={s.r.id} d={pathFor(s.points)} fill="none" stroke={s.color} strokeWidth={1.8} strokeLinejoin="round" />{s.points.length === 1 && s.points[0][1] !== null && <circle cx={x(s.points[0][0])} cy={y(s.points[0][1])} r={3} fill={s.color} />}</g>)}
-          {cursorTime !== null && <line x1={x(cursorTime)} x2={x(cursorTime)} y1={top} y2={size.h - bottom} stroke="var(--text-3)" strokeDasharray="4 4" />}
+          {cursorTime !== null && cursorTime >= startTime && cursorTime <= endTime && <>
+            <line x1={x(cursorTime)} x2={x(cursorTime)} y1={top} y2={size.h - bottom} stroke="var(--text-3)" strokeDasharray="4 4" />
+            {liveReadings.filter(r => r.point && r.point[0] >= startTime && r.point[0] <= endTime).map(r => <circle key={r.id} cx={x(r.point![0])} cy={y(r.point![1])} r={3.5} fill={r.color} stroke="var(--surface)" strokeWidth={1.5} />)}
+            <ChartCursorTime time={cursorTime} x={x(cursorTime)} width={size.w} y={size.h - 24} />
+          </>}
         </svg>
         {(!hasData || chosen.length === 0) && <div className="live-curve-empty">{t(candidates.length === 0 ? 'curveNoNumeric' : chosen.length === 0 ? 'histNoRegs' : 'curveWaiting')}</div>}
       </div>
-      <div className="live-curve-legend">
-        {cursorTime !== null && <span className="point-time">{t('curveTime')}: {tickTime(cursorTime, seconds * 1000)}</span>}
-        {series.map(s => {
-          const at = cursorTime ?? endTime
-          let sample: [number, number | null] | undefined
-          for (const p of s.points) if (p[0] <= at) sample = p
-          const value = sample && at - sample[0] <= threshold ? sample[1] : null
-          return <span key={s.r.id} className="live-legend-value"><i style={{ background: s.color }} /><span>{s.r.alias || `#${s.r.startAddress}`} <small>({s.r.startAddress})</small></span><strong>{value == null ? '—' : displayNumber(value, valueMode === 'physical' ? s.r : undefined) + (valueMode === 'physical' && s.r.unit ? ' ' + s.r.unit : '')}</strong></span>
-        })}
-      </div>
+
     </div>
     <p className="chart-hint live-curve-footnote">{t(valueMode === 'physical' ? 'livePhysicalHint' : 'liveRawHint')}{mixedUnits && ' ' + t('mixedUnitsHint')}</p>
+  </div>
+}
+
+function chartCursorLabel(time: number, short = false) {
+  const date = new Date(time)
+  const text = formatLocalTs(date.toISOString())
+  return (short ? text.slice(-8) : text) + '.' + String(date.getMilliseconds()).padStart(3, '0')
+}
+
+function ChartCursorTime({ time, x, width, y }: { time: number; x: number; width: number; y: number }) {
+  const labelWidth = Math.min(width - 8, width < 500 ? 112 : 192)
+  const left = Math.max(4, Math.min(width - labelWidth - 4, x - labelWidth / 2))
+  return <g className="chart-cursor-time" pointerEvents="none" data-cursor-time={time}>
+    <rect x={left} y={y} width={labelWidth} height={22} rx={5} fill="var(--text-1)" />
+    <text x={left + labelWidth / 2} y={y + 15} textAnchor="middle" fill="var(--bg)" fontSize={11}>{chartCursorLabel(time, width < 500)}</text>
+  </g>
+}
+
+function ChartReadout({ t, time, rows }: { t: T; time: number | null; rows: { id: number; name: string; address: number; color: string; value: string; time: number | null }[] }) {
+  return <div className="chart-readout" role="group" aria-label={t('histNearest')}>
+    <div className="chart-readout-heading"><span>{time === null ? t('lastSample') : t('curveTime')}</span>{time !== null && <time>{chartCursorLabel(time)}</time>}</div>
+    <div className="chart-readout-items">{rows.map(row => <div className="chart-readout-item" key={row.id}>
+      <i style={{ background: row.color }} /><span className="chart-readout-name" title={row.name + ' [' + row.address + ']'}>{row.name}</span><strong title={row.value}>{row.value}</strong>
+      <time>{row.time === null ? t('histEmpty') : formatLocalTs(new Date(row.time).toISOString())}</time>
+    </div>)}</div>
   </div>
 }
 
@@ -1528,7 +1558,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
   useEffect(() => () => observer.current?.disconnect(), [])
   const start = view?.start ?? range.start, end = view?.end ?? range.end
   const span = Math.max(1, end - start)
-  const L = 72, R = 18, T = 16, B = 34
+  const L = 72, R = 18, T = 16, B = 58
   const pw = Math.max(1, size.w - L - R), ph = Math.max(1, size.h - T - B)
   const x = (time: number) => L + (time - start) / span * pw
   const visibleSeries = series.map(s => {
@@ -1574,7 +1604,12 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
     const rect = e.currentTarget.getBoundingClientRect()
     return yMax - Math.max(0, Math.min(1, (e.clientY - rect.top - T) / ph)) * ySpan
   }
-  const tooltipRows = hover === null ? [] : visibleSeries.filter(s => !hidden.has(s.id)).map(s => ({ ...s, point: nearestHistorySample(s.samples, hover) }))
+  const readoutRows = visibleSeries.filter(s => !hidden.has(s.id)).map(s => {
+    const reg = registers.find(r => r.id === s.id)
+    const point = hover === null ? s.samples.at(-1) ?? null : nearestHistorySample(s.samples, hover)
+    const valid = point != null && (hover === null || Math.abs(point[0] - hover) <= s.gapMs / 2) && point[1] !== null
+    return { id: s.id, name: reg?.alias || '#' + (reg?.startAddress ?? s.id), address: reg?.startAddress ?? s.id, color: s.color, value: valid ? reading(point![1]!, reg) : '—', time: valid ? point![0] : null, point: valid ? point as [number, number] : null }
+  })
   if (status === 'loading') return <div className="hist-empty" role="status">{t('histLoading')}</div>
   if (status === 'error') return <div className="hist-empty warn" role="alert">{t('histError')}: {error}</div>
   if (selected.size === 0) return <div className="hist-empty">{t('histNoRegs')}</div>
@@ -1597,9 +1632,10 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
     </div>
     <p className="chart-hint">悬停查看读数 · 横向拖动放大时间，纵向拖动放大 Y 轴，斜向框选同时放大两轴 · 双击恢复全范围</p>
     <div className="history-chart-range">{formatLocalTs(new Date(start).toISOString())} — {formatLocalTs(new Date(end).toISOString())}</div>
+    <ChartReadout t={t} time={hover} rows={readoutRows} />
     <div className="history-chart-plot" ref={setPlot}>
       <svg width="100%" height="100%" role="img" aria-label={t('tabCurve')} style={{ touchAction: 'none' }}
-        onPointerDown={e => { if (e.button !== 0) return; const time = pointerTime(e), value = pointerValue(e); dragRef.current = { start: time, end: time, fromY: value, toY: value }; setDrag(dragRef.current); setHover(null); e.currentTarget.setPointerCapture(e.pointerId) }}
+        onPointerDown={e => { if (e.button !== 0) return; if (e.pointerType === 'touch') { setHover(pointerTime(e)); e.currentTarget.setPointerCapture(e.pointerId); return }; const time = pointerTime(e), value = pointerValue(e); dragRef.current = { start: time, end: time, fromY: value, toY: value }; setDrag(dragRef.current); setHover(null); e.currentTarget.setPointerCapture(e.pointerId) }}
         onPointerMove={e => { const time = pointerTime(e); if (dragRef.current) { dragRef.current.end = time; dragRef.current.toY = pointerValue(e); setDrag({ ...dragRef.current }) } else setHover(time) }}
         onPointerUp={e => {
           const selection = dragRef.current
@@ -1616,22 +1652,21 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
         }}
         onPointerCancel={() => { dragRef.current = null; setDrag(null) }}
         onLostPointerCapture={() => { dragRef.current = null; setDrag(null) }}
-        onPointerLeave={() => { if (!dragRef.current) setHover(null) }}
         onDoubleClick={() => { setView(null); setYView(null); setHover(null) }}>
         <defs><clipPath id={clipId}><rect x={L} y={T} width={pw} height={ph} /></clipPath></defs>
         {yTicks(yMin, yMax, 5).map(value => <g key={value}><line x1={L} x2={size.w - R} y1={y(value)} y2={y(value)} stroke="var(--border-1)" /><text x={L - 8} y={y(value) + 4} textAnchor="end" fontSize={11} fill="var(--text-3)">{tickNum(value)}{relative ? '%' : ''}</text></g>)}
-        {timeTicks(start, end, Math.max(2, Math.floor(pw / 110))).map(time => <text key={time} x={x(time)} y={size.h - 10} textAnchor="middle" fontSize={11} fill="var(--text-3)">{tickTime(time, span)}</text>)}
+        {timeTicks(start, end, Math.max(2, Math.floor(pw / 110))).map(time => <text key={time} x={x(time)} y={size.h - B + 20} textAnchor="middle" fontSize={11} fill="var(--text-3)">{tickTime(time, span)}</text>)}
         <g clipPath={`url(#${clipId})`}>
           {visibleSeries.filter(s => !hidden.has(s.id)).map(s => <g key={s.id}><path data-history-series={s.id} d={pathFor(s)} stroke={s.color} fill="none" strokeWidth={1.8} />{s.samples.filter(p => p[1] !== null).length <= 1 && s.samples.filter((p): p is [number, number] => p[1] !== null).map(p => <circle key={p[0]} cx={x(p[0])} cy={y(displayValue(p[1], s))} r={3} fill={s.color} />)}</g>)}
-          {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={T} y2={size.h - B} stroke="var(--text-3)" strokeDasharray="4 4" />}
+          {hover !== null && !drag && <>
+            <line x1={x(hover)} x2={x(hover)} y1={T} y2={size.h - B} stroke="var(--text-3)" strokeDasharray="4 4" />
+            {readoutRows.filter(r => r.point).map(r => { const s = visibleSeries.find(s => s.id === r.id)!; return <circle key={r.id} cx={x(r.point![0])} cy={y(displayValue(r.point![1], s))} r={3.5} fill={r.color} stroke="var(--surface)" strokeWidth={1.5} /> })}
+          </>}
           {drag && <rect className="zoom-box" x={Math.abs(x(drag.end) - x(drag.start)) > 8 ? x(Math.min(drag.start, drag.end)) : L} y={Math.abs(y(drag.toY) - y(drag.fromY)) > 8 ? y(Math.max(drag.fromY, drag.toY)) : T} width={Math.abs(x(drag.end) - x(drag.start)) > 8 ? Math.abs(x(drag.end) - x(drag.start)) : pw} height={Math.abs(y(drag.toY) - y(drag.fromY)) > 8 ? Math.abs(y(drag.toY) - y(drag.fromY)) : ph} />}
         </g>
+        {hover !== null && !drag && <ChartCursorTime time={hover} x={x(hover)} width={size.w} y={size.h - 24} />}
       </svg>
       {!anyVisible && <div className="live-curve-empty">{t('histNoVisible')}</div>}
-      {hover !== null && !drag && <div className="history-tooltip" style={{ left: Math.max(4, Math.min(size.w - 265, x(hover) + 12)) }}>
-        <strong>{t('histNearest')}</strong>
-        {tooltipRows.map(s => { const reg = registers.find(r => r.id === s.id); const point = s.point; const valid = point && Math.abs(point[0] - hover) <= s.gapMs / 2; return <div key={s.id}><span style={{ color: s.color }}>{reg?.alias || `#${reg?.startAddress ?? s.id}`}</span><b>{valid && point[1] !== null ? reading(point[1], reg) : '—'}</b><small>{valid ? formatLocalTs(new Date(point[0]).toISOString()) : t('histEmpty')}</small></div> })}
-      </div>}
     </div>
     <div className="history-legend-head"><span>{t('histLegendHint')}</span><span>{t('histStatsHint')}</span></div>
     <div className="history-legend">

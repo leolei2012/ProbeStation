@@ -65,7 +65,7 @@ try {
   assert(state.entries.some((e: any) => e.content.includes('已压缩上下文')))
   assert(requests[1].messages.some((m: any) => m.content.includes('较早对话摘要')))
   assert(requests[1].messages.at(-1).content.includes(recent), 'latest whole turn remains intact')
-  assert(requests[0].max_tokens <= 2048, 'reserve fits small windows')
+  assert.equal(requests[0].max_tokens, undefined, 'custom provider controls output length')
   assert.equal((await app.inject({ method: 'POST', url: '/api/ai/settings', headers, payload: { baseUrl: 'https://model.example/v1', model: 'test', contextWindow: 10 } })).statusCode, 400)
   console.log('ASSISTANT CONTEXT OK: model capacities, long input, many messages, unknown windows, automatic compaction and latest-turn preservation')
 } finally { await app.close() }
