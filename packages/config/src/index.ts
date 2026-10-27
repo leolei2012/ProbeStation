@@ -1,12 +1,17 @@
 import net from 'node:net'
 import type { Context } from 'cordis'
 import z from 'schemastery'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
+import { parseConfigBackup, type ConfigBackup } from './backup.ts'
 
 export const name = 'config'
+
+declare module 'cordis' {
+  interface Events { 'config/changed'(payload: { scope: string; id?: number }): void }
+}
 
 export interface Config { dbPath: string }
 export const Config: z<Config> = z.object({ dbPath: z.string() })
@@ -27,6 +32,7 @@ const GROUP_MAP: Record<string, string> = { name: 'name', slaveId: 'slave_id', f
 const REGISTER_MAP: Record<string, string> = { alias: 'alias', functionCode: 'function_code', startAddress: 'start_address', dataType: 'data_type', unit: 'unit', factor: 'factor', offset: 'offset', enumJson: 'enum_json', decimalPlaces: 'decimal_places' }
 
 export class ConfigStore {
+  private restoring = false
   private db: DatabaseSync
   private dbPath: string
 
@@ -37,6 +43,7 @@ export class ConfigStore {
 
   /** 元数据变更后回调（供上层广播 config/changed，让前端/MCP 状态同步）。 */
   private notify(scope: string, id?: number): void {
+    if (this.restoring) return
     this.onChange?.(scope, id)
   }
 
@@ -325,6 +332,49 @@ export class ConfigStore {
   setFirmwarePath(id: number, filePath: string): void { this.db.prepare('UPDATE firmwares SET file_path = ? WHERE id = ?').run(filePath, id) }
   deleteFirmware(id: number): void { this.db.prepare('DELETE FROM firmwares WHERE id = ?').run(id) }
 
+  exportBackup(): ConfigBackup {
+    const devices = this.listObjects()
+    return { format: 'probestation-config', version: 1, createdAt: new Date().toISOString(), devices,
+      groups: devices.flatMap(d => this.listGroups(d.id)), registers: devices.flatMap(d => this.listRegisters(d.id)), rules: this.listRules() }
+  }
+
+  previewBackup(value: unknown) {
+    const b = parseConfigBackup(value)
+    // Run the exact import path against an isolated database, including device/rule validation.
+    const scratch = new ConfigStore({ dbPath: ':memory:' })
+    try { scratch.restoreBackup(b) } finally { scratch.db.close() }
+    const names = new Set(this.listObjects().map(d => d.name))
+    return { devices: b.devices.map(d => ({ name: d.name, mode: d.mode, transport: d.transport, endpoint: d.transport === 'rtu' ? d.serialPath : `${d.ip}:${d.port}`, sameName: names.has(d.name) })),
+      counts: { devices: b.devices.length, groups: b.groups.length, registers: b.registers.length, rules: b.rules.length } }
+  }
+
+  /** Additive atomic restore; new IDs isolate existing history and every imported device starts paused. */
+  restoreBackup(value: unknown) {
+    const b = parseConfigBackup(value), devices = new Map<number, number>(), groups = new Map<number, number>(), registers = new Map<number, number>()
+    this.db.exec('BEGIN IMMEDIATE')
+    this.restoring = true
+    try {
+      for (const d of b.devices) {
+        const next = this.createObject(d.name, d.ip, d.port, d.mode, d)
+        this.updateObject(next.id, { isActive: 0 })
+        devices.set(d.id, next.id)
+      }
+      for (const g of b.groups) {
+        const next = this.createGroup(devices.get(g.objectId)!, g.name, g.functionCode, g.startAddress, g.quantity, g.mode, g.slaveId)
+        this.updateGroup(next.id, { isActive: g.isActive }); groups.set(g.id, next.id)
+      }
+      for (const r of b.registers) {
+        const next = this.createRegister(groups.get(r.groupId)!, devices.get(r.objectId)!, r.alias, r.functionCode, r.startAddress, r.dataType, r)
+        registers.set(r.id, next.id)
+      }
+      for (const r of b.rules) this.createRule(registers.get(r.registerId)!, r.operator, r.threshold, r.message)
+      this.db.exec('COMMIT')
+    } catch (e) { this.db.exec('ROLLBACK'); throw e }
+    finally { this.restoring = false }
+    this.notify('backup')
+    return { deviceIds: [...devices.values()], devices: devices.size, groups: groups.size, registers: registers.size, rules: b.rules.length }
+  }
+
   /** 元数据计数（供数据统计展示）。 */
   metadataStats(): Record<string, number> {
     const count = (table: string): number => Number((this.db.prepare('SELECT COUNT(*) AS c FROM ' + table).get() as any)?.c ?? 0)
@@ -340,9 +390,13 @@ export class ConfigStore {
 
   private update(table: string, id: number, fields: Record<string, unknown>, mapping: Record<string, string>): void {
     const cols: string[] = []
-    const vals: unknown[] = []
+    const vals: SQLInputValue[] = []
     for (const [key, col] of Object.entries(mapping)) {
-      if (fields[key] !== undefined) { cols.push(`${col} = ?`); vals.push(fields[key]) }
+      const value = fields[key]
+      if (value !== undefined) {
+        if (value !== null && !['string', 'number', 'bigint'].includes(typeof value)) throw Object.assign(new Error('配置字段必须为文本或数值：' + key), { statusCode: 400 })
+        cols.push(`${col} = ?`); vals.push(value as SQLInputValue)
+      }
     }
     if (cols.length === 0) return
     vals.push(id)

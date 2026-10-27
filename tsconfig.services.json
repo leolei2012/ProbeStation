@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.web.json",
+  "include": [
+    "packages/config/src",
+    "packages/store/src",
+    "packages/api/src/curve.ts",
+    "packages/api/src/config-backup.ts"
+  ]
+}

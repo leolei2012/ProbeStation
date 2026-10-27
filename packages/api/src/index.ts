@@ -10,6 +10,8 @@ import { areaForFunction, baseType, encodeRegister, functionCodeForArea, isHexTy
 import ExcelJS from 'exceljs'
 import { registerSlave } from './slave.ts'
 import { registerAssistant } from './assistant.ts'
+import { registerCurve } from './curve.ts'
+import { registerConfigBackup } from './config-backup.ts'
 
 /** 把 exceljs 单元格转成字符串（处理公式/数字/文本）。 */
 function xlsxCellText(cell: any): string {
@@ -87,6 +89,8 @@ export function apply(ctx: Context, config: Config): void {
 
     fastify.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
     registerAssistant(fastify, { cfg, store, poller }, dataDir)
+    registerCurve(fastify, cfg, store)
+    registerConfigBackup(fastify, cfg)
     registerSlave(fastify, ctx.get('slave', false))
 
     // ── 固件上传（OTA，PRD 07）──────────────────────────────

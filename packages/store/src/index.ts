@@ -1,7 +1,8 @@
 import type { Context } from 'cordis'
 import z from 'schemastery'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
-import { localTs, type ModbusArea } from '@probebench/core'
+import { localTs, areaForFunction, decodeRegister, registerWidth, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
+import { CurveSampler } from './curve-sampling.ts'
 
 /** Cordis plugin name. */
 export const name = 'store'
@@ -380,6 +381,57 @@ export class DuckDBStore {
         rawValue: Number(r.raw_value),
       }
     })
+  }
+
+  /** Stream coherent decoded samples; memory grows with display buckets, not historical row count. */
+  async queryRegisterCurve(objectId: number, start: string, end: string, registers: Array<{ id: number; functionCode: number; startAddress: number; dataType: string }>, maxPoints = 1200, signal?: AbortSignal) {
+    const startMs = Date.parse(start), endMs = Date.parse(end)
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) throw Object.assign(new Error('时间范围无效'), { statusCode: 400 })
+    const buckets = Math.max(1, Math.min(5000, Math.floor(maxPoints / 5) || 1))
+    const bucketMs = Math.max(1, Math.ceil((endMs - startMs) / buckets))
+    if (!registers.length) return { series: [], sourceSamples: 0, displayedSamples: 0, downsampled: false, complete: true, start, end }
+    await this.ready
+    const conn = await this.instance!.connect()
+    const interrupted = () => conn.interrupt()
+    signal?.addEventListener('abort', interrupted, { once: true })
+    try {
+      signal?.throwIfAborted()
+      const params: Record<string, any> = { objectId, start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString() }
+      const defs = registers.map((r, i) => {
+        Object.assign(params, { ['id' + i]: r.id, ['area' + i]: areaForFunction(r.functionCode as ModbusFunctionCode), ['addr' + i]: r.startAddress, ['width' + i]: registerWidth(r.dataType) })
+        return `($id${i}, $area${i}, $addr${i}, $width${i})`
+      }).join(',')
+      const samplers = new Map(registers.map(r => [r.id, new CurveSampler(startMs, bucketMs)]))
+      const byId = new Map(registers.map(r => [r.id, r]))
+      const result = await conn.stream(`SELECT r.id, date_diff('millisecond', DATE '1970-01-01', p.ts) AS time,
+        list(p.raw_value ORDER BY p.address) AS words, list(p.quality ORDER BY p.address) AS qualities,
+        count(DISTINCT p.address) AS word_count
+        FROM poll_data p JOIN (VALUES ${defs}) AS r(id, area, addr, width)
+        ON p.area = r.area AND p.address >= r.addr AND p.address < r.addr + r.width
+        WHERE p.object_id = $objectId AND p.ts >= $start AND p.ts <= $end
+        GROUP BY r.id, p.ts ORDER BY p.ts, r.id`, params)
+      for await (const rows of result.yieldRowObjects()) {
+        signal?.throwIfAborted()
+        for (const row of rows) {
+          const id = Number(row.id), reg = byId.get(id)!
+          const words = (row.words as any).items.map(Number) as number[]
+          const qualities = (row.qualities as any).items.map(String) as string[]
+          const width = registerWidth(reg.dataType)
+          const coherent = words.length === width && Number(row.word_count) === width && qualities.every(q => q === 'good')
+          const raw = coherent ? decodeRegister(reg.dataType, words) : NaN
+          const number = typeof raw === 'bigint' && (raw > BigInt(Number.MAX_SAFE_INTEGER) || raw < BigInt(Number.MIN_SAFE_INTEGER)) ? NaN : Number(raw)
+          samplers.get(id)!.add({ time: Number(row.time), value: Number.isFinite(number) ? number : null, words, qualities })
+        }
+      }
+      let sourceSamples = 0, displayedSamples = 0
+      const series = registers.map(r => {
+        const sampler = samplers.get(r.id)!, samples = sampler.samples().map(s => [s.time, s.value] as [number, number | null])
+        sourceSamples += sampler.count; displayedSamples += samples.length
+        const intervals = samples.slice(1).map((p, i) => p[0] - samples[i][0]).filter(v => v > 0).sort((a, b) => a - b)
+        return { id: r.id, samples, gapMs: intervals.length ? intervals[Math.floor(intervals.length / 2)] * 3 : null }
+      })
+      return { series, sourceSamples, displayedSamples, downsampled: displayedSamples < sourceSamples, complete: true, start, end }
+    } finally { signal?.removeEventListener('abort', interrupted); conn.disconnectSync() }
   }
 
   /** 单设备数据统计：总行数 / 时间跨度 / 按数据区分布 / 待落盘缓冲（供数据 tab 只显示当前设备）。 */

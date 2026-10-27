@@ -6,13 +6,15 @@ import { AlarmPanel, useAlarmRules } from './AlarmPanel'
 import { ValueReading } from './ValueReading'
 import { physicalValue, displayNumber, curveValue, type ValueMode } from './physical-value'
 import { PointSettingsEditor } from './PointSettingsEditor'
+import { ConfigBackupSettings } from './ConfigBackupSettings'
+import { VirtualTableBody } from './VirtualTableBody'
 import { DeviceIssues, type DataTarget } from './DeviceIssues'
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { showOperationNotice } from './OperationNotifications'
 import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
 import { AssistantSettings } from './AssistantSettings'
-import { decodeHistorySeries, nearestHistorySample, type HistoryPoint } from './history-curve'
+import { decodeHistorySeries, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
 import { sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, staleAfterMs, type Sample } from './observation'
 import { baseType, decodeRawByAddr, decodeRegister, formatNumber, formatRawByAddr, formatRegisterValue, isBinType, isHexType, parseEnum, parseRawRegisterInput, registerWidth } from '../../../packages/core/src/codec.ts'
@@ -39,6 +41,7 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    histCoverage: '当前视窗完整区间：{source} 个采样，显示 {shown} 个读数', histSampled: '峰谷保留降采样，放大自动加载细节', histOriginal: '原始采样',
     alarmDelete: '删除', alarmClose: '关闭',
     alarmLabel: '告警', alarmRules: '告警规则', alarmActive: '{n} 项触发', alarmNormal: '未触发', alarmWaiting: '等待有效数据', alarmNone: '未设置规则', alarmTriggered: '条件触发', alarmUnknown: '{n} 项规则暂无有效数据，设备暂停、通信异常或数据过期时不判断告警。', alarmLoadError: '告警规则加载失败', alarmHelp: '按点位类型解码后的原始值比较，不应用系数、偏移或显示舍入。条件命中时持续提示，恢复后自动消除；同一次持续告警只记录一条日志。', alarmInvalid: '请选择点位，并填写有效的原始值阈值。', alarmAdd: '新增规则', alarmEdit: '编辑规则', alarmPoint: '告警点位', alarmChoose: '选择点位', alarmOperator: '比较条件', alarmThreshold: '原始值阈值', alarmMessage: '告警提示（可选）', alarmMessageHint: '例如：温度过高，请检查散热', alarmCancelEdit: '取消编辑', alarmConfirmDelete: '删除这条告警规则？',
     displayValueMode: '数值显示模式', pointDecimals: '物理值小数位数', pointDecimalsAuto: '自动', displayColumns: '显示列', displayColumnsHint: '原始值与物理值共用一列，至少保留一种数值。设置保存在当前浏览器。', displayColumnsConfigHint: '配置模式保留点位设置列，类型在点位设置中修改。原始值在上、物理值在下。', displayColumnsCompact: '精简显示', displayColumnsAll: '显示全部', livePhysicalHint: '按原始解码值 × 系数 + 偏移绘制，不因小数位数设置舍入曲线；悬停读数显示工程单位。', mixedUnitsHint: '当前曲线包含不同工程单位，数值共用纵轴。建议分开选择点位；历史曲线也可使用相对量程比较趋势。', exportRaw: '导出原始值', physicalHistoryHint: '历史物理值按当前点位系数、偏移计算；不是采样时的配置快照。',
@@ -99,6 +102,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    histCoverage: 'Full visible range: {source} samples, {shown} displayed', histSampled: 'Extrema preserved; zoom reloads detail', histOriginal: 'Original samples',
     alarmDelete: 'Delete', alarmClose: 'Close',
     alarmLabel: 'Alarms', alarmRules: 'Alarm rules', alarmActive: '{n} triggered', alarmNormal: 'Not triggered', alarmWaiting: 'Waiting for valid data', alarmNone: 'No rules configured', alarmTriggered: 'Condition triggered', alarmUnknown: '{n} rules lack valid data. Paused devices, communication faults and stale samples are not evaluated.', alarmLoadError: 'Failed to load alarm rules', alarmHelp: 'Compare decoded raw values without scaling, offsets or display rounding. Show alarms while conditions match and clear when they recover. Log once per continuous alarm.', alarmInvalid: 'Select a point and enter a finite raw threshold.', alarmAdd: 'Add rule', alarmEdit: 'Edit rule', alarmPoint: 'Point', alarmChoose: 'Select a point', alarmOperator: 'Comparison', alarmThreshold: 'Raw threshold', alarmMessage: 'Alarm message (optional)', alarmMessageHint: 'Example: Temperature too high', alarmCancelEdit: 'Cancel editing', alarmConfirmDelete: 'Delete this alarm rule?',
     displayValueMode: 'Value display mode', pointDecimals: 'Physical value decimal places', pointDecimalsAuto: 'Automatic', displayColumns: 'Columns', displayColumnsHint: 'Raw and physical values share one column. Keep at least one value type. Saved in this browser.', displayColumnsConfigHint: 'Point settings remain visible while configuring; edit the type in point settings. Raw values above physical values.', displayColumnsCompact: 'Compact view', displayColumnsAll: 'Show all', livePhysicalHint: 'Plot raw value × factor + offset at full precision. Display precision affects text only; readings include engineering units.', mixedUnitsHint: 'These series use different engineering units on a shared axis. Select them separately, or compare trends using relative ranges in history.', exportRaw: 'Export raw values', physicalHistoryHint: 'Historical physical values use the current point factor and offset, not the configuration at sampling time.',
@@ -289,7 +293,12 @@ function useOperation(t: T) {
 
 function useNow() {
   const [now, setNow] = useState(Date.now)
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer) }, [])
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState !== 'hidden') setNow(Date.now()) }
+    const timer = setInterval(tick, 1000)
+    document.addEventListener('visibilitychange', tick)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick) }
+  }, [])
   return now
 }
 
@@ -796,7 +805,7 @@ function DeviceView({ target, t, device, connected, groups, latest, groupErrors,
       {tab === 2 && <HistoryView target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
-      <div hidden={tab !== 1}><LiveCurve t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
+      <div hidden={tab !== 1}><LiveCurve active={tab === 1} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
       {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f) => { await onEdit(device.id, f); setShowEdit(false) }} />}
     </div>
   )
@@ -902,8 +911,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
           <GroupFold collapsed={collapsed.has(g.id)}>{() => (<div className="register-table-scroll"><table className="reg realtime-table" style={{ minWidth: tableWidth }}>
             <colgroup>{shownColumns.address && <col className="rt-address" />}<col className="rt-description" />{shownColumns.type && <col className="rt-type" />}{showValue && <col className="rt-value" />}{shownColumns.action && <col className="rt-action" />}</colgroup>
             <thead><tr>{shownColumns.address && <th>{t('colAddr')}</th>}<th>{t('colAlias')}</th>{shownColumns.type && <th>{t('colType')}</th>}{showValue && <th className="rt-numeric-cell"><div className="rt-value-stack"><div className="rt-value-line"><span className="rt-value-heading">{t('colValue')}</span></div></div></th>}{shownColumns.action && <th className="rt-action-cell">{t(configuring ? 'pointSettings' : 'write')}</th>}</tr></thead>
-            <tbody>
-              {g.registers.map((r) => {
+            <VirtualTableBody items={g.registers} columns={columnCount}>
+              {(r) => {
                 const rv = views.get(r.id)
                 const state = health(g, r)
                 const words = Array.from({ length: registerWidth(r.dataType) }, (_, i) => latest[device.id + ':' + areaForFunctionCode(g.functionCode) + ':' + (r.startAddress + i)])
@@ -934,9 +943,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
                     {shownColumns.action && <td className="rt-action-cell" data-label={t(configuring ? 'pointSettings' : 'write')}>{configuring ? <div className="point-config-actions"><button className="btn" disabled={rv?.covered} title={rv?.covered ? t('valueCovered') : t('pointSettings')} onClick={() => setSettingsReg(r)}>{t('pointSettingsAction')}</button><button className="btn" disabled={rv?.covered} title={t('alarmRules')} onClick={() => setAlarmReg(r)}>{t('alarmLabel')}</button></div> : writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
                   </tr>
                 )
-              })}
-              {g.registers.length === 0 && <tr><td colSpan={columnCount} className="kv">{t('noRegisters')}</td></tr>}
-            </tbody>
+              }}
+            </VirtualTableBody>
           </table></div>)}</GroupFold>
         </div>
       )})}
@@ -1221,7 +1229,8 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   const [preset, setPreset] = useState<number | null>(60)
   const [page, setPage] = useState(0)
   const [refresh, setRefresh] = useState(0)
-  const [data, setData] = useState<{ points: HistoryPoint[]; total: number; start: string; end: string; mode: string } | null>(null)
+  const [data, setData] = useState<{ points: HistoryPoint[]; series?: HistorySeries[]; sourceSamples?: number; displayedSamples?: number; downsampled?: boolean; total: number; start: string; end: string; mode: string } | null>(null)
+  const [curveRange, setCurveRange] = useState<{ start: number; end: number } | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [showExport, setShowExport] = useState(false)
@@ -1234,25 +1243,29 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   const selectedRegisters = registers.filter(r => selected.has(r.id))
   const startMs = Date.parse(range.start), endMs = Date.parse(range.end)
   const valid = Number.isFinite(startMs) && Number.isFinite(endMs) && startMs < endMs
+  const queryStart = mode === 'chart' && curveRange ? curveRange.start : startMs
+  const queryEnd = mode === 'chart' && curveRange ? curveRange.end : endMs
+  const selectionKey = [...selected].sort((a, b) => a - b).join(',')
   useEffect(() => {
     if (!valid) return
     const controller = new AbortController()
     setStatus('loading'); setError(null)
     const timer = setTimeout(async () => {
       try {
-        const start = new Date(startMs).toISOString(), end = new Date(endMs).toISOString()
-        const path = mode === 'chart' ? 'curve' : 'page'
-        const response = await request(`/api/data/object/${path}?object_id=${device.id}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&page=${page}&page_size=200&max_points=1200`, { signal: controller.signal })
+        const start = new Date(queryStart).toISOString(), end = new Date(queryEnd).toISOString()
+        const path = mode === 'chart' ? 'series' : 'page'
+        const response = await request(`/api/data/object/${path}?object_id=${device.id}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&page=${page}&page_size=200&max_points=1200&register_ids=${encodeURIComponent(selectionKey)}`, { signal: controller.signal })
         if (controller.signal.aborted) return
-        const points: HistoryPoint[] = response.points ?? response
-        setData({ points, total: response.total ?? points.length, start, end, mode }); setStatus('done')
+        const points: HistoryPoint[] = response.points ?? []
+        setData({ ...response, points, series: response.series?.map((s: any) => ({ ...s, gapMs: s.gapMs ?? Infinity })), total: response.total ?? points.length, start, end, mode }); setStatus('done')
       } catch (e) {
         if (!controller.signal.aborted) { setError(e instanceof Error ? e.message : String(e)); setStatus('error') }
       }
     }, 250)
     return () => { clearTimeout(timer); controller.abort() }
-  }, [device.id, startMs, endMs, valid, mode, page, refresh])
-  const changeRange = (start: string, end: string) => { setRange({ start, end }); setPage(0) }
+  }, [device.id, queryStart, queryEnd, valid, mode, page, refresh, selectionKey])
+  useEffect(() => { setCurveRange(null) }, [startMs, endMs])
+  const changeRange = (start: string, end: string) => { setRange({ start, end }); setCurveRange(null); setPage(0) }
   const applyPreset = (minutes: number) => {
     const now = new Date()
     const start = minutes === 0 ? new Date(now.getFullYear(), now.getMonth(), now.getDate()) : new Date(now.getTime() - minutes * 60_000)
@@ -1264,7 +1277,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     const ids = selectedRegisters.map(r => r.id).join(',')
     window.open('/api/export/' + format + '?object_id=' + device.id + '&start=' + new Date(startMs).toISOString() + '&end=' + new Date(endMs).toISOString() + '&tz=' + localTzOffsetMin() + (ids ? '&register_ids=' + ids : ''))
   }
-  const currentStatus = data && (data.mode !== mode || Date.parse(data.start) !== startMs || Date.parse(data.end) !== endMs) && status === 'done' ? 'loading' : status
+  const currentStatus = data && (data.mode !== mode || Date.parse(data.start) !== queryStart || Date.parse(data.end) !== queryEnd) && status === 'done' ? 'loading' : status
   return <div className="history-view">
     <div className="toolbar">
       <div className="seg"><button className={mode === 'table' ? 'selected' : ''} onClick={() => { setMode('table'); setPage(0) }}>{t('histTable')}</button><button className={mode === 'chart' ? 'selected' : ''} onClick={() => { setMode('chart'); setPage(0) }}>{t('tabCurve')}</button></div>
@@ -1282,7 +1295,8 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
       <label className="hist-label">{t('histEnd')}<input className="hist-input" type="datetime-local" step="1" value={range.end} onChange={e => { setPreset(null); changeRange(range.start, e.target.value) }} /></label>
       <button className="btn primary" disabled={!valid || currentStatus === 'loading'} onClick={() => setRefresh(v => v + 1)}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
     </div>
-    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={error} range={{ start: startMs, end: endMs }} onQueryRange={(start, end) => { setPreset(null); changeRange(localInput(new Date(start)), localInput(new Date(end))); setRefresh(v => v + 1) }} /> : <>
+    {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
+    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody sourceSeries={data?.series} onViewportChange={setCurveRange} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={error} range={{ start: startMs, end: endMs }} /> : <>
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
       <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={error} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
     </>}
@@ -1386,8 +1400,8 @@ function tickTime(ts: number, span: number): string {
 }
 
 
-function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
-  t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; threshold: number
+const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, groupErrors, threshold }: {
+  active: boolean; t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; threshold: number
 }) {
   const [expanded, setExpanded] = useState(false)
   const [valueMode, setValueMode] = useValueMode('ps-live-value-mode-' + device.id)
@@ -1413,15 +1427,15 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
   const [frame, setFrame] = useState<{ buffer: CurveBuffer; now: number }>({ buffer: {}, now: Date.now() })
   const [frozen, setFrozen] = useState<typeof frame | null>(null)
   const buffer = useRef<CurveBuffer>({})
-  const inputs = useRef({ chosen, latest, device, groups, groupErrors, threshold })
-  inputs.current = { chosen, latest, device, groups, groupErrors, threshold }
+  const inputs = useRef({ chosen, latest, device, groups, groupErrors, threshold, active, frozen })
+  inputs.current = { chosen, latest, device, groups, groupErrors, threshold, active, frozen }
   useEffect(() => {
     const timer = setInterval(() => {
       const input = inputs.current
       const blocked = new Set(input.groups.filter(g => !input.device.isActive || !g.isActive || input.groupErrors[g.id]).flatMap(g => g.registers.map(r => r.id)))
       const now = Date.now()
       buffer.current = sampleCurve(buffer.current, input.chosen, input.latest, input.device.id, now, input.threshold, blocked)
-      setFrame({ buffer: buffer.current, now })
+      if (input.active && !input.frozen && document.visibilityState !== 'hidden') setFrame({ buffer: buffer.current, now })
     }, 250)
     return () => clearInterval(timer)
   }, [])
@@ -1503,7 +1517,7 @@ function LiveCurve({ t, device, groups, latest, groupErrors, threshold }: {
     </div>
     <p className="chart-hint live-curve-footnote">{t(valueMode === 'physical' ? 'livePhysicalHint' : 'liveRawHint')}{mixedUnits && ' ' + t('mixedUnitsHint')}</p>
   </div>
-}
+})
 
 function chartCursorLabel(time: number, short = false) {
   const date = new Date(time)
@@ -1530,9 +1544,9 @@ function ChartReadout({ t, time, rows }: { t: T; time: number | null; rows: { id
   </div>
 }
 
-function ChartBody({ valueMode, t, registers, selected, pts, status, error, range, onQueryRange }: {
+function ChartBody({ valueMode, t, registers, selected, pts, sourceSeries, status, error, range, onViewportChange }: {
   valueMode: ValueMode; t: T; registers: Register[]; selected: Set<number>; pts: HistoryPoint[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null
-  range: { start: number; end: number }; onQueryRange: (start: number, end: number) => void
+  sourceSeries?: HistorySeries[]; range: { start: number; end: number }; onViewportChange: (view: { start: number; end: number } | null) => void
 }) {
   const [view, setView] = useState<{ start: number; end: number } | null>(null)
   const [yView, setYView] = useState<{ min: number; max: number } | null>(null)
@@ -1544,11 +1558,11 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
   const [size, setSize] = useState({ w: 800, h: 380 })
   const observer = useRef<ResizeObserver | null>(null)
   const clipId = useId()
-  const series = useMemo(() => decodeHistorySeries(registers, pts, selected).map(s => { const r = registers.find(r => r.id === s.id)!; return { ...s, samples: s.samples.map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) } }), [registers, pts, selected, valueMode])
+  const series = useMemo(() => (sourceSeries ?? decodeHistorySeries(registers, pts, selected)).filter(s => selected.has(s.id)).map(s => { const r = registers.find(r => r.id === s.id)!; return { ...s, samples: s.samples.map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) } }), [registers, pts, sourceSeries, selected, valueMode])
   const mixedUnits = valueMode === 'physical' && new Set(registers.filter(r => selected.has(r.id)).map(r => r.unit?.trim() || '')).size > 1
   const reading = (value: number, reg?: Register) => displayNumber(value, valueMode === 'physical' ? reg : undefined) + (valueMode === 'physical' && reg?.unit ? ' ' + reg.unit : '')
   useEffect(() => { setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [valueMode])
-  useEffect(() => { setView(null); setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [pts, range.start, range.end])
+  useEffect(() => { setView(null); setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [range.start, range.end])
   const setPlot = useCallback((el: HTMLDivElement | null) => {
     observer.current?.disconnect()
     if (!el) return
@@ -1594,7 +1608,8 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
   const focusRange = (center: number, width: number) => {
     const clampedWidth = Math.min(range.end - range.start, Math.max(1000, width))
     const left = Math.max(range.start, Math.min(range.end - clampedWidth, center - clampedWidth / 2))
-    setView({ start: left, end: left + clampedWidth }); setHover(null)
+    const next = { start: left, end: left + clampedWidth }
+    setView(next); onViewportChange(next); setHover(null)
   }
   const pointerTime = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -1613,7 +1628,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
   if (status === 'loading') return <div className="hist-empty" role="status">{t('histLoading')}</div>
   if (status === 'error') return <div className="hist-empty warn" role="alert">{t('histError')}: {error}</div>
   if (selected.size === 0) return <div className="hist-empty">{t('histNoRegs')}</div>
-  if (!pts.length) return <div className="hist-empty">{t('histEmpty')}</div>
+  if (!pts.length && !series.some(s => s.samples.length)) return <div className="hist-empty">{t('histEmpty')}</div>
   if (!series.length) return <div className="hist-empty">{t('histNoNumeric')}</div>
   return <div className="chart-wrap history-chart">
     <div className="toolbar history-chart-tools">
@@ -1626,8 +1641,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
       <button className="btn" aria-label="向上移动数值范围" onClick={() => adjustY(1, .5)}>↑</button>
       <button className="btn" aria-label="向下移动数值范围" onClick={() => adjustY(1, -.5)}>↓</button>
       <button className="btn" onClick={() => { setYView(null); setHover(null) }} disabled={!yView}>Y 轴自适应</button>
-      <button className="btn" onClick={() => { setView(null); setYView(null); setHover(null) }} disabled={!view && !yView}>{t('curveReset')}</button>
-      {view && <button className="btn primary" onClick={() => onQueryRange(start, end)}>{t('histQueryZoom')}</button>}
+      <button className="btn" onClick={() => { setView(null); onViewportChange(null); setYView(null); setHover(null) }} disabled={!view && !yView}>{t('curveReset')}</button>
       <label className="issues-filter"><input type="checkbox" checked={relative} onChange={e => { setRelative(e.target.checked); setYView(null) }} />{t('histRelative')}</label>
     </div>
     <p className="chart-hint">悬停查看读数 · 横向拖动放大时间，纵向拖动放大 Y 轴，斜向框选同时放大两轴 · 双击恢复全范围</p>
@@ -1652,7 +1666,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, status, error, rang
         }}
         onPointerCancel={() => { dragRef.current = null; setDrag(null) }}
         onLostPointerCapture={() => { dragRef.current = null; setDrag(null) }}
-        onDoubleClick={() => { setView(null); setYView(null); setHover(null) }}>
+        onDoubleClick={() => { setView(null); onViewportChange(null); setYView(null); setHover(null) }}>
         <defs><clipPath id={clipId}><rect x={L} y={T} width={pw} height={ph} /></clipPath></defs>
         {yTicks(yMin, yMax, 5).map(value => <g key={value}><line x1={L} x2={size.w - R} y1={y(value)} y2={y(value)} stroke="var(--border-1)" /><text x={L - 8} y={y(value) + 4} textAnchor="end" fontSize={11} fill="var(--text-3)">{tickNum(value)}{relative ? '%' : ''}</text></g>)}
         {timeTicks(start, end, Math.max(2, Math.floor(pw / 110))).map(time => <text key={time} x={x(time)} y={size.h - B + 20} textAnchor="middle" fontSize={11} fill="var(--text-3)">{tickTime(time, span)}</text>)}
@@ -1900,6 +1914,7 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose, initialSect
             <div className="settings-line"><div><strong>{t('language')}</strong><p>{lang === 'zh' ? '设置界面显示语言。' : 'Choose your display language.'}</p></div><div className="seg"><button className={lang === 'zh' ? 'selected' : ''} onClick={() => setLang('zh')}>中文</button><button className={lang === 'en' ? 'selected' : ''} onClick={() => setLang('en')}>English</button></div></div>
           </>}
           {section === 'data' && <>
+            <ConfigBackupSettings lang={lang} />
             <div className="settings-line"><div><strong>{t('retentionLabel')}</strong><p>{lang === 'zh' ? '设置历史采样数据的保留时长。' : 'Set how long to retain historical samples.'}</p></div><select aria-label={t('retentionLabel')} value={customRetention !== '' || !retentionPresets.some(([, s]) => s === retention) ? 'custom' : String(retention)} onChange={e => {
               if (e.target.value === 'custom') { setCustomRetention(String(retention)); return }
               setCustomRetention(''); void applyRetention(Number(e.target.value))

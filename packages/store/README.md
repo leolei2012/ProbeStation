@@ -17,7 +17,8 @@
 ```ts
 interface PollPoint {
   objectId: number
-  registerId: number
+  area: 'coil' | 'discrete-input' | 'holding-register' | 'input-register'
+  address: number
   timestamp: string   // ISO 8601
   rawValue: number
   quality: string     // "good" | ...
@@ -26,21 +27,22 @@ interface PollPoint {
 interface Store {
   write(points: PollPoint[]): void                          // 入热缓冲，满批自动 flush
   flush(): Promise<void>                                    // 强制落库
-  getLatest(): Record<number, { rawValue: number; quality: string; timestamp: string }>
-  query(objectId: number, registerId: number, start: string, end: string):
+  getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string }>
+  query(objectId: number, address: number, start: string, end: string, area: ModbusArea):
     Promise<Array<{ ts: string; rawValue: number }>>
 }
 ```
 
 ## 存储布局
 
-- **热层**：`Map<registerId, latest>`，`getLatest()` 零磁盘 IO。
+- **热层**：键为 `objectId:area:address` 的 Map，`getLatest()` 零磁盘 IO，另有单设备快照接口。
 - **冷层**：DuckDB 单表
 
   ```sql
   CREATE TABLE poll_data (
     object_id INTEGER,
-    register_id INTEGER,
+    area VARCHAR,
+    address INTEGER,
     ts TIMESTAMP,
     raw_value DOUBLE,
     quality VARCHAR
@@ -55,14 +57,14 @@ interface Store {
 
 ```ts
 ctx.store.write([
-  { objectId: 9, registerId: 470, timestamp: new Date().toISOString(), rawValue: 1234, quality: 'good' },
+  { objectId: 9, area: 'holding-register', address: 470, timestamp: new Date().toISOString(), rawValue: 1234, quality: 'good' },
 ])
 await ctx.store.flush()
-const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T23:59:59Z')
+const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T23:59:59Z', 'holding-register')
 ```
 
-## 当前限制（TODO）
+## 历史曲线
 
-- `flush()` 用字符串插值拼 SQL，需改为参数化（防注入，当前为内部数值可接受）。
-- `flush()` 用字符串插值拼 SQL，仍需参数化。
-- 降采样（滚动聚合）未实现；保留删除已实现（见上）。
+`queryRegisterCurve(objectId, start, end, registers, maxPoints, signal?)` 使用独立 DuckDB 连接流式读取所选点位的全部区间，按实际采样时间合并完整原始字、解码，再保留桶内首/末值、数值最小/最大值及无效读数。返回 series、sourceSamples、displayedSamples、downsampled、complete。内存中保留显示桶，查询不受旧 `queryObject` 的 20 万行默认值影响；AbortSignal 可中断对应查询。
+
+`queryObjectCurve` 保留旧版每桶各地址最新字的接口，供已有调用兼容；新前端使用解码后的 `queryRegisterCurve`，避免多字异步拼接及峰值丢失。当前降采样为查询时计算，尚无预计算多级聚合表。

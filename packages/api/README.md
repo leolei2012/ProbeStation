@@ -19,6 +19,17 @@ export const inject = ['config', 'store', 'poller']
 
 ## REST 端点
 
+### 配置备份与曲线
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/config/backup` | 下载版本化、可阅读的 JSON 配置；不含历史、固件文件和密钥 |
+| POST | `/api/config/backup/preview` | 校验备份并返回新增数量、设备及同名提示；不写现有配置 |
+| POST | `/api/config/backup/restore` | 事务新增；重映射 ID，保持现有配置与历史，新增设备暂停 |
+| GET | `/api/data/object/series` | object_id/start/end/register_ids/max_points；解码后峰谷采样，覆盖完整视窗并返回样本数量 |
+
+备份 POST 请求体为导出的 JSON，需 `x-probestation-config: 1`；浏览器 Origin 需同源。上传上限 64 MiB。曲线请求取消会中断独立连接上的查询，`register_ids` 仅允许当前设备的点位。实现分别在 `config-backup.ts` 和 `curve.ts`。
+
 ### 设备（monitor_objects）
 | 方法 | 路径 | 说明 |
 |---|---|---|

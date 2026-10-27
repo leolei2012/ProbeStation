@@ -5,7 +5,7 @@ description: 使用 ProbeStation 操作 Modbus TCP/RTU 主站和从站，通过 
 
 # ProbeStation 操作指南
 
-本指南按 2026-10-08 仓库源码核对。先确认用户要操作的服务地址和设备；优先复用运行中的服务。工具自动化优先使用 MCP，缺少 MCP 时使用 REST；界面操作或曲线交互使用 Web UI。
+本指南按 2026-10-27 仓库源码核对。先确认用户要操作的服务地址和设备；优先复用运行中的服务。工具自动化优先使用 MCP，缺少 MCP 时使用 REST；界面操作或曲线交互使用 Web UI。
 
 此目录是可独立分发的 skill。其他 agent 可直接读取本文件；仅放在 `docs` 下不会自动注册到客户端的技能列表。需要自动发现时，将整个 `probestation-operator` 目录复制到目标客户端的 skills 目录。
 
@@ -124,6 +124,7 @@ MCP 用 `list_alarm_rules` 查询，`create_alarm_rule {register_id, operator, t
 | `/api/data/query` | object_id、area、address、start、end、可选 limit |
 | `/api/data/object/page` | object_id、start、end、page（从 0 起）、page_size；按时间戳分页 |
 | `/api/data/object/curve` | object_id、start、end、max_points；分桶后的点 |
+| `/api/data/object/series` | object_id、start、end、register_ids（逗号分隔）、max_points（5–25000，每点位显示预算）；解码后峰谷保留采样，实际毫秒时间戳；series、sourceSamples、displayedSamples、downsampled、complete |
 
 PowerShell 首次只读检查：
 
@@ -134,6 +135,10 @@ Invoke-RestMethod "$probeBase/api/monitor_objects"
 ```
 
 ## 5. Web UI 操作
+
+配置备份入口为「设置 → 数据管理」。GET `/api/config/backup` 导出可阅读的版本化 JSON，包含设备、分组、点位显示设置/枚举及告警，不包含历史、固件、API 密钥或聊天。POST `/api/config/backup/preview` 先校验备份并返回数量及同名提示，POST `/api/config/backup/restore` 以事务新增配置且所有新设备暂停；均使用备份 JSON 请求体及 `x-probestation-config: 1` 请求头。现有 ID 与历史不变，同名设备也会另建。用户要求恢复时先预览，确认目标后执行；不能将配置备份当作整个工作区备份。
+
+历史曲线缩放或平移后自动加载对应区间的细节，顶部注明当前视窗原始采样数及显示点数；峰谷读数使用实际采样时间，降采样不表示仅查询区间开头。桌面大分组使用可见行渲染，查找靠后的点位需滚动表格或使用点位搜索；不能用当前 DOM 行数推断实际点位总数。
 
 在左侧选设备，再按任务选择标签：
 
