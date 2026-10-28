@@ -82,7 +82,7 @@ TypeScript · Cordis 4（插件运行时）· schemastery（配置校验）· js
 ## 冒烟测试
 
 ```bash
-npm run check          # 前端及配置/历史服务类型检查 + 构建 + 14 组无硬件回归测试
+npm run check          # 前端及配置/历史服务类型检查 + 构建 + 15 组无硬件回归测试
 npm run typecheck:web  # 单独检查前端及其引用模块的类型
 npm run typecheck:services # 配置、历史存储和新增接口的类型检查
 npm test               # 纯函数、模拟提供商和临时数据库测试白名单

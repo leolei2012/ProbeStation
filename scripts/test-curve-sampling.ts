@@ -28,7 +28,7 @@ try {
   const otherGroup = cfg.createGroup(other.id, 'Other group', 3, 0, 1)
   const otherReg = cfg.createRegister(otherGroup.id, other.id, 'Other value', 3, 0, 'uint16')
   const conn = await (store as any).ready
-  await conn.run(`INSERT INTO poll_data SELECT $id, 'holding-register', 0, TIMESTAMP '2026-10-01 00:00:00' + i * INTERVAL '1 millisecond', CASE WHEN i = 100001 THEN 60000 WHEN i = 210000 THEN 65000 ELSE 10 END, 'good' FROM range(210001) AS n(i)`, { id: d.id })
+  await conn.run(`INSERT INTO poll_data (object_id, area, address, ts, raw_value, quality) SELECT $id, 'holding-register', 0, TIMESTAMP '2026-10-01 00:00:00' + i * INTERVAL '1 millisecond', CASE WHEN i = 100001 THEN 60000 WHEN i = 210000 THEN 65000 ELSE 10 END, 'good' FROM range(210001) AS n(i)`, { id: d.id })
   for (const [i, value] of [1, -20, 250.5, 2].entries()) {
     const words = encodeRegister('float32-LE', value)
     store.write(words.map((word, offset) => ({ objectId: d.id, area: 'holding-register', address: 1 + offset, rawValue: word, quality: 'good', timestamp: new Date(t + i * 1000).toISOString() })))

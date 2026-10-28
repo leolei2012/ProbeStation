@@ -22,6 +22,7 @@ interface PollPoint {
   timestamp: string   // ISO 8601
   rawValue: number
   quality: string     // "good" | ...
+  batchId?: string | null // 原始响应身份，不生成、不按时间戳推断
 }
 
 interface Store {
@@ -29,14 +30,14 @@ interface Store {
   flush(): Promise<void>                                    // 强制落库
   getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string }>
   query(objectId: number, address: number, start: string, end: string, area: ModbusArea):
-    Promise<Array<{ ts: string; rawValue: number }>>
+    Promise<Array<{ ts: string; rawValue: number; quality: string; batchId: string | null }>>
 }
 ```
 
 ## 存储布局
 
 - **热层**：键为 `objectId:area:address` 的 Map，`getLatest()` 零磁盘 IO，另有单设备快照接口。
-- 热缓存与所有 latest 快照保留可选 `batchId`，供消费者拒绝不同协议响应的多字组合。冷库目前没有响应身份字段，不能仅靠时间相同断言来自同一响应。
+- 热缓存与所有 latest 快照保留可选 `batchId`，供消费者拒绝不同协议响应的多字组合。冷库可空 `batch_id VARCHAR` 原样保存已有身份；缺失/NULL 仍为 NULL，也可能来自现有从站生产者，不能一概认定为旧行。空字符串原样保留，不代表已验证身份。
 - **冷层**：DuckDB 单表
 
   ```sql
@@ -46,11 +47,15 @@ interface Store {
     address INTEGER,
     ts TIMESTAMP,
     raw_value DOUBLE,
-    quality VARCHAR
+    quality VARCHAR,
+    batch_id VARCHAR
   )
   ```
 
-- 批量写入：`INSERT INTO poll_data VALUES (...), (...)`，达到 `flushBatchSize` 自动触发。
+- 批量写入：绑定参数 INSERT，单事务按 500 行分块，独立写连接避免其他查询看见半批数据。COMMIT 成功后才移除缓冲；失败回滚、保留待写行及期间新到行，可再次 flush。后台失败输出错误；`getPersistenceStatus()` 返回 `pendingRows/error`。若回滚失败，结果不确定，会阻止后续写入/重试以待排查。缓冲仍为内存，进程退出不保证未落库数据持久化。
+- 初始化在单事务内检查旧 `register_id`、缺失 `area` 并补可空 `batch_id`；检查所有必需列类型，已有 `batch_id` 必须为无默认值的可空 VARCHAR。反复打开幂等，迁移失败明确拒绝初始化/flush，已知初始化失败后拒绝 write；旧行不生成或回填身份。
+- **新代码下次启动主应用可能自动加列；本轮仅对临时库验收，真实库迁移未做。**
+- `query/queryWithOffset/queryObject/queryObjectPage` 的原始行均保留 `batchId: string | null`，分页仍按原有时间戳语义，不按批次重排。
 - **数据保留**：`cleanup()` 按「全局 `retentionSeconds` + 设备级 `data_retain_seconds` 覆盖」删除过期数据
   （启动时 + 每 `retentionCheckMs` 一次）；`setRetentionSeconds()/getRetentionSeconds()` 可运行时改全局并立即清理。
 
@@ -68,6 +73,12 @@ const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T2
 
 `queryRegisterCurve(objectId, start, end, registers, maxPoints, signal?)` 使用独立 DuckDB 连接流式读取所选点位的全部区间，按实际采样时间合并完整原始字、解码，再保留桶内首/末值、数值最小/最大值及无效读数。返回 series、sourceSamples、displayedSamples、downsampled、complete。内存中保留显示桶，查询不受旧 `queryObject` 的 20 万行默认值影响；AbortSignal 可中断对应查询。
 
-`queryObjectCurve` 保留旧版每桶各地址最新字的接口，供已有调用兼容；新前端使用解码后的 `queryRegisterCurve`，避免多字异步拼接及峰值丢失。当前降采样为查询时计算，尚无预计算多级聚合表。
+`queryObjectCurve` 保留旧版每桶各地址最新字的接口，供已有调用兼容；新前端使用按时间戳解码后保留峰值的 `queryRegisterCurve`，尚未检查响应身份。当前降采样为查询时计算，尚无预计算多级聚合表。
 
 `queryRegisterCurve` 每条 series 的 `summary` 包含完整查询区间内降采样前的 `sourceSamples`、`validSamples`、`invalidSamples`。这是按点位解码后的采样数，多字点位缺字或质量异常计为无效，非有限数或无法精确表示的 64 位整数也计为无效；没有采样的时段不在分母中，有效率不是设备在线率。空区间返回三个零。
+
+## 分阶段兼容边界
+
+本阶段仅持久化和返回原始身份，保持历史曲线、表格、导出及 AI 消费者既有可见行为；它们尚未按 batchId 约束多字解码。旧多字数据显示未知还是兼容显示、统计分母与导出说明等二阶段策略待用户决定，本轮未实施。时间相同不代表同批，NULL 不可静默当作已确认身份。
+
+离线回归：`npx --no-install tsx scripts/test-store-batch.ts`（全为临时库）；`npm run check` 包含 15 组明确安全回归，不会自动发现或运行实机测试。

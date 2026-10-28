@@ -3,6 +3,7 @@ import z from 'schemastery'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 import { localTs, areaForFunction, decodeRegister, registerWidth, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
 import { CurveSampler } from './curve-sampling.ts'
+import { ensurePollDataSchema } from './schema.ts'
 
 /** Cordis plugin name. */
 export const name = 'store'
@@ -51,83 +52,122 @@ export class DuckDBStore {
   private dbPath: string
   private retentionSeconds: number
   private mutations: Promise<unknown> = Promise.resolve()
+  private persistenceError: unknown = null
+  private initError: unknown = null
+  private switching = false
+  private background(task: Promise<unknown>): void {
+    void task.catch(error => this.onError(error instanceof Error ? error : new Error(String(error))))
+  }
+  getPersistenceStatus() {
+    return { pendingRows: this.buffer.length, error: this.persistenceError == null ? null : String(this.persistenceError) }
+  }
   private mutate<T>(action: () => Promise<T>): Promise<T> {
     const result = this.mutations.then(action)
     this.mutations = result.catch(() => {})
     return result
   }
 
-  constructor(private readonly config: Config, private readonly cfg?: any) {
+  constructor(private readonly config: Config, private readonly cfg?: any, private readonly onError: (error: Error) => void = error => console.error('[store]', error)) {
     this.dbPath = config.dbPath
     this.retentionSeconds = config.retentionSeconds
     this.ready = this.init()
-    this.ready.catch(() => {})
+    this.background(this.ready)
     if (this.config.flushIntervalMs > 0) {
-      this.flushTimer = setInterval(() => { void this.flush() }, this.config.flushIntervalMs)
+      this.flushTimer = setInterval(() => { if (!this.switching) this.background(this.flush()) }, this.config.flushIntervalMs)
     }
     if (this.config.retentionCheckMs > 0) {
-      this.retentionTimer = setInterval(() => { void this.cleanup() }, this.config.retentionCheckMs)
+      this.retentionTimer = setInterval(() => { if (!this.switching) this.background(this.cleanup()) }, this.config.retentionCheckMs)
     }
-    void this.ready.then(() => this.cleanup()).catch(() => {})
+    this.background(this.ready.then(() => this.cleanup()))
   }
 
   private async init(): Promise<DuckDBConnection> {
-    const instance = await DuckDBInstance.create(this.dbPath)
-    this.instance = instance
-    const conn = await instance.connect()
-    await conn.run(`CREATE TABLE IF NOT EXISTS poll_data (
-      object_id INTEGER,
-      area VARCHAR DEFAULT 'holding-register',
-      address INTEGER,
-      ts TIMESTAMP,
-      raw_value DOUBLE,
-      quality VARCHAR
-    )`)
-    // 迁移：旧表用 register_id 列
-    try { await conn.run(`ALTER TABLE poll_data RENAME COLUMN register_id TO address`) } catch { /* 已是 address 或表刚建 */ }
-    try { await conn.run(`ALTER TABLE poll_data ADD COLUMN area VARCHAR DEFAULT 'holding-register'`) } catch { /* 已迁移或新表 */ }
-    // 历史查询按 (object_id, ts) 过滤排序，建索引避免大表全表扫描拖慢实时/查询
-    try { await conn.run(`CREATE INDEX IF NOT EXISTS idx_poll_object_ts ON poll_data(object_id, ts)`) } catch { /* 索引创建失败不阻断启动 */ }
-    return conn
+    let instance: DuckDBInstance | undefined
+    let conn: DuckDBConnection | undefined
+    try {
+      instance = await DuckDBInstance.create(this.dbPath)
+      this.instance = instance
+      conn = await instance.connect()
+      await ensurePollDataSchema(conn)
+      return conn
+    } catch (error) {
+      this.initError = this.persistenceError = error
+      conn?.closeSync()
+      instance?.closeSync()
+      this.instance = null
+      throw error
+    }
   }
 
   /** 切换工作区：冲刷旧缓冲、关闭旧连接，重开新库并清空热层。 */
   async reopen(dbPath: string): Promise<void> {
-    await this.flush()
-    const old = await this.ready.catch(() => null)
-    if (old) old.closeSync()
-    if (this.instance) { try { this.instance.closeSync() } catch { /* already closed */ } }
-    this.instance = null
-    this.buffer = []
-    this.latest.clear()
-    this.dbPath = dbPath
-    this.ready = this.init()
-    this.ready.catch(() => {})
-    void this.ready.then(() => this.cleanup()).catch(() => {})
+    if (this.switching) throw new Error('Store is already reopening')
+    this.switching = true
+    try {
+      await this.flush()
+      await this.mutations
+      const old = await this.ready
+      old.closeSync()
+      this.instance?.closeSync()
+      this.instance = null
+      this.latest.clear()
+      this.dbPath = dbPath
+      this.initError = this.persistenceError = null
+      this.ready = this.init()
+      await this.ready
+    } finally { this.switching = false }
+    this.background(this.cleanup())
   }
 
   /** Enqueue points into the hot buffer; auto-flush when the batch is full. */
   write(points: PollPoint[]): void {
+    if (this.switching) throw new Error('Store is reopening')
+    if (this.initError) throw this.initError
+    for (const p of points) {
+      if (!p.area) throw new Error('PollPoint.area is required')
+      if (p.batchId != null && typeof p.batchId !== 'string') throw new Error('PollPoint.batchId must be a string or null')
+    }
     for (const p of points) {
       const area = p.area
-      if (!area) throw new Error('PollPoint.area is required')
-      this.buffer.push(p)
-      this.latest.set(`${p.objectId}:${area}:${p.address}`, { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp, ...(p.batchId ? { batchId: p.batchId } : {}) })
+      this.buffer.push({ ...p })
+      this.latest.set(`${p.objectId}:${area}:${p.address}`, { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp, ...(p.batchId !== undefined ? { batchId: p.batchId } : {}) })
     }
-    if (this.buffer.length >= this.config.flushBatchSize) void this.flush()
+    if (this.buffer.length >= this.config.flushBatchSize) this.background(this.flush())
   }
 
   /** Flush buffered points to DuckDB. */
   async flush(): Promise<void> {
-    if (this.buffer.length === 0) { await this.mutations; return }
-    const batch = this.buffer.splice(0)
-    // TODO(phase2): replace string interpolation with parameterized insert.
-    const rows = batch.map(p =>
-      `(${p.objectId}, '${p.area}', ${p.address}, '${p.timestamp}', ${p.rawValue}, '${p.quality}')`,
-    ).join(', ')
     await this.mutate(async () => {
-      const conn = await this.ready
-      await conn.run(`INSERT INTO poll_data (object_id, area, address, ts, raw_value, quality) VALUES ${rows}`)
+      let conn: DuckDBConnection | undefined
+      try {
+        if (this.initError) throw this.initError
+        await this.ready
+        const batch = this.buffer.slice()
+        if (!batch.length) return
+        // Readers on the main connection see only committed batches between chunks.
+        conn = await this.instance!.connect()
+        await conn.run('BEGIN TRANSACTION')
+        try {
+          for (let offset = 0; offset < batch.length; offset += 500) {
+            const values: Array<string | number | null> = []
+            const rows = batch.slice(offset, offset + 500).map(p => {
+              values.push(p.objectId, p.area, p.address, p.timestamp, p.rawValue, p.quality, p.batchId ?? null)
+              return '(?, ?, ?, CAST(? AS TIMESTAMP), ?, ?, ?)'
+            })
+            await conn.run(`INSERT INTO poll_data (object_id, area, address, ts, raw_value, quality, batch_id) VALUES ${rows.join(',')}`, values)
+          }
+          await conn.run('COMMIT')
+        } catch (error) {
+          try { await conn.run('ROLLBACK') } catch (rollback) {
+            this.initError = new AggregateError([error, rollback], 'poll_data write outcome uncertain; reopen with a new store after investigation')
+            throw this.initError
+          }
+          throw error
+        }
+        this.buffer.splice(0, batch.length)
+        this.persistenceError = null
+      } catch (error) { this.persistenceError = error; throw error }
+      finally { conn?.closeSync() }
     })
   }
 
@@ -161,34 +201,36 @@ export class DuckDBStore {
   /** 运行时改全局保留时长（秒，0=永久），改完立即清理一次。 */
   setRetentionSeconds(seconds: number): void {
     this.retentionSeconds = Math.max(0, Math.floor(seconds))
-    void this.cleanup().catch(() => {})
+    this.background(this.cleanup())
   }
 
   async cleanup(): Promise<void> {
-    const conn = await this.ready
-    const global = this.retentionSeconds
-    const now = Date.now()
-    const overrideIds: number[] = []
+    return this.mutate(async () => {
+      const conn = await this.ready
+      const global = this.retentionSeconds
+      const now = Date.now()
+      const overrideIds: number[] = []
 
-    if (this.cfg) {
-      for (const o of this.cfg.listObjects() as Array<{ id: number; dataRetainSeconds: number | null }>) {
-        if (o.dataRetainSeconds == null) continue
-        overrideIds.push(o.id)
-        if (o.dataRetainSeconds > 0) {
-          const cutoff = new Date(now - o.dataRetainSeconds * 1000).toISOString()
-          await conn.run(`DELETE FROM poll_data WHERE object_id = ${o.id} AND ts < '${cutoff}'`)
+      if (this.cfg) {
+        for (const o of this.cfg.listObjects() as Array<{ id: number; dataRetainSeconds: number | null }>) {
+          if (o.dataRetainSeconds == null) continue
+          overrideIds.push(o.id)
+          if (o.dataRetainSeconds > 0) {
+            const cutoff = new Date(now - o.dataRetainSeconds * 1000).toISOString()
+            await conn.run(`DELETE FROM poll_data WHERE object_id = ${o.id} AND ts < '${cutoff}'`)
+          }
         }
       }
-    }
 
-    if (global > 0) {
-      const cutoff = new Date(now - global * 1000).toISOString()
-      if (overrideIds.length > 0) {
-        await conn.run(`DELETE FROM poll_data WHERE ts < '${cutoff}' AND object_id NOT IN (${overrideIds.join(',')})`)
-      } else {
-        await conn.run(`DELETE FROM poll_data WHERE ts < '${cutoff}'`)
+      if (global > 0) {
+        const cutoff = new Date(now - global * 1000).toISOString()
+        if (overrideIds.length > 0) {
+          await conn.run(`DELETE FROM poll_data WHERE ts < '${cutoff}' AND object_id NOT IN (${overrideIds.join(',')})`)
+        } else {
+          await conn.run(`DELETE FROM poll_data WHERE ts < '${cutoff}'`)
+        }
       }
-    }
+    })
   }
 
   /** Query the cold tier for all addresses of one object over a time range. */
@@ -203,20 +245,21 @@ export class DuckDBStore {
 
   async queryObject(
     objectId: number, start: string, end: string, limit?: number,
-  ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string }>> {
+  ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null }>> {
+    await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
     const endUtc = this.normalizeToUtc(end)
     const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
     const reader = await conn.runAndReadAll(
-      `SELECT ts, area, address, raw_value, quality FROM poll_data
+      `SELECT ts, area, address, raw_value, quality, batch_id FROM poll_data
        WHERE object_id = $objectId AND ts >= $start AND ts <= $end
        ORDER BY ts
        LIMIT $limit`,
       { objectId, start: startUtc, end: endUtc, limit: limitClamped },
     )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown }>
-    return rows.map(r => ({ ts: localTs(String(r.ts)), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
+    return rows.map(r => ({ ts: localTs(String(r.ts)), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))
   }
 
   /** 全局快照键统一为 objectId:area:address。timestamp 输出为服务器本地时间。 */
@@ -255,7 +298,8 @@ export class DuckDBStore {
    */
   async queryObjectPage(
     objectId: number, start: string, end: string, page = 0, pageSize = 200,
-  ): Promise<{ points: Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string }>; total: number; page: number; pageSize: number; hasMore: boolean }> {
+  ): Promise<{ points: Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null }>; total: number; page: number; pageSize: number; hasMore: boolean }> {
+    await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
     const endUtc = this.normalizeToUtc(end)
@@ -285,18 +329,18 @@ export class DuckDBStore {
 
     // 3) 取该页时间戳对应的全部原始点
     const ptsReader = await conn.runAndReadAll(
-      `SELECT ts, area, address, raw_value, quality FROM poll_data
+      `SELECT ts, area, address, raw_value, quality, batch_id FROM poll_data
        WHERE object_id = $objectId AND ts >= $lo AND ts <= $hi
        ORDER BY ts ASC, address ASC`,
       { objectId, lo: pageTs[0], hi: pageTs[pageTs.length - 1] },
     )
-    const rows = ptsReader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown }>
+    const rows = ptsReader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
     const points = rows.map(r => ({
       ts: localTs(String(r.ts)),
       area: String(r.area ?? 'holding-register') as ModbusArea,
       address: Number(r.address),
       rawValue: Number(r.raw_value),
-      quality: String(r.quality ?? ''),
+      quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id),
     }))
     return { points, total, page: p, pageSize: size, hasMore: p * size + pageTs.length < total }
   }
@@ -304,43 +348,45 @@ export class DuckDBStore {
   /** Query the cold tier for a single address over a time range. */
   async query(
     objectId: number, address: number, start: string, end: string, area: ModbusArea, limit?: number,
-  ): Promise<Array<{ ts: string; rawValue: number; quality: string }>> {
+  ): Promise<Array<{ ts: string; rawValue: number; quality: string; batchId: string | null }>> {
+    await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
     const endUtc = this.normalizeToUtc(end)
     const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
     const reader = await conn.runAndReadAll(
-      `SELECT ts, raw_value, quality FROM poll_data
+      `SELECT ts, raw_value, quality, batch_id FROM poll_data
        WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
        ORDER BY ts
        LIMIT $limit`,
       { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped },
     )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown }>
-    return rows.map(r => ({ ts: localTs(String(r.ts)), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }))
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
+    return rows.map(r => ({ ts: localTs(String(r.ts)), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))
   }
 
   /** 单地址查询 + offset 分页（升序，最早的在前），供 MCP 等需要翻完整大时间范围的场景。 */
   async queryWithOffset(
     objectId: number, address: number, start: string, end: string, area: ModbusArea, limit: number, offset = 0,
-  ): Promise<Array<{ ts: string; rawValue: number; quality: string; timestampMs: number }>> {
+  ): Promise<Array<{ ts: string; rawValue: number; quality: string; timestampMs: number; batchId: string | null }>> {
+    await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
     const endUtc = this.normalizeToUtc(end)
     const limitClamped = Math.max(1, Math.min(200000, Math.trunc(limit)))
     const off = Math.max(0, Math.trunc(offset) || 0)
     const reader = await conn.runAndReadAll(
-      `SELECT ts, raw_value, quality FROM poll_data
+      `SELECT ts, raw_value, quality, batch_id FROM poll_data
        WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
        ORDER BY ts
        LIMIT $limit OFFSET $off`,
       { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped, off },
     )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown }>
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
     return rows.map(r => {
       const timestamp = String(r.ts)
       const utc = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(timestamp) ? timestamp : timestamp + 'Z'
-      return { ts: localTs(timestamp), timestampMs: Date.parse(utc), rawValue: Number(r.raw_value), quality: String(r.quality ?? '') }
+      return { ts: localTs(timestamp), timestampMs: Date.parse(utc), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }
     })
   }
 
