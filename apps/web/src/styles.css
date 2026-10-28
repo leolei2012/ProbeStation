@@ -879,3 +879,9 @@ table.reg th, .btn { white-space: nowrap; }
 .history-quality-summary { margin: 12px 0; padding: 12px; border: 1px solid var(--border-1); border-radius: 8px; }
 .history-quality-summary > summary { cursor: pointer; font-weight: 600; }
 .history-quality-summary .history-table-scroll { margin-top: 8px; }
+/* Discovery is separate from the controlled path so refresh never replaces user input. */
+.serial-port-picker { grid-column: 1 / -1; min-width: 0; display: grid; gap: 8px; }
+.serial-port-list-row { display: flex; gap: 8px; min-width: 0; }
+.serial-port-list-row select { flex: 1; width: 0; min-width: 0; }
+.serial-port-list-row .btn { flex-shrink: 0; }
+.serial-port-hint { display: grid; gap: 4px; color: var(--text-3); font-size: 12px; overflow-wrap: anywhere; }

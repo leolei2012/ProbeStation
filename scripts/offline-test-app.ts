@@ -11,10 +11,11 @@ import { ConfigStore } from '../packages/config/src/index.ts'
 import { DuckDBStore } from '../packages/store/src/index.ts'
 import { Sink } from '../packages/sink/src/index.ts'
 import { registerCurve } from '../packages/api/src/curve.ts'
+import { registerSerialPorts } from '../packages/api/src/serial-ports.ts'
 import { encodeRegister } from '../packages/core/src/codec.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const controls = `<style>#test-edition{padding:8px 12px;background:#fff3c4;color:#222;font:13px sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap}#root{height:calc(100vh - 64px)}</style><aside id="test-edition"><b>隔离测试版 · 只读合成数据</b><span>选择设备 → 历史。无设备通信/真实库/模型服务。</span><label>查询场景 <select id="test-scenario"><option value="normal">正常/身份样本</option><option value="invalid">全未知</option><option value="empty">空数据</option><option value="error">请求失败</option><option value="recovered">恢复</option></select></label><span>切换后点击历史“查询”；停止：终端 Ctrl+C。</span></aside><script>const control=document.getElementById('test-scenario');control.value=(document.cookie.match(/probeTestScenario=(\\w+)/)||[])[1]||'normal';control.onchange=()=>document.cookie='probeTestScenario='+control.value+'; SameSite=Strict; path=/';</script>`
+const controls = `<style>#test-edition{padding:8px 12px;background:#fff3c4;color:#222;font:13px sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap}#root{height:calc(100vh - 64px)}</style><aside id="test-edition"><b>隔离测试版 · 只读合成数据</b><span>选择设备 → 历史。无设备通信/真实库/模型服务；串口清单为后端系统端口，仅枚举。</span><label>查询场景 <select id="test-scenario"><option value="normal">正常/身份样本</option><option value="invalid">全未知</option><option value="empty">空数据</option><option value="error">请求失败</option><option value="recovered">恢复</option></select></label><span>切换后点击历史“查询”；停止：终端 Ctrl+C。</span></aside><script>const control=document.getElementById('test-scenario');control.value=(document.cookie.match(/probeTestScenario=(\\w+)/)||[])[1]||'normal';control.onchange=()=>document.cookie='probeTestScenario='+control.value+'; SameSite=Strict; path=/';</script>`
 
 export async function createOfflineTestApp() {
   const staticDir = join(root, 'apps/web/dist')
@@ -90,6 +91,8 @@ export async function createOfflineTestApp() {
   app.get('/api/data/stats', () => store.statsByObject(device.id))
   app.get('/api/monitor_objects/:id/stats', () => store.statsByObject(device.id))
   registerCurve(app, cfg, store)
+  // Only metadata enumeration is enabled; no serial port is ever opened by this route.
+  registerSerialPorts(app)
   for (const format of ['csv', 'xlsx'] as const) app.get('/api/export/' + format, async (req, reply) => {
     const q = req.query as any, ids = q.register_ids?.split(',').map(Number)
     reply.type(format === 'csv' ? 'text/csv; charset=utf-8' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

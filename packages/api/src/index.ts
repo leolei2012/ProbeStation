@@ -12,6 +12,7 @@ import { registerSlave } from './slave.ts'
 import { registerAssistant } from './assistant.ts'
 import { registerCurve } from './curve.ts'
 import { registerConfigBackup } from './config-backup.ts'
+import { registerSerialPorts } from './serial-ports.ts'
 
 /** 把 exceljs 单元格转成字符串（处理公式/数字/文本）。 */
 function xlsxCellText(cell: any): string {
@@ -88,6 +89,7 @@ export function apply(ctx: Context, config: Config): void {
     await fastify.register(compress, { global: true }) // gzip/brotli 压缩响应（静态资源 + API）
 
     fastify.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
+    registerSerialPorts(fastify)
     registerAssistant(fastify, { cfg, store, poller }, dataDir)
     registerCurve(fastify, cfg, store)
     registerConfigBackup(fastify, cfg)

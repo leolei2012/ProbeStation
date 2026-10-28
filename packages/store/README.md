@@ -85,4 +85,4 @@ const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T2
 
 表格、CSV/XLSX 使用同一共享判定；导出增加状态与 automatic_eligible 列，未知值为空。助手历史工具仅 verified value 进入统计，无身份值只在 compatibilityValue 中供人工查看，未知 value 为 null。历史数据不等同测试通过，未实现自动 PASS/FAIL 引擎。旧聚合 HTTP 入口已停用，返回 410。
 
-离线回归：`node node_modules/tsx/dist/cli.mjs scripts/test-store-batch.ts`；`npm run check` 先构建前端再运行 16 组显式安全回归，含隔离入口 API/资源验收。`npm run test:edition` 启动只读临时测试版，详见 docs/test/隔离测试版使用说明.md。真实迁移和页面视觉验收未完成。
+离线回归：`node node_modules/tsx/dist/cli.mjs scripts/test-store-batch.ts`；`npm run check` 先构建前端再运行 17 组显式安全回归，含隔离入口 API/资源验收。`npm run test:edition` 启动只读临时测试版，详见 docs/test/隔离测试版使用说明.md。真实迁移和页面视觉验收未完成。

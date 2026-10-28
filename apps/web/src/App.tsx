@@ -1,4 +1,5 @@
 import { decodeHistoricalSample, historyVerificationLabel } from '../../../packages/core/src/history-integrity.ts'
+import { SerialPortPicker } from './SerialPortPicker'
 import { DeviceSlaveStatus } from './DeviceSlaveStatus'
 import { ColumnControl, ValueModeControl, useDisplayColumns, useValueMode } from './DataDisplayControls'
 import { alarmMatches } from '../../../packages/core/src/alarm.ts'
@@ -1990,7 +1991,7 @@ function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | 
                 {textField(mode === 'slave' ? '监听地址 / Bind address' : t('ip'), ip, setIp, mode === 'slave' ? '0.0.0.0' : '192.168.1.10')}
                 {textField(mode === 'slave' ? '监听端口 / Listen port' : t('port'), port, setPort, '8899', { min: 1, max: 65535 })}
               </> : <>
-                {textField(t('serialPath'), serialPath, setSerialPath, 'COM3 / /dev/ttyUSB0')}
+                <SerialPortPicker value={serialPath} onChange={setSerialPath} english={t('cancel') === 'Cancel'} />
                 {textField(t('baudRate'), baudRate, setBaudRate, '9600', { min: 1 })}
                 {selectField(t('parity'), parity, setParity, ['even', 'odd', 'none'])}
                 {selectField('数据位 / Data bits', dataBits, setDataBits, mode === 'slave' ? ['8'] : ['5', '6', '7', '8'])}
