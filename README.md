@@ -82,7 +82,7 @@ TypeScript · Cordis 4（插件运行时）· schemastery（配置校验）· js
 ## 冒烟测试
 
 ```bash
-npm run check          # 前端及配置/历史服务类型检查 + 构建 + 15 组无硬件回归测试
+npm run check          # 前端及配置/历史服务类型检查 + 构建 + 16 组无硬件回归测试
 npm run typecheck:web  # 单独检查前端及其引用模块的类型
 npm run typecheck:services # 配置、历史存储和新增接口的类型检查
 npm test               # 纯函数、模拟提供商和临时数据库测试白名单
@@ -103,3 +103,7 @@ npx tsx scripts/test-pointsheet.ts # 点位表 xlsx 导出/导入（分组=sheet
 npx tsx scripts/test-rtu-recover.ts # RTU TX/RX 断线重接自动恢复
 # ... 全部见 docs/03 §2
 ```
+
+## 隔离只读测试版
+
+运行 `npm run test:edition`，待“隔离只读测试版”日志后访问 http://127.0.0.1:4181/，停止用 Ctrl+C。每次创建新临时库和合成历史，不加载设备通信、轮询、从站或模型服务。仅验收历史表格/曲线/导出，其余写操作禁用。具体场景、验收状态和限制见 [测试说明](docs/test/隔离测试版使用说明.md)。不要用正常主应用入口代替此命令。

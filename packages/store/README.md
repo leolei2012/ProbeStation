@@ -71,14 +71,18 @@ const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T2
 
 ## 历史曲线
 
-`queryRegisterCurve(objectId, start, end, registers, maxPoints, signal?)` 使用独立 DuckDB 连接流式读取所选点位的全部区间，按实际采样时间合并完整原始字、解码，再保留桶内首/末值、数值最小/最大值及无效读数。返回 series、sourceSamples、displayedSamples、downsampled、complete。内存中保留显示桶，查询不受旧 `queryObject` 的 20 万行默认值影响；AbortSignal 可中断对应查询。
+`queryRegisterCurve(objectId, start, end, registers, maxPoints, signal?)` 使用独立 DuckDB 连接流式读取所选点位的全部区间，按实际采样时间检查完整原始字、批次身份与质量后解码，再保留桶内首/末值、数值最小/最大值及无效读数。返回 series、sourceSamples、displayedSamples、downsampled、complete。内存中保留显示桶，查询不受旧 `queryObject` 的 20 万行默认值影响；AbortSignal 可中断对应查询。
 
-`queryObjectCurve` 保留旧版每桶各地址最新字的接口，供已有调用兼容；新前端使用按时间戳解码后保留峰值的 `queryRegisterCurve`，尚未检查响应身份。当前降采样为查询时计算，尚无预计算多级聚合表。
+旧 `queryObjectCurve` 为内部逐地址聚合，不作为自动判断依据；对应旧 HTTP 入口已返回 410。前端使用检查批次后保留峰值的 `queryRegisterCurve`，返回逐点 verification 与降采样前 integrity 计数。当前降采样为查询时计算，尚无预计算多级聚合表。
 
 `queryRegisterCurve` 每条 series 的 `summary` 包含完整查询区间内降采样前的 `sourceSamples`、`validSamples`、`invalidSamples`。这是按点位解码后的采样数，多字点位缺字或质量异常计为无效，非有限数或无法精确表示的 64 位整数也计为无效；没有采样的时段不在分母中，有效率不是设备在线率。空区间返回三个零。
 
-## 分阶段兼容边界
+## 历史身份显示与自动消费边界
 
-本阶段仅持久化和返回原始身份，保持历史曲线、表格、导出及 AI 消费者既有可见行为；它们尚未按 batchId 约束多字解码。旧多字数据显示未知还是兼容显示、统计分母与导出说明等二阶段策略待用户决定，本轮未实施。时间相同不代表同批，NULL 不可静默当作已确认身份。
+历史样本分 verified/unverified/unknown：完整、地址唯一、质量有效并带相同非空 batchId 才 verified；全部缺身份的完整样本保留兼容值、标记 unverified，不作为自动 PASS/FAIL 依据；混批、部分身份、缺字、重复地址、坏质量或非有限值为 unknown。曲线无法精确表示的 64 位整数也显示未知。单字也需要已有身份才能称已验证。不会生成或回填旧身份。
 
-离线回归：`npx --no-install tsx scripts/test-store-batch.ts`（全为临时库）；`npm run check` 包含 15 组明确安全回归，不会自动发现或运行实机测试。
+曲线 summary 的 validSamples 是可显示数，包含 unverified 兼容值；integrity 分开给出 verified/unverified/unknown 的降采样前数量，逐显示点 verification 与 samples 对齐。显示点可用于人工观察，Min/Max 不生成 PASS/FAIL。四个原始查询返回 batchId，另带 timestampMs 供消费端避免本地显示字符串精度丢失，时间戳分页语义不变。同一精确时间重复地址保守判未知。
+
+表格、CSV/XLSX 使用同一共享判定；导出增加状态与 automatic_eligible 列，未知值为空。助手历史工具仅 verified value 进入统计，无身份值只在 compatibilityValue 中供人工查看，未知 value 为 null。历史数据不等同测试通过，未实现自动 PASS/FAIL 引擎。旧聚合 HTTP 入口已停用，返回 410。
+
+离线回归：`node node_modules/tsx/dist/cli.mjs scripts/test-store-batch.ts`；`npm run check` 先构建前端再运行 16 组显式安全回归，含隔离入口 API/资源验收。`npm run test:edition` 启动只读临时测试版，详见 docs/test/隔离测试版使用说明.md。真实迁移和页面视觉验收未完成。

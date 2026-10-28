@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { isBinType, isHexType, registerWidth } from '@probebench/core'
 
 export function registerCurve(app: FastifyInstance, cfg: any, store: any) {
+  app.get('/api/data/object/curve', (_req, reply) => reply.code(410).send({ error: '旧版逐地址聚合不保留响应身份，已停用；请使用 /api/data/object/series。' }))
   app.get('/api/data/object/series', async (req, reply) => {
     const q = req.query as Record<string, string>
     const id = Number(q.object_id), start = Date.parse(q.start), end = Date.parse(q.end)

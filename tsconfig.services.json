@@ -4,6 +4,8 @@
     "packages/config/src",
     "packages/store/src",
     "packages/api/src/curve.ts",
-    "packages/api/src/config-backup.ts"
+    "packages/api/src/config-backup.ts",
+    "packages/api/src/history-assessment.ts",
+    "scripts/offline-test-app.ts"
   ]
 }

@@ -1,3 +1,4 @@
+import { decodeHistoricalSample } from '../../core/src/history-integrity.ts'
 import type { Context } from 'cordis'
 import z from 'schemastery'
 import http from 'node:http'
@@ -301,10 +302,11 @@ export function apply(ctx: Context, config: Config): void {
       const points = await store.queryWithOffset(args.device_id, args.address, args.start, args.end, args.area, limit, offset)
       const sem = semanticOf(reg)
       const width = registerWidth(reg.dataType ?? 'int16')
-      const out = points.map((p: { ts: string; rawValue: number; quality: string }) => {
+      const out = points.map((p: { ts: string; rawValue: number; quality: string; batchId?: string | null }) => {
         // 单字类型直接解码；多字类型（width>1）需相邻地址，此处只返回起始地址的原始字，由消费端按 register_width 组合
         let decoded: number | bigint | null = null
-        if (width === 1) decoded = decodeRawByAddr([reg], { [reg.startAddress]: p.rawValue }).get(reg.id) ?? null
+        const assessment = decodeHistoricalSample(reg, [{ ...p, address: reg.startAddress }])
+        if (width === 1 && assessment.automaticEligible) decoded = assessment.value
         let value: number | string | null = decoded === null ? null : (typeof decoded === 'bigint' ? String(decoded) : decoded)
         let unit: string | null = null
         let label: string | null = null
@@ -312,9 +314,9 @@ export function apply(ctx: Context, config: Config): void {
           const s = resolveSemantic(sem, decoded)
           value = s.value; unit = s.unit; label = s.label
         }
-        return { ts: p.ts, raw_value: p.rawValue, value, unit, label, quality: p.quality, data_type: reg.dataType ?? 'int16', register_width: width, factor: sem.factor, offset: sem.offset }
+        return { ts: p.ts, raw_value: p.rawValue, value, unit, label, quality: p.quality, batch_id: p.batchId ?? null, verification: assessment.verification, automatic_eligible: assessment.automaticEligible, compatibility_value: assessment.verification === 'unverified' ? String(assessment.value) : null, data_type: reg.dataType ?? 'int16', register_width: width, factor: sem.factor, offset: sem.offset }
       })
-      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, alias: reg.alias, area: args.area, address: reg.startAddress, register_width: width, count: points.length, offset, points: out }) }] }
+      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, alias: reg.alias, area: args.area, address: reg.startAddress, register_width: width, count: points.length, offset, warning: 'Unverified compatibility values are view-only; never automatic PASS/FAIL evidence. Multiword values are unavailable in this raw-word endpoint.', points: out }) }] }
     })
 
     server.registerTool('write_register', {

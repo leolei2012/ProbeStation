@@ -1,9 +1,15 @@
 import type { Context } from 'cordis'
 import z from 'schemastery'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
-import { localTs, areaForFunction, decodeRegister, registerWidth, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
+import { localTs, areaForFunction, registerWidth, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
 import { CurveSampler } from './curve-sampling.ts'
 import { ensurePollDataSchema } from './schema.ts'
+import { decodeHistoricalSample } from '../../core/src/history-integrity.ts'
+
+function rawTimestampMs(value: unknown): number {
+  const text = String(value)
+  return Date.parse(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(text) ? text : text + 'Z')
+}
 
 /** Cordis plugin name. */
 export const name = 'store'
@@ -245,7 +251,7 @@ export class DuckDBStore {
 
   async queryObject(
     objectId: number, start: string, end: string, limit?: number,
-  ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null }>> {
+  ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>> {
     await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
@@ -259,7 +265,7 @@ export class DuckDBStore {
       { objectId, start: startUtc, end: endUtc, limit: limitClamped },
     )
     const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
-    return rows.map(r => ({ ts: localTs(String(r.ts)), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))
+    return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))
   }
 
   /** 全局快照键统一为 objectId:area:address。timestamp 输出为服务器本地时间。 */
@@ -298,7 +304,7 @@ export class DuckDBStore {
    */
   async queryObjectPage(
     objectId: number, start: string, end: string, page = 0, pageSize = 200,
-  ): Promise<{ points: Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null }>; total: number; page: number; pageSize: number; hasMore: boolean }> {
+  ): Promise<{ points: Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>; total: number; page: number; pageSize: number; hasMore: boolean }> {
     await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
@@ -336,7 +342,7 @@ export class DuckDBStore {
     )
     const rows = ptsReader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
     const points = rows.map(r => ({
-      ts: localTs(String(r.ts)),
+      ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts),
       area: String(r.area ?? 'holding-register') as ModbusArea,
       address: Number(r.address),
       rawValue: Number(r.raw_value),
@@ -348,7 +354,7 @@ export class DuckDBStore {
   /** Query the cold tier for a single address over a time range. */
   async query(
     objectId: number, address: number, start: string, end: string, area: ModbusArea, limit?: number,
-  ): Promise<Array<{ ts: string; rawValue: number; quality: string; batchId: string | null }>> {
+  ): Promise<Array<{ ts: string; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>> {
     await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
@@ -362,7 +368,7 @@ export class DuckDBStore {
       { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped },
     )
     const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
-    return rows.map(r => ({ ts: localTs(String(r.ts)), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))
+    return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))
   }
 
   /** 单地址查询 + offset 分页（升序，最早的在前），供 MCP 等需要翻完整大时间范围的场景。 */
@@ -430,11 +436,11 @@ export class DuckDBStore {
     })
   }
 
-  /** Stream coherent decoded samples; memory grows with display buckets, not historical row count. */
+  /** Timestamp-grouped samples with explicit response verification; bounded display memory. */
   async queryRegisterCurve(objectId: number, start: string, end: string, registers: Array<{ id: number; functionCode: number; startAddress: number; dataType: string }>, maxPoints = 1200, signal?: AbortSignal) {
     const startMs = Date.parse(start), endMs = Date.parse(end)
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) throw Object.assign(new Error('时间范围无效'), { statusCode: 400 })
-    const buckets = Math.max(1, Math.min(5000, Math.floor(maxPoints / 5) || 1))
+    const buckets = Math.max(1, Math.min(5000, Math.floor(maxPoints / 6) || 1))
     const bucketMs = Math.max(1, Math.ceil((endMs - startMs) / buckets))
     if (!registers.length) return { series: [], sourceSamples: 0, displayedSamples: 0, downsampled: false, complete: true, start, end }
     await this.ready
@@ -452,6 +458,7 @@ export class DuckDBStore {
       const byId = new Map(registers.map(r => [r.id, r]))
       const result = await conn.stream(`SELECT r.id, date_diff('millisecond', DATE '1970-01-01', p.ts) AS time,
         list(p.raw_value ORDER BY p.address) AS words, list(p.quality ORDER BY p.address) AS qualities,
+        list(p.address ORDER BY p.address) AS addresses, list(p.batch_id ORDER BY p.address) AS batch_ids,
         count(DISTINCT p.address) AS word_count
         FROM poll_data p JOIN (VALUES ${defs}) AS r(id, area, addr, width)
         ON p.area = r.area AND p.address >= r.addr AND p.address < r.addr + r.width
@@ -463,19 +470,20 @@ export class DuckDBStore {
           const id = Number(row.id), reg = byId.get(id)!
           const words = (row.words as any).items.map(Number) as number[]
           const qualities = (row.qualities as any).items.map(String) as string[]
-          const width = registerWidth(reg.dataType)
-          const coherent = words.length === width && Number(row.word_count) === width && qualities.every(q => q === 'good')
-          const raw = coherent ? decodeRegister(reg.dataType, words) : NaN
+          const addresses = (row.addresses as any).items.map(Number) as number[]
+          const ids = (row.batch_ids as any).items as Array<string | null>
+          const decoded = decodeHistoricalSample(reg, words.map((rawValue, i) => ({ address: addresses[i], rawValue, quality: qualities[i], batchId: ids[i] })))
+          const raw = decoded.value ?? NaN
           const number = typeof raw === 'bigint' && (raw > BigInt(Number.MAX_SAFE_INTEGER) || raw < BigInt(Number.MIN_SAFE_INTEGER)) ? NaN : Number(raw)
-          samplers.get(id)!.add({ time: Number(row.time), value: Number.isFinite(number) ? number : null, words, qualities })
+          samplers.get(id)!.add({ time: Number(row.time), value: Number.isFinite(number) ? number : null, words, qualities, verification: Number.isFinite(number) ? decoded.verification : 'unknown' })
         }
       }
       let sourceSamples = 0, displayedSamples = 0
       const series = registers.map(r => {
-        const sampler = samplers.get(r.id)!, samples = sampler.samples().map(s => [s.time, s.value] as [number, number | null])
+        const sampler = samplers.get(r.id)!, displayed = sampler.samples(), samples = displayed.map(s => [s.time, s.value] as [number, number | null])
         sourceSamples += sampler.count; displayedSamples += samples.length
         const intervals = samples.slice(1).map((p, i) => p[0] - samples[i][0]).filter(v => v > 0).sort((a, b) => a - b)
-        return { id: r.id, samples, summary: sampler.summary(), gapMs: intervals.length ? intervals[Math.floor(intervals.length / 2)] * 3 : null }
+        return { id: r.id, samples, verification: displayed.map(s => [s.time, s.verification] as const), integrity: sampler.integrity(), summary: sampler.summary(), gapMs: intervals.length ? intervals[Math.floor(intervals.length / 2)] * 3 : null }
       })
       return { series, sourceSamples, displayedSamples, downsampled: displayedSamples < sourceSamples, complete: true, start, end }
     } finally { signal?.removeEventListener('abort', interrupted); conn.disconnectSync() }

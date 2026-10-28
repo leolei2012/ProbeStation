@@ -10,6 +10,7 @@ const device: any = { id: 1, name: '台架', pollIntervalMs: 1000, timeoutMs: 30
 const reg = { id: 10, objectId: 1, groupId: 2, alias: '计数', dataType: 'uint32', functionCode: 3, startAddress: 0, factor: 1, offset: 0 }
 const logs: string[] = []
 let historyCount = 1
+let historyBatchMode: 'legacy' | 'verified' | 'mixed' = 'legacy'
 const cfg = {
   getObject: (id: number) => id === 1 ? device : id === 3 ? { id: 3, name: '其他设备' } : undefined,
   listObjects: () => [device, { id: 3, name: '其他设备' }],
@@ -20,7 +21,7 @@ const cfg = {
 }
 const store = {
   getLatestByObjectAll: () => ({ 'holding-register:0': { rawValue: 1, timestamp: '2026-10-06 10:00:00', quality: 'good' }, 'holding-register:1': { rawValue: 2, timestamp: '2026-10-06 10:00:00', quality: 'good' } }),
-  queryWithOffset: async (_id: number, address: number) => Array.from({ length: historyCount }, (_, i) => ({ ts: '2026-10-06 10:00:00', timestampMs: 1791242400000 + i, rawValue: address === 0 ? 1 : 2, quality: 'good' })),
+  queryWithOffset: async (_id: number, address: number) => Array.from({ length: historyCount }, (_, i) => ({ ts: '2026-10-06 10:00:00', timestampMs: 1791242400000 + i, rawValue: address === 0 ? 1 : 2, quality: 'good', batchId: historyBatchMode === 'legacy' ? null : `response-${i}-${historyBatchMode === 'mixed' ? address : 'same'}` })),
   statsByObject: async () => ({ totalRows: 2 }),
 }
 let responses: any[] = []
@@ -76,6 +77,9 @@ try {
   const completeHistory = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
   assert.equal(completeHistory.points.length, 600)
   assert.equal(completeHistory.truncated, false)
+  assert.equal(completeHistory.count, 0, 'legacy compatibility values never enter automated statistics')
+  assert.equal(completeHistory.min, null)
+  assert.ok(completeHistory.points.every((p: any) => p.value === null && p.compatibilityValue === 65538 && p.verification === 'unverified' && !p.automaticEligible))
   historyCount = 1
   s = await turn(id, call('get_snapshot', { device_id: 3 }))
   assert(s.entries.at(-2).content.includes('超出当前会话'))
@@ -83,6 +87,15 @@ try {
   assert(s.entries.at(-2).content.includes('工具不在允许列表'))
   s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))
   assert(s.entries.at(-2).content.includes('65538'))
+  historyBatchMode = 'verified'
+  s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))
+  const verifiedHistory = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
+  assert.equal(verifiedHistory.count, 1); assert.equal(verifiedHistory.points[0].value, 65538)
+  historyBatchMode = 'mixed'
+  s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))
+  const mixedHistory = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
+  assert.equal(mixedHistory.count, 0); assert.equal(mixedHistory.points[0].verification, 'unknown'); assert.equal(mixedHistory.points[0].value, null)
+  historyBatchMode = 'legacy'
   const change = call('propose_config_change', { target: 'device', target_id: 1, field: 'pollIntervalMs', value: 500 })
   s = await turn(id, change)
   assert.equal(device.pollIntervalMs, 1000)

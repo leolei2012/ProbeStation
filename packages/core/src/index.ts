@@ -27,6 +27,7 @@ export * from './protocol.ts'
 export * from './points.ts'
 export * from './paths.ts'
 export * from './sample-batch.ts'
+export * from './history-integrity.ts'
 
 export function apply(ctx: Context, config: Config): void {
   ctx.logger('core').info(

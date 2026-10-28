@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "test": "tsx scripts/test-safe.ts",
+    "test:edition": "npm run build:web && tsx scripts/offline-test-app.ts",
     "typecheck:web": "tsc -p tsconfig.web.json",
     "typecheck:services": "tsc -p tsconfig.services.json",
     "check": "npm run typecheck:web && npm run typecheck:services && npm run build:web && npm test",

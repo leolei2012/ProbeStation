@@ -358,12 +358,6 @@ export function apply(ctx: Context, config: Config): void {
       const pageSize = Number(q.page_size ?? 200)
       return store.queryObjectPage(Number(q.object_id), String(q.start), String(q.end), Number.isFinite(page) ? page : 0, Number.isFinite(pageSize) ? pageSize : 200)
     })
-    // 曲线版：整个时间范围降采样成 max_points 个时间桶（每桶每地址取最新值）
-    fastify.get('/api/data/object/curve', async (req: any) => {
-      const q = req.query as any
-      const mp = Number(q.max_points ?? 1000)
-      return store.queryObjectCurve(Number(q.object_id), String(q.start), String(q.end), Number.isFinite(mp) ? mp : 1000)
-    })
 
     // ── WebSocket ───────────────────────────────────────────
     await fastify.register(websocket)

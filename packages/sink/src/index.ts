@@ -1,7 +1,7 @@
 import type { Context } from 'cordis'
 import ExcelJS from 'exceljs'
 import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
-import { areaForFunction, formatRawByAddr } from '@probebench/core'
+import { areaForFunction, formatRegisterValue, decodeHistoricalSample, historyVerificationLabel, type HistoryVerification } from '@probebench/core'
 
 export const name = 'sink'
 export const inject = ['config', 'store']
@@ -17,7 +17,7 @@ function formatTsLocal(ts: string, offsetMin: number): string {
   if (Number.isNaN(d.getTime())) return ts || ''
   const shifted = new Date(d.getTime() + offsetMin * 60_000)
   const pad = (n: number) => String(n).padStart(2, '0')
-  return shifted.getUTCFullYear() + '-' + pad(shifted.getUTCMonth() + 1) + '-' + pad(shifted.getUTCDate()) + ' ' + pad(shifted.getUTCHours()) + ':' + pad(shifted.getUTCMinutes()) + ':' + pad(shifted.getUTCSeconds())
+  return shifted.getUTCFullYear() + '-' + pad(shifted.getUTCMonth() + 1) + '-' + pad(shifted.getUTCDate()) + ' ' + pad(shifted.getUTCHours()) + ':' + pad(shifted.getUTCMinutes()) + ':' + pad(shifted.getUTCSeconds()) + (shifted.getUTCMilliseconds() ? '.' + String(shifted.getUTCMilliseconds()).padStart(3, '0') : '')
 }
 
 /** 偏移分钟数对应的时区标签：0 → 'UTC'，东八区 → 'UTC+08:00'。 */
@@ -64,55 +64,55 @@ export class Sink {
       registers = registers.filter((r: any) => idSet.has(r.id))
     }
     const points = await this.ctx.store.queryObject(objectId, start, end)
-    // pivot: ts -> area -> { address: rawValue }，避免四数据区同地址互相覆盖。
-    const tsOrder: string[] = []
-    const rawByTs = new Map<string, Map<string, Record<number, number>>>()
-    for (const p of points) {
-      if (!rawByTs.has(p.ts)) { rawByTs.set(p.ts, new Map()); tsOrder.push(p.ts) }
-      const byArea = rawByTs.get(p.ts)!
-      if (!byArea.has(p.area)) byArea.set(p.area, {})
-      byArea.get(p.area)![p.address] = p.rawValue
-    }
-    // format per ts: ts -> Map<registerId, string|null>
+    const byTs = new Map<string, typeof points>()
+    for (const p of points) { const ts = p.timestampMs != null ? new Date(p.timestampMs).toISOString() : p.ts; if (!byTs.has(ts)) byTs.set(ts, []); byTs.get(ts)!.push(p) }
+    const tsOrder = [...byTs.keys()]
     const formatted = new Map<string, Map<number, string | null>>()
-    for (const ts of tsOrder) {
-      const result = new Map<number, string | null>()
-      const byArea = rawByTs.get(ts)!
-      for (const area of ['coil', 'discrete-input', 'holding-register', 'input-register']) {
-        const subset = registers.filter((r: any) => areaForFunction(r.functionCode) === area)
-        for (const [id, value] of formatRawByAddr(subset, byArea.get(area) ?? {})) result.set(id, value)
+    const verification = new Map<string, Map<number, HistoryVerification>>()
+    for (const [ts, rows] of byTs) {
+      const values = new Map<number, string | null>(), states = new Map<number, HistoryVerification>()
+      for (const r of registers) {
+        const sample = decodeHistoricalSample(r, rows.filter((p: any) => p.area === areaForFunction(r.functionCode)))
+        values.set(r.id, sample.value == null ? null : formatRegisterValue(r.dataType, sample.words))
+        states.set(r.id, sample.verification)
       }
-      formatted.set(ts, result)
+      formatted.set(ts, values); verification.set(ts, states)
     }
-    return { registers, tsOrder, formatted }
+    return { registers, tsOrder, formatted, verification }
   }
 
   async exportCsv(objectId: number, start: string, end: string, registerIds?: number[], tzOffsetMin = 0): Promise<string> {
-    const { registers, tsOrder, formatted } = await this.collect(objectId, start, end, registerIds)
-    const header = [['timestamp', '(', tzLabel(tzOffsetMin), ')'].join(''), ...registers.map((r: any) => r.alias ?? `reg${r.id}`)]
+    const { registers, tsOrder, formatted, verification } = await this.collect(objectId, start, end, registerIds)
+    const header = [['timestamp', '(', tzLabel(tzOffsetMin), ')'].join(''), ...registers.flatMap((r: any) => { const name = r.alias ?? `reg${r.id}`; return [name, name + '__batch_status', name + '__automatic_eligible'] })]
     const lines = [header.map(escapeCsv).join(',')]
     for (const ts of tsOrder) {
       const m = formatted.get(ts)!
-      const cells = [formatTsLocal(ts, tzOffsetMin), ...registers.map((r: any) => m.get(r.id) ?? '')]
+      const cells = [formatTsLocal(ts, tzOffsetMin), ...registers.flatMap((r: any) => { const state = verification.get(ts)!.get(r.id)!; return [m.get(r.id) ?? '', historyVerificationLabel[state], state === 'verified' ? 'true' : 'false'] })]
       lines.push(cells.map(escapeCsv).join(','))
     }
     return lines.join('\n')
   }
 
   async exportXlsx(objectId: number, start: string, end: string, registerIds?: number[], tzOffsetMin = 0): Promise<Buffer> {
-    const { registers, tsOrder, formatted } = await this.collect(objectId, start, end, registerIds)
+    const { registers, tsOrder, formatted, verification } = await this.collect(objectId, start, end, registerIds)
     const wb = new ExcelJS.Workbook()
     const sheet = wb.addWorksheet('data')
     sheet.columns = [
       { header: `timestamp (${tzLabel(tzOffsetMin)})`, key: 'ts', width: 24 },
-      ...registers.map((r: any) => ({ header: r.alias ?? `reg${r.id}`, key: `r${r.id}`, width: 16 })),
+      ...registers.flatMap((r: any) => [{ header: r.alias ?? `reg${r.id}`, key: `r${r.id}`, width: 16 }, { header: (r.alias ?? `reg${r.id}`) + '__batch_status', key: `s${r.id}`, width: 20 }, { header: (r.alias ?? `reg${r.id}`) + '__automatic_eligible', key: `a${r.id}`, width: 24 }]),
     ]
     for (const ts of tsOrder) {
       const row: Record<string, unknown> = { ts: formatTsLocal(ts, tzOffsetMin) }
       const m = formatted.get(ts)!
-      for (const r of registers) row[`r${r.id}`] = m.get(r.id) ?? null
+      for (const r of registers) {
+        const state = verification.get(ts)!.get(r.id)!
+        row[`r${r.id}`] = m.get(r.id) ?? null; row[`s${r.id}`] = historyVerificationLabel[state]; row[`a${r.id}`] = state === 'verified'
+      }
       sheet.addRow(row)
     }
+    const notes = wb.addWorksheet('历史身份说明')
+    notes.addRow(['批次未验证的值仅供查看，不可作为自动 PASS/FAIL 依据。未知值留空。'])
+    notes.addRow(['automatic_eligible 只表示完整同批且质量有效，不表示测试通过；本程序未生成 PASS/FAIL。'])
     const buf = await wb.xlsx.writeBuffer()
     return Buffer.from(buf)
   }
