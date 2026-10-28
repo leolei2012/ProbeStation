@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
 import { parseConfigBackup, type ConfigBackup } from './backup.ts'
+import { parseRegisterQuantity } from './register-quantity.ts'
 
 export const name = 'config'
 
@@ -236,7 +237,9 @@ export class ConfigStore {
     return this.getGroup(id)
   }
 
+  /** One group's points; a device ID is not interchangeable with groupId. */
   listRegisters(groupId: number): RegisterRecord[] { return this.db.prepare(REGISTER_SELECT + ' WHERE group_id = ? ORDER BY start_address').all(groupId) as unknown as RegisterRecord[] }
+  /** All points of a device, across all of its groups. */
   listRegistersByObject(objectId: number): RegisterRecord[] { return this.db.prepare(REGISTER_SELECT + ' WHERE object_id = ? ORDER BY start_address').all(objectId) as unknown as RegisterRecord[] }
   getRegister(id: number): RegisterRecord | undefined { return this.db.prepare(REGISTER_SELECT + ' WHERE id = ?').get(id) as unknown as RegisterRecord | undefined }
 
@@ -262,14 +265,15 @@ export class ConfigStore {
     }
     return { updated, skipped, errors }
   }
-  createRegister(groupId: number, objectId: number, alias: string | null, functionCode: number, startAddress: number, dataType = 'int16', extra?: Partial<Pick<RegisterRecord, 'unit' | 'factor' | 'offset' | 'enumJson' | 'decimalPlaces'>>): RegisterRecord {
+  createRegister(groupId: number, objectId: number, alias: string | null, functionCode: number, startAddress: number, dataType = 'int16', extra?: Partial<Pick<RegisterRecord, 'unit' | 'factor' | 'offset' | 'enumJson' | 'decimalPlaces' | 'quantity'>>): RegisterRecord {
     const unit = extra?.unit ?? null
     const factor = extra?.factor ?? 1
     const offset = extra?.offset ?? 0
     const enumJson = extra?.enumJson ?? null
     const decimalPlaces = extra?.decimalPlaces ?? null
+    const quantity = parseRegisterQuantity(extra && Object.hasOwn(extra, 'quantity') ? extra.quantity : 1)
     this.validateDecimalPlaces(decimalPlaces)
-    const res = this.db.prepare('INSERT INTO registers (group_id, object_id, alias, function_code, start_address, data_type, unit, factor, offset, enum_json, decimal_places) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(groupId, objectId, alias, functionCode, startAddress, dataType, unit, factor, offset, enumJson, decimalPlaces)
+    const res = this.db.prepare('INSERT INTO registers (group_id, object_id, alias, function_code, start_address, data_type, quantity, unit, factor, offset, enum_json, decimal_places) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(groupId, objectId, alias, functionCode, startAddress, dataType, quantity, unit, factor, offset, enumJson, decimalPlaces)
     const id = Number(res.lastInsertRowid)
     this.notify('register', id)
     return this.getRegister(id)!
@@ -335,7 +339,7 @@ export class ConfigStore {
   exportBackup(): ConfigBackup {
     const devices = this.listObjects()
     return { format: 'probestation-config', version: 1, createdAt: new Date().toISOString(), devices,
-      groups: devices.flatMap(d => this.listGroups(d.id)), registers: devices.flatMap(d => this.listRegisters(d.id)), rules: this.listRules() }
+      groups: devices.flatMap(d => this.listGroups(d.id)), registers: devices.flatMap(d => this.listRegistersByObject(d.id)), rules: this.listRules() }
   }
 
   previewBackup(value: unknown) {

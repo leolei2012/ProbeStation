@@ -1,8 +1,31 @@
 import type { Context } from 'cordis'
-import { alarmMatches, decodeRegister, registerWidth } from '@probebench/core'
+import { alarmMatches, decodeRegister, registerWidth, sameResponseBatch } from '@probebench/core'
 
 export const name = 'rule'
 export const inject = ['config']
+
+/** pollOnce combines responses. Choose the last complete response in this event;
+ * never fill its gaps from another response or a previous event's cache.
+ */
+function eventWords(points: any[], area: string, address: number, width: number): any[] | null {
+  const relevant = points.filter(p => (p.area ?? 'holding-register') === area && p.address >= address && p.address < address + width)
+  const collect = (batch: any[]) => Array.from({ length: width }, (_, i) => batch.find(p => p.address === address + i))
+  if (relevant.every(p => p.batchId == null)) return collect(relevant)
+  const responses = new Map<string, any[]>()
+  for (const point of relevant) {
+    if (typeof point.batchId !== 'string' || !point.batchId) continue
+    const batch = responses.get(point.batchId) ?? []
+    batch.push(point); responses.delete(point.batchId); responses.set(point.batchId, batch)
+  }
+  for (const batch of [...responses.values()].reverse()) {
+    const words = collect(batch)
+    if (words.some(p => !p)) continue
+    // A malformed complete response is unknown, not a reason to replay an older value.
+    if (batch.length !== width) return null
+    return words
+  }
+  return null
+}
 
 /**
  * 告警规则引擎：订阅 poller/result，把原始字按寄存器解码后评估，
@@ -19,8 +42,8 @@ export function apply(ctx: Context): void {
       const reg = registers.find(r => r.id === rule.registerId)
       if (!reg) continue
       const area = reg.functionCode === 1 ? 'coil' : reg.functionCode === 2 ? 'discrete-input' : reg.functionCode === 4 ? 'input-register' : 'holding-register'
-      const words = Array.from({ length: registerWidth(reg.dataType) }, (_, i) => points.find((p: any) => (p.area ?? 'holding-register') === area && p.address === reg.startAddress + i))
-      if (words.some(p => !p || p.quality !== 'good' || !Number.isFinite(p.rawValue))) continue
+      const words = eventWords(points, area, reg.startAddress, registerWidth(reg.dataType))
+      if (!words || words.some(p => !p || p.quality !== 'good' || !Number.isFinite(p.rawValue)) || !sameResponseBatch(words)) continue
       const v = decodeRegister(reg.dataType, words.map(p => p.rawValue))
       if (typeof v === 'number' && !Number.isFinite(v)) continue
       const signature = JSON.stringify([rule.registerId, rule.operator, rule.threshold, rule.message, reg.dataType])

@@ -10,7 +10,7 @@ export function registerCurve(app: FastifyInstance, cfg: any, store: any) {
     if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || !Number.isInteger(maxPoints) || maxPoints < 5 || maxPoints > 25000) return reply.code(400).send({ error: '时间范围或显示点数无效' })
     const ids = q.register_ids === undefined ? null : q.register_ids === '' ? [] : q.register_ids.split(',').map(Number)
     if (ids?.some(n => !Number.isSafeInteger(n) || n < 1)) return reply.code(400).send({ error: '点位 ID 无效' })
-    const all = cfg.listRegisters(id)
+    const all = cfg.listRegistersByObject(id)
     if (ids?.some(n => !all.some((r: any) => r.id === n))) return reply.code(400).send({ error: '点位不属于当前设备' })
     const regs = cfg.listGroups(id).flatMap((g: any) => {
       let covered = -1

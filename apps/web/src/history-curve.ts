@@ -3,7 +3,18 @@ import { decodeRawByAddr, isBinType, isHexType, registerWidth } from '../../../p
 export interface HistoryPoint { ts: string; area: string; address: number; rawValue: number }
 export interface HistoryRegister { id: number; groupId: number; startAddress: number; dataType: string; functionCode: number }
 export type HistorySample = [number, number | null]
-export interface HistorySeries { id: number; samples: HistorySample[]; gapMs: number }
+export interface HistorySeries {
+  id: number; samples: HistorySample[]; gapMs: number
+  summary?: { sourceSamples: number; validSamples: number; invalidSamples: number }
+}
+
+/** Last means the final observed sample, including a failed/invalid reading. */
+export function historySampleStats(samples: HistorySample[]) {
+  let min = Infinity, max = -Infinity
+  for (const [, value] of samples) if (value !== null && Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value) }
+  const last = samples.at(-1)?.[1] ?? null
+  return { min, max, last: last !== null && Number.isFinite(last) ? last : null }
+}
 
 export function decodeHistorySeries(registers: HistoryRegister[], points: HistoryPoint[], selected: Set<number>): HistorySeries[] {
   const buckets = new Map<number, Map<string, Record<number, number>>>()

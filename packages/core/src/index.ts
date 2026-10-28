@@ -26,6 +26,7 @@ export * from './alarm.ts'
 export * from './protocol.ts'
 export * from './points.ts'
 export * from './paths.ts'
+export * from './sample-batch.ts'
 
 export function apply(ctx: Context, config: Config): void {
   ctx.logger('core').info(

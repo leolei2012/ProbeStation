@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 // Explicit allowlist: these tests use pure functions, mock providers or isolated databases.
 // Never discover all test-*.ts automatically: some scripts intentionally connect to real devices.
-const tests = ['codec', 'physical-value', 'observation', 'history-curve', 'live-curve', 'config-backup', 'curve-sampling', 'assistant', 'assistant-context', 'assistant-streams', 'assistant-providers', 'assistant-history']
+const tests = ['codec', 'physical-value', 'observation', 'history-curve', 'live-curve', 'alarm', 'poller-coherence', 'config-backup', 'curve-sampling', 'assistant', 'assistant-context', 'assistant-streams', 'assistant-providers', 'assistant-history']
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {

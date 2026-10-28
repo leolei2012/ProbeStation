@@ -7,6 +7,7 @@ import { ValueReading } from './ValueReading'
 import { physicalValue, displayNumber, curveValue, type ValueMode } from './physical-value'
 import { PointSettingsEditor } from './PointSettingsEditor'
 import { ConfigBackupSettings } from './ConfigBackupSettings'
+import { HistoryQualitySummary } from './HistoryQualitySummary'
 import { VirtualTableBody } from './VirtualTableBody'
 import { DeviceIssues, type DataTarget } from './DeviceIssues'
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -14,9 +15,10 @@ import { showOperationNotice } from './OperationNotifications'
 import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
 import { AssistantSettings } from './AssistantSettings'
-import { decodeHistorySeries, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
+import { decodeHistorySeries, historySampleStats, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
 import { sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, staleAfterMs, type Sample } from './observation'
+import { sameResponseBatch } from '../../../packages/core/src/sample-batch.ts'
 import { baseType, decodeRawByAddr, decodeRegister, formatNumber, formatRawByAddr, formatRegisterValue, isBinType, isHexType, parseEnum, parseRawRegisterInput, registerWidth } from '../../../packages/core/src/codec.ts'
 
 const TYPE_GROUPS = [
@@ -50,7 +52,8 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointSettings: '点位设置', pointSettingsAction: '设置', pointUnit: '工程单位', pointFactor: '系数', pointOffset: '偏移', pointInvalidScale: '系数必须为非零有限数，偏移必须为有限数。', pointScaleHint: '物理值 = 原始值 × 系数 + 偏移。单位留空可清除；默认系数为 1、偏移为 0。实时表格同时显示原始值与物理值；曲线可切换两种模式。小数位数仅影响物理值显示，原始值保持解码结果，不改变采集和换算精度。',
     enumConfig: '枚举配置', enumSet: '设置枚举', enumCount: '{n} 项映射', enumValue: '原始数值', enumLabel: '显示文字', enumHint: '按解码后的整数原始值匹配，不应用倍率或偏移。例如 0 → 关闭，1 → 开启；未匹配时仍显示原始值。', enumEmpty: '尚未设置枚举，添加映射即可开始。清空后保存将移除枚举。', enumLabelPlaceholder: '例如：关闭 / 开启', enumAdd: '添加映射', enumRemove: '删除映射', enumClear: '清空映射', enumInvalidValue: '原始数值必须填写十进制整数，可包含负号。', enumDuplicate: '数值 {value} 重复，请为每个数值保留一项映射。', enumEmptyLabel: '请填写每项映射的显示文字。',
 
-    histMinutes: "最近 {n} 分钟", histHours: "最近 {n} 小时", histNoNumeric: "所选点位没有可绘制的数值数据，请检查类型或选择其他点位。", histZoomIn: "放大", histZoomOut: "缩小", histMoveEarlier: "向前移动时间窗口", histMoveLater: "向后移动时间窗口", histQueryZoom: "查询放大区间", histRelative: "各曲线相对量程", histInteractionHint: "悬停查看读数 · 左右拖动框选时间范围 · 双击恢复全范围", histNoVisible: "当前范围没有可见曲线，可重置缩放或点击下方图例显示曲线。", histNearest: "最近采样点（实际时间）", histLegendHint: "点击图例隐藏 / 显示曲线", histStatsHint: "当前可见时间范围的显示数据统计", histLastValue: "末值", histSamplingNote: "曲线为分桶后的解码值，显示模式由上方选择：每桶每地址保留最后一个值。Min / Max 是显示点的统计，可能遗漏瞬时峰值；放大后可点击“查询放大区间”提高时间分辨率。", histRelativeNote: "相对量程将每条曲线映射为 0–100%，恒定值显示在 50%；悬停和统计仍按所选原始值或物理值显示。",
+    histQualityTitle: '采样质量摘要', histQualityHint: '统计当前查询区间内、降采样前的解码采样。无效包括质量异常、缺字或无法表示的数值；没有产生采样的断线时段不计入分母。此有效率不等于设备在线率。', histQualityPoint: '点位', histQualitySource: '采样数', histQualityValid: '有效', histQualityInvalid: '无效', histQualityRate: '有效率',
+    histMinutes: "最近 {n} 分钟", histHours: "最近 {n} 小时", histNoNumeric: "所选点位没有可绘制的数值数据，请检查类型或选择其他点位。", histZoomIn: "放大", histZoomOut: "缩小", histMoveEarlier: "向前移动时间窗口", histMoveLater: "向后移动时间窗口", histQueryZoom: "查询放大区间", histRelative: "各曲线相对量程", histInteractionHint: "悬停查看读数 · 左右拖动框选时间范围 · 双击恢复全范围", histNoVisible: "当前范围没有可见曲线，可重置缩放或点击下方图例显示曲线。", histNearest: "最近采样点（实际时间）", histLegendHint: "点击图例隐藏 / 显示曲线", histStatsHint: "当前可见时间范围的显示数据统计", histLastValue: "末值", histSamplingNote: "曲线按完整查询区间解码，每桶保留首值、末值、峰谷和无效读数；缩放会自动查询细节。Min / Max 统计当前可见显示点，末次采样无效时末值显示为 —。", histRelativeNote: "相对量程将每条曲线映射为 0–100%，恒定值显示在 50%；悬停和统计仍按所选原始值或物理值显示。",
     liveCurve: '实时曲线', liveWindow: '时间窗口', freezeCurve: '暂停画面', resumeCurve: '继续实时', clearCurve: '清空曲线', curveWaiting: '等待新的有效采样数据…', liveCurveHint: '本次打开设备期间缓存；每 250ms 取最新值，最多 8 条曲线、每条 2400 点，保留最近 10 分钟。暂停仅冻结画面，不停止采集。', liveRawHint: '按寄存器类型解码原始值，不应用倍率/偏移；不绘制非有限数和无法精确表示的 64 位整数。', curvePaused: '画面已暂停，后台继续缓存', curveTracking: '实时跟随', curveNoNumeric: '暂无可绘制的数值点位，请先配置寄存器。', curveSelectLimit: '最多选择 {n} 个点位', curveTime: '时间',
 
     groupOldValues: '存在旧值', groupPartialData: '数据不完整', groupCommunicationError: '通信异常', slaveServiceError: '从站服务异常', groupTimeHint: '按组内最早的采样时间显示，避免部分数据未更新被掩盖',
@@ -111,7 +114,8 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointSettings: 'Point settings', pointSettingsAction: 'Settings', pointUnit: 'Engineering unit', pointFactor: 'Scale factor', pointOffset: 'Offset', pointInvalidScale: 'Use a finite, nonzero scale factor and a finite offset.', pointScaleHint: 'Physical value = raw value × scale factor + offset. Leave the unit blank to remove it. Defaults: factor 1, offset 0. Live tables show raw and physical values; curves can switch modes. Decimal places affect physical value display only. Raw values keep their decoded form; acquisition and conversion precision are unchanged.',
     enumConfig: 'Enum mappings', enumSet: 'Set enum', enumCount: '{n} mappings', enumValue: 'Raw value', enumLabel: 'Display text', enumHint: 'Match decoded integer values before scaling or offset. For example, 0 → Off and 1 → On. Unmatched values remain numeric.', enumEmpty: 'No mappings. Add a mapping to start; saving an empty list removes the enum.', enumLabelPlaceholder: 'For example: Off / On', enumAdd: 'Add mapping', enumRemove: 'Remove mapping', enumClear: 'Clear mappings', enumInvalidValue: 'Enter a decimal integer, optionally with a minus sign.', enumDuplicate: 'Duplicate value {value}. Keep one mapping per value.', enumEmptyLabel: 'Enter display text for every mapping.',
 
-    histMinutes: "Last {n} minutes", histHours: "Last {n} hours", histNoNumeric: "No plottable numeric data. Check types or select other points.", histZoomIn: "Zoom in", histZoomOut: "Zoom out", histMoveEarlier: "Move earlier", histMoveLater: "Move later", histQueryZoom: "Query zoomed range", histRelative: "Relative scale per series", histInteractionHint: "Hover for values · Drag horizontally to select time · Double-click to reset", histNoVisible: "No visible series in this range. Reset zoom or enable a legend item.", histNearest: "Nearest samples (actual times)", histLegendHint: "Click a legend item to hide / show", histStatsHint: "Statistics of displayed samples in the visible range", histLastValue: "Last", histSamplingNote: "Bucketed decoded values in the selected display mode: the last value per address in each bucket. Min / Max describe displayed samples and may miss transient peaks. Query the zoomed range for finer resolution.", histRelativeNote: "Each series maps to 0–100%; constant values appear at 50%. Readouts and statistics retain values in the selected display mode.",
+    histQualityTitle: 'Sample quality summary', histQualityHint: 'Counts cover decoded samples in the queried range before downsampling. Invalid includes bad quality, missing words and unrepresentable values. Outages with no samples are excluded; this is not device uptime.', histQualityPoint: 'Point', histQualitySource: 'Samples', histQualityValid: 'Valid', histQualityInvalid: 'Invalid', histQualityRate: 'Valid rate',
+    histMinutes: "Last {n} minutes", histHours: "Last {n} hours", histNoNumeric: "No plottable numeric data. Check types or select other points.", histZoomIn: "Zoom in", histZoomOut: "Zoom out", histMoveEarlier: "Move earlier", histMoveLater: "Move later", histQueryZoom: "Query zoomed range", histRelative: "Relative scale per series", histInteractionHint: "Hover for values · Drag horizontally to select time · Double-click to reset", histNoVisible: "No visible series in this range. Reset zoom or enable a legend item.", histNearest: "Nearest samples (actual times)", histLegendHint: "Click a legend item to hide / show", histStatsHint: "Statistics of displayed samples in the visible range", histLastValue: "Last", histSamplingNote: "Decoded samples retain the first, last, extrema and invalid readings per bucket. Zooming automatically queries finer detail. Min / Max describe visible display samples; Last is — if the final sample is invalid.", histRelativeNote: "Each series maps to 0–100%; constant values appear at 50%. Readouts and statistics retain values in the selected display mode.",
     liveCurve: 'Live curves', liveWindow: 'Time window', freezeCurve: 'Freeze view', resumeCurve: 'Resume live', clearCurve: 'Clear curves', curveWaiting: 'Waiting for new valid samples…', liveCurveHint: 'Buffered while this device is open. Latest values sampled every 250ms; up to 8 series, 2400 points each, retained for 10 minutes. Freezing does not stop acquisition.', liveRawHint: 'Raw values decoded by register type, without factor/offset. Non-finite values and unsafe 64-bit integers are omitted.', curvePaused: 'View frozen; buffering continues', curveTracking: 'Following live data', curveNoNumeric: 'No numeric points available. Configure registers first.', curveSelectLimit: 'Select up to {n} points', curveTime: 'Time',
 
     groupOldValues: 'Stale data present', groupPartialData: 'Incomplete data', groupCommunicationError: 'Communication error', slaveServiceError: 'Slave service error', groupTimeHint: 'Shows the oldest sample in the group so partial updates do not hide stale data',
@@ -260,7 +264,7 @@ function buildRegViews(groups: DeviceGroup[], latest: Record<string, LatestValue
         if (wv === undefined) break
         words.push(wv)
       }
-      const enough = words.length === w && end <= groupEnd
+      const enough = words.length === w && end <= groupEnd && sameResponseBatch(Array.from({ length: w }, (_, i) => latest[prefix + (start + i)]))
       if (!enough) {
         views.set(r.id, { value: '—', label: null, covered: false, invalid: true, writable: false })
         continue
@@ -486,7 +490,7 @@ export default function App() {
       if (!msg || typeof msg.type !== 'string' || msg.type === 'pong') return
       if (msg.type === 'latest' && msg.data && typeof msg.data === 'object') setLatest(msg.data)
       else if (msg.type === 'poller/result' && Array.isArray(msg.points)) {
-        setLatest((prev) => { const next = { ...prev }; for (const p of msg.points) if (p.area) next[p.objectId + ':' + p.area + ':' + p.address] = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp }; return next })
+        setLatest((prev) => { const next = { ...prev }; for (const p of msg.points) if (p.area) next[p.objectId + ':' + p.area + ':' + p.address] = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp, timestampMs: p.timestampMs, batchId: p.batchId }; return next })
       }
       else if (msg.type === 'group-error') setGroupErrors((prev) => ({ ...prev, [msg.groupId]: msg.error }))
       else if (msg.type === 'group-ok') setGroupErrors((prev) => { const next = { ...prev }; delete next[msg.groupId]; return next })
@@ -1296,6 +1300,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
       <button className="btn primary" disabled={!valid || currentStatus === 'loading'} onClick={() => setRefresh(v => v + 1)}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
     </div>
     {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
+    {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} t={t} />}
     {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody sourceSeries={data?.series} onViewportChange={setCurveRange} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={error} range={{ start: startMs, end: endMs }} /> : <>
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
       <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={error} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
@@ -1577,8 +1582,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, sourceSeries, statu
   const x = (time: number) => L + (time - start) / span * pw
   const visibleSeries = series.map(s => {
     const samples = s.samples.filter(p => p[0] >= start && p[0] <= end)
-    let min = Infinity, max = -Infinity, last: number | null = null
-    for (const [, v] of samples) if (v !== null) { min = Math.min(min, v); max = Math.max(max, v); last = v }
+    const { min, max, last } = historySampleStats(samples)
     return { ...s, samples, min, max, last, color: CHART_COLORS[Math.abs(s.id) % CHART_COLORS.length] }
   })
   let minimum = Infinity, maximum = -Infinity

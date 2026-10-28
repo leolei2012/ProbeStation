@@ -30,4 +30,19 @@ assert.equal(bounded[1].points.length, CURVE_LIMIT)
 const cleared = { 1: { ...bounded[1], points: [] } }
 assert.equal(sampleCurve(cleared, [reg], { [key]: point(2404, now + 2404) }, 1, now + 2405, 5000, new Set())[1].points.length, 0, 'clear does not replay old samples')
 assert.equal(sampleCurve(buffer, [], {}, 1, now, 5000, new Set())[1], undefined)
+const response = (rawValue: number, batchId: string, ms = now) => ({ ...point(rawValue, ms), batchId })
+const complete = { [key]: response(0, 'A'), '1:holding-register:1': response(65535, 'A') }
+const mixed = { ...complete, [key]: response(1, 'B', now + 100) }
+assert.equal(sampleCurve({}, [wide], mixed, 1, now + 100, 5000, new Set())[1].points.length, 0, 'first frame rejects overlapping groups from different responses')
+assert.equal(sampleCurve(sampleCurve({}, [wide], complete, 1, now, 5000, new Set()), [wide], { [key]: response(1, 'B', now + 100), '1:holding-register:1': response(65535, 'C', now + 200) }, 1, now + 200, 5000, new Set())[1].points.at(-1)?.[1] ?? null, null, 'both words advancing is insufficient when their response identities differ')
+let tracked = sampleCurve({}, [wide], complete, 1, now, 5000, new Set())
+tracked = sampleCurve(tracked, [wide], mixed, 1, now + 100, 5000, new Set())
+assert.equal(tracked[1].points.at(-1)![1], null, 'a partial response breaks the line instead of inventing 131071')
+const restored = { [key]: response(1, 'C', now + 100), '1:holding-register:1': response(0, 'C', now + 100) }
+tracked = sampleCurve(tracked, [wide], restored, 1, now + 100, 5000, new Set())
+assert.equal(tracked[1].points.at(-1)![1], 65536, 'a complete response recovers')
+const sameMillisecond = { [key]: response(1, 'D', now + 100), '1:holding-register:1': response(1, 'D', now + 100) }
+tracked = sampleCurve(tracked, [wide], sameMillisecond, 1, now + 100, 5000, new Set())
+assert.equal(tracked[1].points.at(-1)![1], 65537, 'distinct responses in the same millisecond are sampled')
+assert.equal(sampleCurve(tracked, [wide], JSON.parse(JSON.stringify(sameMillisecond)), 1, now + 100, 5000, new Set())[1].points.length, tracked[1].points.length, 'serialized unchanged response is not replayed')
 console.log('LIVE CURVE TEST OK: deduplication, freeze, gaps, freshness, area isolation, multiword decoding, limits and clear')

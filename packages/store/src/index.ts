@@ -33,6 +33,7 @@ export interface PollPoint {
   timestamp: string
   rawValue: number
   quality: string
+  batchId?: string | null
 }
 
 /**
@@ -44,7 +45,7 @@ export class DuckDBStore {
   private ready: Promise<DuckDBConnection>
   private instance: DuckDBInstance | null = null
   private buffer: PollPoint[] = []
-  private readonly latest = new Map<string, { rawValue: number; quality: string; timestamp: string }>()
+  private readonly latest = new Map<string, { rawValue: number; quality: string; timestamp: string; batchId?: string | null }>()
   private flushTimer: NodeJS.Timeout | null = null
   private retentionTimer: NodeJS.Timeout | null = null
   private dbPath: string
@@ -111,7 +112,7 @@ export class DuckDBStore {
       const area = p.area
       if (!area) throw new Error('PollPoint.area is required')
       this.buffer.push(p)
-      this.latest.set(`${p.objectId}:${area}:${p.address}`, { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp })
+      this.latest.set(`${p.objectId}:${area}:${p.address}`, { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp, ...(p.batchId ? { batchId: p.batchId } : {}) })
     }
     if (this.buffer.length >= this.config.flushBatchSize) void this.flush()
   }
@@ -219,15 +220,15 @@ export class DuckDBStore {
   }
 
   /** 全局快照键统一为 objectId:area:address。timestamp 输出为服务器本地时间。 */
-  getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> {
-    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> = {}
+  getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> {
+    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> = {}
     for (const [k, v] of this.latest) out[k] = { ...v, timestamp: localTs(v.timestamp), timestampMs: Date.parse(v.timestamp) }
     return out
   }
 
   /** 单设备、单数据区的最新快照（按地址键控）。timestamp 输出为服务器本地时间。 */
-  getLatestByObject(objectId: number, area: ModbusArea): Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> {
-    const out: Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> = {}
+  getLatestByObject(objectId: number, area: ModbusArea): Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> {
+    const out: Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> = {}
     const prefix = `${objectId}:${area}:`
     for (const [k, v] of this.latest) {
       if (k.startsWith(prefix)) out[Number(k.slice(prefix.length))] = { ...v, timestamp: localTs(v.timestamp), timestampMs: Date.parse(v.timestamp) }
@@ -236,8 +237,8 @@ export class DuckDBStore {
   }
 
   /** 单设备四数据区快照，键统一为 area:address。timestamp 输出为服务器本地时间。 */
-  getLatestByObjectAll(objectId: number): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> {
-    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number }> = {}
+  getLatestByObjectAll(objectId: number): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> {
+    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> = {}
     const prefix = objectId + ':'
     for (const [k, v] of this.latest) {
       if (!k.startsWith(prefix)) continue
@@ -428,7 +429,7 @@ export class DuckDBStore {
         const sampler = samplers.get(r.id)!, samples = sampler.samples().map(s => [s.time, s.value] as [number, number | null])
         sourceSamples += sampler.count; displayedSamples += samples.length
         const intervals = samples.slice(1).map((p, i) => p[0] - samples[i][0]).filter(v => v > 0).sort((a, b) => a - b)
-        return { id: r.id, samples, gapMs: intervals.length ? intervals[Math.floor(intervals.length / 2)] * 3 : null }
+        return { id: r.id, samples, summary: sampler.summary(), gapMs: intervals.length ? intervals[Math.floor(intervals.length / 2)] * 3 : null }
       })
       return { series, sourceSamples, displayedSamples, downsampled: displayedSamples < sourceSamples, complete: true, start, end }
     } finally { signal?.removeEventListener('abort', interrupted); conn.disconnectSync() }

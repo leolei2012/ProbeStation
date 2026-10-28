@@ -36,6 +36,7 @@ interface Store {
 ## 存储布局
 
 - **热层**：键为 `objectId:area:address` 的 Map，`getLatest()` 零磁盘 IO，另有单设备快照接口。
+- 热缓存与所有 latest 快照保留可选 `batchId`，供消费者拒绝不同协议响应的多字组合。冷库目前没有响应身份字段，不能仅靠时间相同断言来自同一响应。
 - **冷层**：DuckDB 单表
 
   ```sql
@@ -68,3 +69,5 @@ const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T2
 `queryRegisterCurve(objectId, start, end, registers, maxPoints, signal?)` 使用独立 DuckDB 连接流式读取所选点位的全部区间，按实际采样时间合并完整原始字、解码，再保留桶内首/末值、数值最小/最大值及无效读数。返回 series、sourceSamples、displayedSamples、downsampled、complete。内存中保留显示桶，查询不受旧 `queryObject` 的 20 万行默认值影响；AbortSignal 可中断对应查询。
 
 `queryObjectCurve` 保留旧版每桶各地址最新字的接口，供已有调用兼容；新前端使用解码后的 `queryRegisterCurve`，避免多字异步拼接及峰值丢失。当前降采样为查询时计算，尚无预计算多级聚合表。
+
+`queryRegisterCurve` 每条 series 的 `summary` 包含完整查询区间内降采样前的 `sourceSamples`、`validSamples`、`invalidSamples`。这是按点位解码后的采样数，多字点位缺字或质量异常计为无效，非有限数或无法精确表示的 64 位整数也计为无效；没有采样的时段不在分母中，有效率不是设备在线率。空区间返回三个零。

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
-import { decodeHistorySeries, nearestHistorySample, type HistoryPoint } from '../apps/web/src/history-curve.ts'
+import { decodeHistorySeries, historySampleStats, nearestHistorySample, type HistoryPoint } from '../apps/web/src/history-curve.ts'
 
 const t = Date.parse('2026-09-23T00:00:00Z')
+assert.deepEqual(historySampleStats([[t, 2], [t + 1000, 10], [t + 2000, null]]), { min: 2, max: 10, last: null }, 'invalid final sample must not reuse the last valid reading')
+assert.deepEqual(historySampleStats([[t, null]]), { min: Infinity, max: -Infinity, last: null })
+assert.deepEqual(historySampleStats([]), { min: Infinity, max: -Infinity, last: null })
+assert.deepEqual(historySampleStats([[t, 0]]), { min: 0, max: 0, last: 0 })
+assert.equal(historySampleStats([[t, null], [t + 1000, -5]]).last, -5, 'a later valid sample recovers the last reading')
 const r = { id: 1, groupId: 1, startAddress: 0, dataType: 'uint16', functionCode: 3 }
 const p = (offset: number, address: number, rawValue: number, area = 'holding-register'): HistoryPoint => ({ ts: new Date(t + offset).toISOString(), area, address, rawValue })
 const result = decodeHistorySeries([r, { ...r, id: 2, groupId: 2, functionCode: 4 }], [p(1000, 0, 10), p(0, 0, 2), p(0, 0, 50, 'input-register')], new Set([1, 2]))

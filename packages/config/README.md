@@ -24,7 +24,7 @@ class ConfigStore {
   listGroups(objectId) / getGroup(id) / createGroup(objectId, name, functionCode, startAddress, quantity, mode?, slaveId?, pollIntervalMs?) / updateGroup(id, fields) / deleteGroup(id) / toggleGroup(id)
   // Registers（寄存器）
   listRegisters(groupId) / listRegistersByObject(objectId) / getRegister(id)
-  createRegister(groupId, objectId, alias, functionCode, startAddress, dataType?)
+  createRegister(groupId, objectId, alias, functionCode, startAddress, dataType?, extra?)
   updateRegister(id, fields) / deleteRegister(id)
   // 告警规则 + 日志
   listRules() / createRule(registerId, operator, threshold, message) / deleteRule(id)
@@ -59,6 +59,10 @@ update 接受 **camelCase**（`isActive`、`functionCode`、`startAddress`、`da
 - 事件由构造器的 `onChange` 回调注入，独立构造 ConfigStore（测试）时不注入即为 no-op。
 
 ## 当前限制（TODO）
+
+配置 JSON 备份将点位 `quantity` 作为独立元数据保存和恢复，合法值为正 JavaScript 安全整数（1–9007199254740991），不施加 Modbus 单次读取或地址空间的上限。该范围可通过 JSON 和 SQLite INTEGER 精确往返。旧 v1 备份完全缺少此字段时默认 1；显式非法值会返回 400，不能通过字符串转换、舍入或按 dtype 重算。备份解析不修改调用方的输入。
+
+`createRegister` 的 `extra.quantity` 使用同样校验并显式入库。实际解码字宽仍由 `dataType` 决定，读取范围仍由分组决定；本字段不会扩大采样或写入范围。本次不包含生产数据迁移，也没有调整 XLSX/MBP 导入数量列的既有行为。
 
 - `isActive` 直接返回 SQLite 的 0/1，未转布尔。
 - 无外键约束（级联删除靠应用层）。

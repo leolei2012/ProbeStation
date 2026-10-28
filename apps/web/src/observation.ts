@@ -1,4 +1,4 @@
-export interface Sample { rawValue: number; quality: string; timestamp: string; timestampMs?: number }
+export interface Sample { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }
 
 export function sampleTime(sample?: Sample): number | null {
   if (!sample) return null

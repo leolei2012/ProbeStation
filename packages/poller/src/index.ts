@@ -1,12 +1,14 @@
 import type { Context } from 'cordis'
 import z from 'schemastery'
-import { areaForFunction, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
+import { areaForFunction, planReadChunks, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
+import { randomUUID } from 'node:crypto'
 
 export const name = 'poller'
 export const inject = ['config', 'modbus', 'store']
 
 export interface RegisterGroup { id: number; functionCode: number; startAddress: number; quantity: number; slaveId?: number }
 export interface Device { id: number; host: string; port: number; groups: RegisterGroup[] }
+type ReadWord = { address: number; rawValue: number; timestamp: string; batchId: string }
 
 export interface Config { pollIntervalMs: number; connectRetryMs: number; watchdogTimeoutMs: number; autoResetFailThreshold: number; autoResetCooldownMs: number }
 export const Config: z<Config> = z.object({
@@ -58,14 +60,11 @@ class PollingEngine {
     await driver.connect({ ip: device.host, port: device.port })
     try {
       const points: Array<Record<string, unknown>> = []
-      const cycleTs = new Date().toISOString()
       for (const g of device.groups) {
         const gapMs = (device as any).pollIntervalMs ?? 0
         const values = await this.readGroup(driver, g, gapMs, (device as any).timeoutMs)
         const area = areaForFunction(g.functionCode as ModbusFunctionCode)
-        for (let i = 0; i < values.length; i++) {
-          points.push({ objectId: device.id, area, address: g.startAddress + i, timestamp: cycleTs, rawValue: Number(values[i]), quality: 'good' })
-        }
+        for (const word of values) points.push({ objectId: device.id, area, ...word, quality: 'good' })
       }
       this.ctx.emit('poller/result', { objectId: device.id, points })
       this.ctx.store.write(points)
@@ -196,9 +195,7 @@ class PollingEngine {
         this.clearGroupError(d.id, g.id)
         this.readFailCount.delete(key) // 一次成功说明串口链路当前可用，清零该串口的连续失败
         const points: Array<Record<string, unknown>> = []
-        for (let i = 0; i < values.length; i++) {
-          points.push({ objectId: d.id, area, address: g.startAddress + i, timestamp: new Date().toISOString(), rawValue: Number(values[i]), quality: 'good' })
-        }
+        for (const word of values) points.push({ objectId: d.id, area, ...word, quality: 'good' })
         if (points.length > 0) {
           this.ctx.emit('poller/result', { objectId: d.id, points })
           this.ctx.store.write(points)
@@ -346,9 +343,9 @@ class PollingEngine {
    * 读一个分组。当 quantity 超过该 FC 的 Modbus 单请求上限时自动分批读再拼接：
    *   FC01/02（位）→ 每批 ≤2000；FC03/04（寄存器）→ 每批 ≤125。
    * 相邻两批之间暂停 gapMs（扫描间隔；A 方案：为了不过度挤压自/串口从站）再发下一批。
-   * 返回数组顺序与地址连续一致（各批顺序拼接）。
+   * 点位不跨响应拆分；每个响应保留独立 batchId 和统一时间戳。
    */
-  private async readGroup(driver: any, group: any, gapMs = 0, timeoutMs?: number): Promise<Array<number | boolean>> {
+  private async readGroup(driver: any, group: any, gapMs = 0, timeoutMs?: number): Promise<ReadWord[]> {
     const slaveId = group.slaveId ?? 1
     const fc = group.functionCode
     const perChunk = (fc === 1 || fc === 2) ? 2000 : (fc === 3 || fc === 4 ? 125 : 1)
@@ -360,15 +357,17 @@ class PollingEngine {
         default: return driver.readHoldingRegisters(start, want, slaveId, timeoutMs)
       }
     }
-    if (group.quantity <= perChunk) return single(group.startAddress, group.quantity)
+    const registers = group.quantity > perChunk && (fc === 3 || fc === 4) ? this.ctx.config.listRegisters?.(group.id) ?? [] : []
+    const chunks = planReadChunks(group.startAddress, group.quantity, perChunk, registers)
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)))
-    const out: Array<number | boolean> = []
-    for (let offset = 0; offset < group.quantity; offset += perChunk) {
+    const out: ReadWord[] = []
+    for (const chunk of chunks) {
       // 除第一批外，每批前先停一个扫描间隔（A 方案）
-      if (offset > 0 && gapMs > 0) await sleep(gapMs)
-      const want = Math.min(perChunk, group.quantity - offset)
-      const part = await single(group.startAddress + offset, want)
-      out.push(...(part as Array<number | boolean>))
+      if (out.length > 0 && gapMs > 0) await sleep(gapMs)
+      const part = await single(chunk.start, chunk.quantity)
+      if (part.length !== chunk.quantity) throw new Error('Incomplete Modbus response')
+      const timestamp = new Date().toISOString(), batchId = randomUUID()
+      out.push(...part.map((rawValue, index) => ({ address: chunk.start + index, rawValue: Number(rawValue), timestamp, batchId })))
     }
     return out
   }

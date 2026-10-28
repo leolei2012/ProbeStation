@@ -1,6 +1,7 @@
 import { DATA_TYPES, registerWidth } from '../../core/src/codec.ts'
 import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
 import type { DeviceRecord, GroupRecord, RegisterRecord, RuleRecord } from './index.ts'
+import { parseRegisterQuantity } from './register-quantity.ts'
 
 export interface ConfigBackup {
   format: 'probestation-config'; version: 1; createdAt: string
@@ -50,6 +51,7 @@ export function parseConfigBackup(value: unknown): ConfigBackup {
     if (g.objectId !== r.objectId || g.functionCode !== r.functionCode) invalid('点位与分组或设备关系不一致')
     if (!(DATA_TYPES as readonly string[]).includes(r.dataType)) invalid('点位类型')
     integer(r.startAddress, g.startAddress, g.startAddress + g.quantity - 1, '点位地址')
+    if (Object.hasOwn(r, 'quantity')) parseRegisterQuantity(r.quantity)
     // Existing groups can contain trailing covered placeholder rows; preserve them in backups.
     if (r.startAddress + registerWidth(r.dataType) > 65536) invalid('点位超出地址空间')
     text(r.alias, '点位名称', true); text(r.unit, '工程单位', true)
@@ -66,5 +68,6 @@ export function parseConfigBackup(value: unknown): ConfigBackup {
     if (!(ALARM_OPERATORS as readonly string[]).includes(r.operator)) invalid('告警运算符')
     finite(r.threshold, '告警阈值'); text(r.message, '告警提示', true)
   }
-  return b
+  // Old v1 backups may omit metadata. Keep caller-owned input intact (even frozen input).
+  return { ...b, registers: b.registers.map(r => Object.hasOwn(r, 'quantity') ? r : { ...r, quantity: 1 }) }
 }

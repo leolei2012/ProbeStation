@@ -13,6 +13,8 @@ assert.equal(readAlarmValue('uint16', [undefined], now, 8000, false, false), nul
 assert.equal(readAlarmValue('uint16', [{ ...sample, quality: 'bad' }], now, 8000, false, false), null)
 assert.equal(readAlarmValue('uint16', [{ ...sample, timestampMs: now + 2000 }], now, 8000, false, false), null)
 assert.equal(readAlarmValue('uint32', [sample, { ...sample, timestampMs: now - 2000 }], now, 8000, false, false), null)
+assert.equal(readAlarmValue('uint32', [{ ...sample, rawValue: 1, batchId: 'B' }, { ...sample, rawValue: 65535, batchId: 'A' }], now, 8000, false, false), null, 'same-millisecond mixed responses never trigger an alarm')
+assert.equal(readAlarmValue('uint32', [{ ...sample, rawValue: 1, batchId: 'B' }, { ...sample, rawValue: 0, batchId: 'B' }], now, 8000, false, false), 65536, 'complete response recovers without changing thresholds')
 
 for (const [op, value, expected] of [['>', 101, true], ['>', 100, false], ['>=', 100, true], ['==', 100, true], ['==', 99, false], ['<', 99, true], ['<=', 100, true], ['!=', 99, true]] as const) assert.equal(alarmMatches(value, op, 100), expected)
 assert.equal(alarmMatches(NaN, '!=', 100), false)
@@ -47,8 +49,13 @@ emit(0, 'holding-register', 0, 'bad'); emit(160)
 assert.equal(events.length, 3, 'bad quality cannot clear and retrigger')
 emit(1, 'holding-register', 2)
 assert.equal(events.length, 3, 'partial multiword samples ignored')
+handler({ objectId: d.id, points: [2, 3].map(address => ({ address, rawValue: address === 2 ? 1 : 65535, area: 'holding-register', quality: 'good', batchId: address === 2 ? 'A' : 'B' })) })
+assert.equal(events.length, 3, 'different responses cannot fabricate a value that triggers the rule')
 handler({ objectId: d.id, points: [2, 3].map(address => ({ address, rawValue: address === 2 ? 1 : 0, area: 'holding-register', quality: 'good' })) })
 assert.equal(events.length, 4, 'complete uint32 decoded')
+handler({ objectId: d.id, points: [2, 3].map(address => ({ address, rawValue: 0, area: 'holding-register', quality: 'good', batchId: address === 2 ? 'A' : 'B' })) })
+handler({ objectId: d.id, points: [2, 3].map(address => ({ address, rawValue: address === 2 ? 1 : 0, area: 'holding-register', quality: 'good', batchId: 'C' })) })
+assert.equal(events.length, 4, 'mixed responses cannot clear an active alarm and spuriously rearm it')
 cfg.updateRule(rule.id, { registerId: reg.id, operator: '>', threshold: 130, message: 'Updated' })
 emit(140)
 assert.equal(events.length, 5, 'edited active rule reevaluated')
@@ -63,4 +70,32 @@ assert.equal(events.length, 5, 'deleted rule no longer evaluated')
 cfg.deleteGroup(group.id)
 assert.equal(cfg.listRules().length, 0, 'deleting points removes their rules')
 ;(cfg as any).db.close()
+
+// Independent event-contract cases: no cache may fill partial responses and an
+// invalid latest complete response must not replay an older valid one.
+let evaluate: (event: any) => void = () => {}
+const triggered: any[] = []
+const eventRegister = { id: 1, startAddress: 0, dataType: 'uint32', functionCode: 3 }
+apply({ config: {
+  listRules: () => [{ id: 1, registerId: 1, operator: '>', threshold: 65535 }],
+  listRegistersByObject: () => [eventRegister], log: () => {},
+}, on: (_: string, fn: any) => { evaluate = fn }, emit: (_: string, event: any) => triggered.push(event), provide: () => {} } as any)
+const wordsFor = (batchId: string, high: number, low: number, quality = 'good') => [high, low].map((rawValue, address) => ({ address, rawValue, quality, area: 'holding-register', batchId }))
+const evaluatePoints = (points: any[]) => evaluate({ objectId: 1, points })
+evaluatePoints([wordsFor('A', 1, 0)[0]])
+evaluatePoints([wordsFor('A', 1, 0)[1]])
+assert.equal(triggered.length, 0, 'separate events cannot fill missing words, even if their response IDs match')
+evaluatePoints([{ ...wordsFor('legacy', 1, 0)[0], batchId: undefined }, wordsFor('B', 1, 0)[1]])
+assert.equal(triggered.length, 0, 'legacy words cannot fill an identified response')
+evaluatePoints([...wordsFor('C', 0, 0), ...wordsFor('D', 1, 0)])
+assert.equal(triggered.length, 1, 'last complete response in event order is selected')
+evaluatePoints([...wordsFor('E', 0, 0), ...wordsFor('F', 0, 0, 'bad')])
+evaluatePoints(wordsFor('G', 1, 0))
+assert.equal(triggered.length, 1, 'bad complete response cannot fall back to an earlier value and falsely rearm an alarm')
+evaluatePoints([...wordsFor('H', 0, 0), ...wordsFor('I', 0, 0), wordsFor('I', 0, 0)[0]])
+evaluatePoints(wordsFor('J', 1, 0))
+assert.equal(triggered.length, 1, 'duplicate address in complete response stays unknown')
+evaluatePoints([...wordsFor('K', 1, 0), ...wordsFor('L', 0, 0)])
+evaluatePoints(wordsFor('M', 1, 0))
+assert.equal(triggered.length, 2, 'a later complete valid recovery can rearm the alarm')
 console.log('ALARM TEST OK: operators, raw values, exact bigint comparison, area isolation, multiword samples, quality, deduplication, recovery and rule validation')
