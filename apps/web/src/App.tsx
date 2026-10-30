@@ -17,7 +17,7 @@ import { showOperationNotice } from './OperationNotifications'
 import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
 import { AssistantSettings } from './AssistantSettings'
-import { decodeHistorySeries, historySampleStats, historyLineStarts, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
+import { decodeHistorySeries, historySampleStats, historyLineStarts, historyQueryRange, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
 import { sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, staleAfterMs, type Sample } from './observation'
 import { sameResponseBatch } from '../../../packages/core/src/sample-batch.ts'
@@ -1241,8 +1241,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   const selectedRegisters = registers.filter(r => selected.has(r.id))
   const startMs = Date.parse(range.start), endMs = Date.parse(range.end)
   const valid = Number.isFinite(startMs) && Number.isFinite(endMs) && startMs < endMs
-  const queryStart = mode === 'chart' && curveRange ? curveRange.start : startMs
-  const queryEnd = mode === 'chart' && curveRange ? curveRange.end : endMs
+  const { start: queryStart, end: queryEnd } = historyQueryRange(mode === 'chart' && curveRange ? curveRange : { start: startMs, end: endMs })
   const selectionKey = [...selected].sort((a, b) => a - b).join(',')
   useEffect(() => {
     if (!valid) return
@@ -1607,7 +1606,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, sourceSeries, statu
   const focusRange = (center: number, width: number) => {
     const clampedWidth = Math.min(range.end - range.start, Math.max(1000, width))
     const left = Math.max(range.start, Math.min(range.end - clampedWidth, center - clampedWidth / 2))
-    const next = { start: left, end: left + clampedWidth }
+    const next = historyQueryRange({ start: left, end: left + clampedWidth })
     setView(next); onViewportChange(next); setHover(null)
   }
   const pointerTime = (e: React.PointerEvent<SVGSVGElement>) => {

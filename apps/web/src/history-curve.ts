@@ -4,6 +4,10 @@ import { isBinType, isHexType, registerWidth } from '../../../packages/core/src/
 export interface HistoryPoint { ts: string; area: string; address: number; rawValue: number; quality?: string; batchId?: string | null; timestampMs?: number }
 export interface HistoryRegister { id: number; groupId: number; startAddress: number; dataType: string; functionCode: number }
 export type HistorySample = [number, number | null]
+/** Use Date's millisecond precision for both viewport identity and serialized requests. */
+export function historyQueryRange(range: { start: number; end: number }) {
+  return { start: new Date(range.start).getTime(), end: new Date(range.end).getTime() }
+}
 export interface HistorySeries {
   id: number; samples: HistorySample[]; gapMs: number
   verification?: Array<[number, HistoryVerification]>
