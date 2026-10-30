@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
-import { decodeHistorySeries, historySampleStats, nearestHistorySample, type HistoryPoint } from '../apps/web/src/history-curve.ts'
+import { decodeHistorySeries, historySampleStats, historyLineStarts, nearestHistorySample, type HistoryPoint } from '../apps/web/src/history-curve.ts'
 
 const t = Date.parse('2026-09-23T00:00:00Z')
+assert.deepEqual([...historyLineStarts([[0, 1], [18000, 2], [36000, 3]], 5400, [[0, 0], [18000, 0], [36000, 0]])], [0], 'sparse retained points in one source segment stay connected')
+assert.deepEqual([...historyLineStarts([[0, 1], [18000, 2], [36000, 3]], 5400, [[0, 0], [18000, 1], [36000, 1]])], [0, 1], 'actual source gaps survive display downsampling')
+assert.deepEqual([...historyLineStarts([[0, 1], [1000, null], [2000, 2]], 5400, [[0, 0], [1000, 1], [2000, 1]])], [0, 2], 'invalid readings still break the line')
+assert.deepEqual([...historyLineStarts([[0, 1], [18000, 2]], 5400)], [0, 1], 'old server responses retain conservative fallback behavior')
+assert.deepEqual([...historyLineStarts([[18000, 2], [36000, 3]], 5400, [[0, 0], [18000, 1], [36000, 1]])], [0], 'viewport filtering preserves source segment identity')
 assert.deepEqual(historySampleStats([[t, 2], [t + 1000, 10], [t + 2000, null]]), { min: 2, max: 10, last: null }, 'invalid final sample must not reuse the last valid reading')
 assert.deepEqual(historySampleStats([[t, null]]), { min: Infinity, max: -Infinity, last: null })
 assert.deepEqual(historySampleStats([]), { min: Infinity, max: -Infinity, last: null })

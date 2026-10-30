@@ -456,14 +456,18 @@ export class DuckDBStore {
       }).join(',')
       const samplers = new Map(registers.map(r => [r.id, new CurveSampler(startMs, bucketMs)]))
       const byId = new Map(registers.map(r => [r.id, r]))
-      const result = await conn.stream(`SELECT r.id, date_diff('millisecond', DATE '1970-01-01', p.ts) AS time,
+      const continuity = new Map<number, { previous: number; segment: number; sourceGapMs: number | null }>()
+      const result = await conn.stream(`WITH grouped AS (SELECT r.id, date_diff('millisecond', DATE '1970-01-01', p.ts) AS time,
         list(p.raw_value ORDER BY p.address) AS words, list(p.quality ORDER BY p.address) AS qualities,
         list(p.address ORDER BY p.address) AS addresses, list(p.batch_id ORDER BY p.address) AS batch_ids,
         count(DISTINCT p.address) AS word_count
         FROM poll_data p JOIN (VALUES ${defs}) AS r(id, area, addr, width)
         ON p.area = r.area AND p.address >= r.addr AND p.address < r.addr + r.width
         WHERE p.object_id = $objectId AND p.ts >= $start AND p.ts <= $end
-        GROUP BY r.id, p.ts ORDER BY p.ts, r.id`, params)
+        GROUP BY r.id, p.ts), timed AS (
+          SELECT *, time - lag(time) OVER (PARTITION BY id ORDER BY time) AS interval_ms FROM grouped
+        ) SELECT *, median(CASE WHEN interval_ms > 0 THEN interval_ms END) OVER (PARTITION BY id) AS cadence_ms
+        FROM timed ORDER BY time, id`, params)
       for await (const rows of result.yieldRowObjects()) {
         signal?.throwIfAborted()
         for (const row of rows) {
@@ -475,7 +479,13 @@ export class DuckDBStore {
           const decoded = decodeHistoricalSample(reg, words.map((rawValue, i) => ({ address: addresses[i], rawValue, quality: qualities[i], batchId: ids[i] })))
           const raw = decoded.value ?? NaN
           const number = typeof raw === 'bigint' && (raw > BigInt(Number.MAX_SAFE_INTEGER) || raw < BigInt(Number.MIN_SAFE_INTEGER)) ? NaN : Number(raw)
-          samplers.get(id)!.add({ time: Number(row.time), value: Number.isFinite(number) ? number : null, words, qualities, verification: Number.isFinite(number) ? decoded.verification : 'unknown' })
+          const time = Number(row.time), cadence = Number(row.cadence_ms)
+          const state = continuity.get(id) ?? { previous: time, segment: 0, sourceGapMs: cadence > 0 ? cadence * 3 : null }
+          if (state.sourceGapMs !== null && time - state.previous > state.sourceGapMs) state.segment++
+          if (!Number.isFinite(number)) state.segment++
+          samplers.get(id)!.add({ time, value: Number.isFinite(number) ? number : null, words, qualities, verification: Number.isFinite(number) ? decoded.verification : 'unknown', segment: state.segment })
+          state.previous = time
+          continuity.set(id, state)
         }
       }
       let sourceSamples = 0, displayedSamples = 0
@@ -483,7 +493,7 @@ export class DuckDBStore {
         const sampler = samplers.get(r.id)!, displayed = sampler.samples(), samples = displayed.map(s => [s.time, s.value] as [number, number | null])
         sourceSamples += sampler.count; displayedSamples += samples.length
         const intervals = samples.slice(1).map((p, i) => p[0] - samples[i][0]).filter(v => v > 0).sort((a, b) => a - b)
-        return { id: r.id, samples, verification: displayed.map(s => [s.time, s.verification] as const), integrity: sampler.integrity(), summary: sampler.summary(), gapMs: intervals.length ? intervals[Math.floor(intervals.length / 2)] * 3 : null }
+        return { id: r.id, samples, segments: displayed.map(s => [s.time, s.segment!] as const), sourceGapMs: continuity.get(r.id)?.sourceGapMs ?? null, verification: displayed.map(s => [s.time, s.verification] as const), integrity: sampler.integrity(), summary: sampler.summary(), gapMs: intervals.length ? intervals[Math.floor(intervals.length / 2)] * 3 : null }
       })
       return { series, sourceSamples, displayedSamples, downsampled: displayedSamples < sourceSamples, complete: true, start, end }
     } finally { signal?.removeEventListener('abort', interrupted); conn.disconnectSync() }

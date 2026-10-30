@@ -17,7 +17,7 @@ import { showOperationNotice } from './OperationNotifications'
 import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
 import { AssistantSettings } from './AssistantSettings'
-import { decodeHistorySeries, historySampleStats, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
+import { decodeHistorySeries, historySampleStats, historyLineStarts, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
 import { sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, staleAfterMs, type Sample } from './observation'
 import { sameResponseBatch } from '../../../packages/core/src/sample-batch.ts'
@@ -1596,11 +1596,11 @@ function ChartBody({ valueMode, t, registers, selected, pts, sourceSeries, statu
   const y = (value: number) => T + (yMax - value) / (yMax - yMin) * ph
   const displayValue = (value: number, s: typeof visibleSeries[number]) => relative ? s.max === s.min ? 50 : (value - s.min) / (s.max - s.min) * 100 : value
   const pathFor = (s: typeof visibleSeries[number]) => {
-    let path = '', previous: number | null = null
-    for (const [time, value] of s.samples) {
-      if (value === null) { previous = null; continue }
-      path += `${previous === null || time - previous > s.gapMs ? 'M' : 'L'}${x(time).toFixed(2)},${y(displayValue(value, s)).toFixed(2)} `
-      previous = time
+    let path = ''
+    const starts = historyLineStarts(s.samples, s.gapMs, s.segments)
+    for (const [index, [time, value]] of s.samples.entries()) {
+      if (value === null || !Number.isFinite(value)) continue
+      path += `${starts.has(index) ? 'M' : 'L'}${x(time).toFixed(2)},${y(displayValue(value, s)).toFixed(2)} `
     }
     return path
   }

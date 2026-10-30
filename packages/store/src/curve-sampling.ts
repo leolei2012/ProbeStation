@@ -1,6 +1,6 @@
 /** Keep real samples, including extrema and invalid readings, in each time bucket. */
 import type { HistoryVerification } from '../../core/src/history-integrity.ts'
-export interface CurveSample { time: number; value: number | null; words: number[]; qualities: string[]; verification?: HistoryVerification }
+export interface CurveSample { time: number; value: number | null; words: number[]; qualities: string[]; verification?: HistoryVerification; segment?: number }
 export class CurveSampler {
   private buckets = new Map<number, { first: CurveSample; last: CurveSample; min: CurveSample; max: CurveSample; invalid?: CurveSample; unverified?: CurveSample }>()
   private integrityCounts = { verified: 0, unverified: 0, unknown: 0 }

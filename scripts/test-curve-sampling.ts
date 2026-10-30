@@ -5,6 +5,7 @@ import { ConfigStore } from '../packages/config/src/index.ts'
 import { registerCurve } from '../packages/api/src/curve.ts'
 import { encodeRegister } from '../packages/core/src/codec.ts'
 import { CurveSampler } from '../packages/store/src/curve-sampling.ts'
+import { historyLineStarts } from '../apps/web/src/history-curve.ts'
 
 const invalidSampler = new CurveSampler(0, 1000)
 for (let time = 0; time < 100; time++) invalidSampler.add({ time, value: null, words: [], qualities: ['bad'] })
@@ -71,6 +72,29 @@ try {
   assert.deepEqual(detail.series[0].summary, { sourceSamples: 5, validSamples: 5, invalidSamples: 0 }, 'zoom counts only the queried interval')
   const empty = await store.queryRegisterCurve(d.id, '2026-10-02T00:00:00Z', '2026-10-02T00:01:00Z', [r], 20)
   assert.deepEqual(empty.series[0].summary, { sourceSamples: 0, validSamples: 0, invalidSamples: 0 })
+  // Equal acquisition times must yield equal continuity regardless of signal shape.
+  const continuityDevice = cfg.createObject('continuity fixture (offline)', '', 502)
+  const continuityGroup = cfg.createGroup(continuityDevice.id, 'synthetic', 3, 0, 2)
+  const flatReg = cfg.createRegister(continuityGroup.id, continuityDevice.id, 'flat', 3, 0, 'uint16')
+  const varyingReg = cfg.createRegister(continuityGroup.id, continuityDevice.id, 'varying', 3, 1, 'uint16')
+  for (let i = 0; i < 600; i++) {
+    const timestamp = new Date(t + i * 1800 + (i >= 200 ? 12000 : 0)).toISOString()
+    store.write([17, i % 20 < 10 ? (i % 2 ? 290 : 310) : 300].map((rawValue, address) => ({ objectId: continuityDevice.id, area: 'holding-register' as const, address, timestamp, rawValue, quality: i === 400 ? 'bad' : 'good', batchId: 'synthetic-response-' + i })))
+  }
+  await store.flush()
+  const continuity = await store.queryRegisterCurve(continuityDevice.id, start, new Date(t + 3600000).toISOString(), [flatReg, varyingReg], 1200)
+  assert.equal(continuity.series[0].sourceGapMs, 5400, 'gap threshold comes from raw 1.8s cadence before downsampling')
+  assert.equal(continuity.series[1].sourceGapMs, 5400, 'curve shape cannot change the acquisition gap threshold')
+  for (const series of continuity.series) {
+    assert.equal(historyLineStarts(series.samples, series.gapMs ?? Infinity, series.segments).size, 3, 'only the initial segment, actual outage and invalid sample break the curve')
+    assert.deepEqual(series.summary, { sourceSamples: 600, validSamples: 599, invalidSamples: 1 }, 'continuity metadata does not invent invalid samples')
+  }
+  const varying = continuity.series[1]
+  assert(historyLineStarts(varying.samples, varying.gapMs ?? Infinity).size > 3, 'fixture reproduces false breaks caused by retained-point interval inference')
+  const continuityApi = await app.inject(`/api/data/object/series?object_id=${continuityDevice.id}&start=${start}&end=${new Date(t + 3600000).toISOString()}&max_points=1200`)
+  assert.equal(continuityApi.statusCode, 200)
+  assert.deepEqual(continuityApi.json().series[1].segments, varying.segments)
+  assert.equal(continuityApi.json().series[1].sourceGapMs, 5400)
   const abort = new AbortController(); abort.abort()
   await assert.rejects(store.queryRegisterCurve(d.id, start, end, [r], 20, abort.signal))
   assert.equal((await app.inject('/api/data/object/series?object_id=1&start=bad&end=bad')).statusCode, 400)

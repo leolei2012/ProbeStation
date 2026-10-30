@@ -83,6 +83,8 @@ const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T2
 
 曲线 summary 的 validSamples 是可显示数，包含 unverified 兼容值；integrity 分开给出 verified/unverified/unknown 的降采样前数量，逐显示点 verification 与 samples 对齐。显示点可用于人工观察，Min/Max 不生成 PASS/FAIL。四个原始查询返回 batchId，另带 timestampMs 供消费端避免本地显示字符串精度丢失，时间戳分页语义不变。同一精确时间重复地址保守判未知。
 
+曲线 `segments: [time, segmentId][]` 在降采样前根据原始采样连续性生成，随后随保留的真实点一起返回。`sourceGapMs` 为原始正采样间隔中位数的三倍（不足时为 null）；真实采样空档和无效读数推进段身份。前端按段身份连线，不能把降采样后相隔较远的显示点再当作断采；这不会增加虚构样本或更改质量计数。旧 `gapMs` 只保留最近读数/旧客户端兼容用途，缺 segments 的旧响应采用原有保守回退。修复需同时更新后端和前端，不能仅刷新运行旧代码的后端页面。
+
 表格、CSV/XLSX 使用同一共享判定；导出增加状态与 automatic_eligible 列，未知值为空。助手历史工具仅 verified value 进入统计，无身份值只在 compatibilityValue 中供人工查看，未知 value 为 null。历史数据不等同测试通过，未实现自动 PASS/FAIL 引擎。旧聚合 HTTP 入口已停用，返回 410。
 
 离线回归：`node node_modules/tsx/dist/cli.mjs scripts/test-store-batch.ts`；`npm run check` 先构建前端再运行 17 组显式安全回归，含隔离入口 API/资源验收。`npm run test:edition` 启动只读临时测试版，详见 docs/test/隔离测试版使用说明.md。真实迁移和页面视觉验收未完成。

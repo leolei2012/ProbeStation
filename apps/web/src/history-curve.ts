@@ -7,8 +7,25 @@ export type HistorySample = [number, number | null]
 export interface HistorySeries {
   id: number; samples: HistorySample[]; gapMs: number
   verification?: Array<[number, HistoryVerification]>
+  segments?: Array<[number, number]>
+  sourceGapMs?: number | null
   integrity?: { verified: number; unverified: number; unknown: number }
   summary?: { sourceSamples: number; validSamples: number; invalidSamples: number }
+}
+
+/** Segment IDs are assigned before downsampling; retained-point spacing is not acquisition spacing. */
+export function historyLineStarts(samples: readonly HistorySample[], gapMs: number, segments?: ReadonlyArray<readonly [number, number]>): Set<number> {
+  const byTime = new Map(segments ?? [])
+  const starts = new Set<number>()
+  let previous: number | null = null, previousSegment: number | undefined
+  for (const [index, [time, value]] of samples.entries()) {
+    if (value === null || !Number.isFinite(value)) { previous = null; previousSegment = undefined; continue }
+    const segment = byTime.get(time)
+    const explicit = segment !== undefined && previousSegment !== undefined
+    if (previous === null || (explicit ? segment !== previousSegment : time - previous > gapMs)) starts.add(index)
+    previous = time; previousSegment = segment
+  }
+  return starts
 }
 
 /** Last means the final observed sample, including a failed/invalid reading. */
