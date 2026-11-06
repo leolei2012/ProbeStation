@@ -1,3 +1,4 @@
+import { PointLabel, buildPointLabels, type PointLabelData } from './PointLabel'
 import { RegisterSelectButton } from './RegisterPicker'
 import { sourceKey, sourceSample, withRegisterSources } from '../../../packages/core/src/sample-source.ts'
 import { decodeHistoricalSample, historyVerificationLabel } from '../../../packages/core/src/history-integrity.ts'
@@ -50,6 +51,7 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
     histExportTooLarge: '超过 {n} 条原始行，导出会被截断，已停止生成文件。请取消并减少点位或缩小时间范围后重试。', histExportPreparing: '正在生成完整导出，可取消…', histExportTimeout: '导出超过 30 秒，已取消等待。请缩小时间范围后重试。',
     histExportFull: '导出完整时间范围', histExportViewport: '导出当前缩放区间', histExportSelected: '{n} 个已选点位 · 原始历史（含批次状态）', histExportHint: '按所示时间范围导出，不受图例显隐、Y 轴范围或降采样影响。只读取已选点位所需的数据区和原始字，每次最多 20 万条；超过时请减少点位或缩小时间范围。上限不是导出表格的行数。',
@@ -117,6 +119,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
     histExportTooLarge: 'More than {n} raw rows: exporting would truncate the data, so no file was generated. Cancel, select fewer points or narrow the time range and retry.', histExportPreparing: 'Preparing a complete export. You can cancel…', histExportTimeout: 'Export exceeded 30 seconds. Narrow the time range and retry.',
     histExportFull: 'Export full time range', histExportViewport: 'Export zoomed time range', histExportSelected: '{n} selected points · Raw history with batch status', histExportHint: 'Export the stated time range regardless of legend visibility, Y-axis limits or downsampling. Read only the raw words required by selected points, up to 200,000 rows. Select fewer points or narrow the range if exceeded. This is not the number of spreadsheet rows.',
@@ -1176,6 +1179,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     if (target.registerId && registers.some(r => r.id === target.registerId)) setSelected(new Set([target.registerId]))
   }, [target?.token, registers])
   const selectedRegisters = registers.filter(r => selected.has(r.id))
+  const pointLabels = useMemo(() => buildPointLabels(registers, groups, t, device.mode === 'slave' ? device.slaveId : undefined), [registers, groups, t, device.mode, device.slaveId])
   const startMs = Date.parse(range.start), endMs = Date.parse(range.end)
   const valid = Number.isFinite(startMs) && Number.isFinite(endMs) && startMs < endMs
   const { start: queryStart, end: queryEnd } = historyQueryRange(mode === 'chart' && curveRange ? curveRange : { start: startMs, end: endMs })
@@ -1236,16 +1240,16 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
       {currentStatus === 'loading' && <button className="btn" onClick={() => { queryController.current?.abort(); setStatus('idle'); setError(null) }}>{t('histCancel')}</button>}
     </div>
     {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
-    {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} t={t} />}
-    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody sourceSeries={data?.series} onViewportChange={setCurveRange} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>
+    {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} pointLabels={pointLabels} t={t} />}
+    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody pointLabels={pointLabels} sourceSeries={data?.series} onViewportChange={setCurveRange} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
-      <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={errorText} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
+      <HistoryTableBody pointLabels={pointLabels} t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={errorText} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
     </>}
     {exportRequest && <HistoryExportModal request={exportRequest} t={t} onClose={() => setExportRequest(null)} onPick={async (format, signal) => { const blob = await fetchHistoryExport(format, exportRequest, signal); if (!signal.aborted) saveHistoryExport(blob, format, exportRequest) }} />}
   </div>
 }
 
-function HistoryTableBody({ t, rows, selectedRegisters, status, error, page, total, pageSize, onPageChange }: { t: T; rows: Array<{ ts: string; values: Record<number, string> }>; selectedRegisters: Register[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null; page: number; total: number; pageSize: number; onPageChange: (page: number) => void }) {
+function HistoryTableBody({ pointLabels, t, rows, selectedRegisters, status, error, page, total, pageSize, onPageChange }: { t: T; rows: Array<{ ts: string; values: Record<number, string> }>; selectedRegisters: Register[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null; page: number; total: number; pageSize: number; onPageChange: (page: number) => void; pointLabels: Map<number, PointLabelData> }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const currentPage = Math.min(Math.max(0, page), totalPages - 1)
   const shown = rows
@@ -1260,7 +1264,7 @@ function HistoryTableBody({ t, rows, selectedRegisters, status, error, page, tot
       ) : (
         <>
           <div className="history-table-scroll" tabIndex={0} aria-label={t('histTable')}><table className="reg hist-table">
-            <thead><tr><th>{t('colTime')}</th>{selectedRegisters.map(r => <th key={r.id}>{r.alias ?? r.id}</th>)}</tr></thead>
+            <thead><tr><th>{t('colTime')}</th>{selectedRegisters.map(r => <th key={r.id}><PointLabel label={pointLabels.get(r.id)!} /></th>)}</tr></thead>
             <tbody>
               {shown.map((row, i) => (
                 <tr key={i}><td className="kv" title={row.ts}>{chartCursorLabel(Date.parse(row.ts))}</td>{selectedRegisters.map(r => <td key={r.id} className="value">{row.values[r.id] ?? '—'}</td>)}</tr>
@@ -1344,6 +1348,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
     }) }
   }), [groups])
   const candidates = withRegisterSources(numericGroups.flatMap(g => g.registers), groups, device)
+  const pointLabels = buildPointLabels(candidates, groups, t, device.mode === 'slave' ? device.slaveId : undefined)
   const [selection, setSelection] = useState<Set<number> | null>(null)
   const chosen = candidates.filter(r => selection === null || selection.has(r.id)).slice(0, selection === null ? 4 : 8)
   const selected = new Set(chosen.map(r => r.id))
@@ -1402,7 +1407,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
     let sample: [number, number | null] | undefined
     for (const p of visible.buffer[s.r.id]?.points ?? []) if (p[0] <= at) sample = p
     const value = sample && at - sample[0] <= threshold ? curveValue(sample[1], s.r, valueMode) : null
-    return { id: s.r.id, name: s.r.alias || '#' + s.r.startAddress, address: s.r.startAddress, color: s.color, value: value === null ? '—' : displayNumber(value, valueMode === 'physical' ? s.r : undefined) + (valueMode === 'physical' && s.r.unit ? ' ' + s.r.unit : ''), time: value !== null && sample ? sample[0] : null, point: sample && value !== null ? [sample[0], value] as [number, number] : null }
+    return { id: s.r.id, label: pointLabels.get(s.r.id)!, color: s.color, value: value === null ? '—' : displayNumber(value, valueMode === 'physical' ? s.r : undefined) + (valueMode === 'physical' && s.r.unit ? ' ' + s.r.unit : ''), time: value !== null && sample ? sample[0] : null, point: sample && value !== null ? [sample[0], value] as [number, number] : null }
   })
   const clear = () => {
     buffer.current = Object.fromEntries(Object.entries(buffer.current).map(([id, track]) => [id, { ...track, points: [] }]))
@@ -1458,19 +1463,19 @@ function ChartCursorTime({ time, x, width, y }: { time: number; x: number; width
   </g>
 }
 
-function ChartReadout({ t, time, rows }: { t: T; time: number | null; rows: { id: number; name: string; address: number; color: string; value: string; time: number | null }[] }) {
+function ChartReadout({ t, time, rows }: { t: T; time: number | null; rows: { id: number; label: PointLabelData; color: string; value: string; time: number | null }[] }) {
   return <div className="chart-readout" role="group" aria-label={t('histNearest')}>
     <div className="chart-readout-heading"><span>{time === null ? t('lastSample') : t('curveTime')}</span>{time !== null && <time>{chartCursorLabel(time)}</time>}</div>
     <div className="chart-readout-items">{rows.map(row => <div className="chart-readout-item" key={row.id}>
-      <i style={{ background: row.color }} /><span className="chart-readout-name" title={row.name + ' [' + row.address + ']'}>{row.name}</span><strong title={row.value}>{row.value}</strong>
+      <i style={{ background: row.color }} /><span className="chart-readout-name"><PointLabel label={row.label} /></span><strong title={row.value}>{row.value}</strong>
       <time>{row.time === null ? t('histEmpty') : formatLocalTs(new Date(row.time).toISOString())}</time>
     </div>)}</div>
   </div>
 }
 
-function ChartBody({ valueMode, t, registers, selected, pts, sourceSeries, status, error, range, onViewportChange }: {
+function ChartBody({ pointLabels, valueMode, t, registers, selected, pts, sourceSeries, status, error, range, onViewportChange }: {
   valueMode: ValueMode; t: T; registers: Register[]; selected: Set<number>; pts: HistoryPoint[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null
-  sourceSeries?: HistorySeries[]; range: { start: number; end: number }; onViewportChange: (view: { start: number; end: number } | null) => void
+  pointLabels: Map<number, PointLabelData>; sourceSeries?: HistorySeries[]; range: { start: number; end: number }; onViewportChange: (view: { start: number; end: number } | null) => void
 }) {
   const [view, setView] = useState<{ start: number; end: number } | null>(null)
   const [yView, setYView] = useState<{ min: number; max: number } | null>(null)
@@ -1546,7 +1551,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, sourceSeries, statu
     const reg = registers.find(r => r.id === s.id)
     const point = hover === null ? s.samples.at(-1) ?? null : nearestHistorySample(s.samples, hover)
     const valid = point != null && (hover === null || Math.abs(point[0] - hover) <= s.gapMs / 2) && point[1] !== null
-    return { id: s.id, name: reg?.alias || '#' + (reg?.startAddress ?? s.id), address: reg?.startAddress ?? s.id, color: s.color, value: (valid ? reading(point![1]!, reg) : '—') + ' [' + historyVerificationLabel[point ? s.verification?.find(v => v[0] === point[0])?.[1] ?? 'unverified' : 'unknown'] + ']', time: valid ? point![0] : null, point: valid ? point as [number, number] : null }
+    return { id: s.id, label: pointLabels.get(s.id)!, color: s.color, value: (valid ? reading(point![1]!, reg) : '—') + ' [' + historyVerificationLabel[point ? s.verification?.find(v => v[0] === point[0])?.[1] ?? 'unverified' : 'unknown'] + ']', time: valid ? point![0] : null, point: valid ? point as [number, number] : null }
   })
   if (status === 'idle') return <div className="hist-empty" role="status">{t('histCancelled')}</div>
   if (status === 'loading') return <div className="hist-empty" role="status">{t('histLoading')}</div>
@@ -1609,7 +1614,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, sourceSeries, statu
     <div className="history-legend-head"><span>{t('histLegendHint')}</span><span>{t('histStatsHint')}</span></div>
     <div className="history-legend">
       {visibleSeries.map(s => { const reg = registers.find(r => r.id === s.id); return <button key={s.id} className={'history-series-toggle' + (hidden.has(s.id) ? ' muted' : '')} aria-pressed={!hidden.has(s.id)} onClick={() => setHidden(old => { const next = new Set(old); if (next.has(s.id)) next.delete(s.id); else next.add(s.id); return next })}>
-        <span className="legend-swatch" style={{ background: s.color }} /><strong>{reg?.alias || `#${reg?.startAddress ?? s.id}`} <small>({reg?.startAddress})</small></strong>
+        <span className="legend-swatch" style={{ background: s.color }} /><strong><PointLabel label={pointLabels.get(s.id)!} />{!pointLabels.get(s.id)!.qualified && <small> ({reg?.startAddress})</small>}</strong>
         <span>Min <b>{Number.isFinite(s.min) ? reading(s.min, reg) : '—'}</b></span><span>Max <b>{Number.isFinite(s.max) ? reading(s.max, reg) : '—'}</b></span><span>{t('histLastValue')} <b>{s.last === null ? '—' : reading(s.last, reg)}</b></span>
       </button> })}
     </div>
