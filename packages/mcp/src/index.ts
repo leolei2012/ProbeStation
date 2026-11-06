@@ -560,12 +560,12 @@ export function apply(ctx: Context, config: Config): void {
     const addressSelection = (addresses: Array<{ area: string; address: number; slave_id?: number }> | undefined) => addresses?.map(a => ({ area: a.area, address: a.address, slaveId: a.slave_id }))
     const recordingResult = (id: string) => {
       const rec = recorder.getRecording(id)!
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ recording_id: id, slave_id: rec.slaveId, addresses: rec.addresses, trigger: rec.trigger, warnings: [...rec.warnings] }) }] }
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ recording_id: id, slave_id: rec.slaveId, addresses: rec.addresses, trigger: rec.trigger, warnings: [...rec.warnings], status: rec.status, completion_reason: rec.completionReason, quota_truncated: rec.quotaTruncated, sample_storage: recorder.getSampleStorageStatus() }) }] }
     }
-    const recordingLog = (id: string, message: string) => { try { cfg.log('INFO', 'mcp', message) } catch { recorder.getRecording(id)!.warnings.push('录制已开始，但操作日志写入失败；勿重复开始。') } }
+    const recordingLog = (id: string, message: string) => { if (recorder.getRecording(id)?.completionReason === 'configuration-changed') return; try { cfg.log('INFO', 'mcp', message) } catch { recorder.getRecording(id)!.warnings.push('录制已开始，但操作日志写入失败；勿重复开始。') } }
     const recordingError = (error: unknown) => ({ content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'invalid recording request' }], isError: true })
     server.registerTool('start_recording', {
-      title: 'Start recording', description: '连续录制原始16位字，临时改变设备扫描间隔，最后会话结束时仅在写入身份/配置未变化才原子恢复；否则保留当前值并返回intervalRestore/warnings。slave_id 为默认录制来源，addresses[].slave_id 可覆盖；无地址/来源筛选时保留所有来源。省略地址来源仅在配置唯一时接受，歧义需显式选择。回放保留 slaveId/batchId，缺来源不补全。',
+      title: 'Start recording', description: '连续录制原始16位字；每段默认最多200000样本、全局保留500000样本，容量不足提前结束并报告quota_truncated/completion_reason及当前事件丢弃数；删除已结束录制可释放容量。临时改变设备扫描间隔，最后会话结束时仅在写入身份/配置未变化才原子恢复；否则保留当前值并返回intervalRestore/warnings。slave_id 为默认录制来源，addresses[].slave_id 可覆盖；无地址/来源筛选时保留所有来源。省略地址来源仅在配置唯一时接受，歧义需显式选择。回放保留 slaveId/batchId，缺来源不补全。',
       inputSchema: { device_id: zz.number(), interval_ms: zz.number(), duration_ms: zz.number(), slave_id: sourceId, addresses: recordingAddresses },
     }, async (args) => {
       try {
@@ -576,7 +576,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('start_trigger_recording', {
-      title: 'Start trigger recording', description: '按原始16位字触发（不合并dtype/不换算物理值），缓存 before_ms/after_ms。trigger_slave_id 选择触发从站，缺省继承 slave_id 或唯一配置；歧义拒绝。slave_id/addresses[].slave_id 仅筛选录制数据，独立于触发选择。来源不明、坏质量、重复候选、无效/倒序时间不能触发。会临时改变设备扫描间隔。',
+      title: 'Start trigger recording', description: '按原始16位字触发（不合并dtype/不换算物理值）；每段默认200000、全局保留500000样本上限，容量不足提前结束并明确标记部分记录。缓存 before_ms/after_ms。trigger_slave_id 选择触发从站，缺省继承 slave_id 或唯一配置；歧义拒绝。slave_id/addresses[].slave_id 仅筛选录制数据，独立于触发选择。来源不明、坏质量、重复候选、无效/倒序时间不能触发。会临时改变设备扫描间隔。',
       inputSchema: { device_id: zz.number(), interval_ms: zz.number(), trigger_area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), trigger_address: zz.number(), trigger_slave_id: sourceId, slave_id: sourceId, operator: zz.string(), threshold: zz.number().optional(), before_ms: zz.number(), after_ms: zz.number(), addresses: recordingAddresses },
     }, async (args) => {
       try {
@@ -587,7 +587,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('get_recording', {
-      title: 'Get recording', description: '取录制的完整原始16位字、slaveId/batchId 与触发证据 triggeredBy。多字消费需自行验证同来源/area/采样时间/完整批次及质量；sourceVerified 仅表示来源元数据存在，不能当自动 PASS/FAIL。NULL 来源不推断。',
+      title: 'Get recording', description: '取录制保留的原始16位字、slaveId/batchId 与触发证据 triggeredBy。检查completionReason/quotaTruncated/discardedSamples；done不是请求时长或触发窗口完整的证明。多字消费需自行验证同来源/area/采样时间/完整批次及质量；sourceVerified 仅表示来源元数据存在，不能当自动 PASS/FAIL。NULL 来源不推断。',
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
       const rec = recorder.getRecording(args.recording_id)
@@ -609,7 +609,7 @@ export function apply(ctx: Context, config: Config): void {
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
       const ok = recorder.stopRecording(args.recording_id), rec = recorder.getRecording(args.recording_id)
-      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id, interval_restore: rec?.intervalRestore ?? null, warnings: rec?.warnings ?? [] }) }] }
+      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id, interval_restore: rec?.intervalRestore ?? null, warnings: rec?.warnings ?? [], completion_reason: rec?.completionReason ?? null, quota_truncated: rec?.quotaTruncated ?? false, discarded_samples: rec?.discardedSamples ?? 0 }) }] }
     })
 
     server.registerTool('delete_recording', {
@@ -617,7 +617,7 @@ export function apply(ctx: Context, config: Config): void {
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
       const rec = recorder.getRecording(args.recording_id), ok = recorder.deleteRecording(args.recording_id)
-      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id, interval_restore: rec?.intervalRestore ?? null, warnings: rec?.warnings ?? [] }) }] }
+      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id, interval_restore: rec?.intervalRestore ?? null, warnings: rec?.warnings ?? [], completion_reason: rec?.completionReason ?? null, quota_truncated: rec?.quotaTruncated ?? false, discarded_samples: rec?.discardedSamples ?? 0 }) }] }
     })
 
     // ── OTA 固件升级（PRD 07）─────────────────────

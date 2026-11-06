@@ -10,6 +10,9 @@ type InputSample = { objectId?: number; area: string; address: number; timestamp
 const areas = ['coil', 'discrete-input', 'holding-register', 'input-register']
 const operators = ['>', '<', '>=', '<=', '==', '!=', 'changed']
 const MAX_TIMEOUT_MS = 2 ** 31 - 1
+export const DEFAULT_RECORDING_SAMPLE_LIMITS = Object.freeze({ maxSamplesPerSession: 200000, maxTotalSamples: 500000 })
+export type RecordingCompletionReason = 'duration' | 'trigger-window' | 'trigger-timeout' | 'stopped' | 'deleted' | 'sample-limit' | 'storage-limit' | 'configuration-changed'
+export interface RecordingSampleLimits { maxSamplesPerSession: number; maxTotalSamples: number }
 
 /** 一条采样（原始 16 位字 + 时间戳 + 质量）。 */
 export interface RecordingSample {
@@ -47,6 +50,11 @@ export interface RecordingSession {
   originalPollInterval: number
   intervalRestore: 'pending' | 'shared' | 'restored' | 'preserved' | 'uncertain'
   warnings: string[]
+  sampleLimit: number
+  completionReason: RecordingCompletionReason | null
+  quotaTruncated: boolean
+  /** Only eligible samples rejected in the final received event; future unseen samples are not counted. */
+  discardedSamples: number
   status: 'recording' | 'done'
   startedAt: number
   finishedAt: number | null
@@ -77,8 +85,13 @@ export class Recorder {
   private intervalScope: unknown
   private sessionScopes = new WeakMap<RecordingSession, unknown>()
   private static readonly MAX_INTERVAL_NOTICES = 100
+  private readonly sampleLimits: RecordingSampleLimits
+  private retainedSamples = 0
 
-  constructor(private readonly ctx: any, private readonly cfg: any) {
+  constructor(private readonly ctx: any, private readonly cfg: any, limits: Partial<RecordingSampleLimits> = {}) {
+    if (!limits || typeof limits !== 'object' || Array.isArray(limits) || Object.keys(limits).some(key => !['maxSamplesPerSession', 'maxTotalSamples'].includes(key))) throw new Error('invalid recording sample limits')
+    this.sampleLimits = Object.freeze({ maxSamplesPerSession: limits.maxSamplesPerSession === undefined ? DEFAULT_RECORDING_SAMPLE_LIMITS.maxSamplesPerSession : limits.maxSamplesPerSession, maxTotalSamples: limits.maxTotalSamples === undefined ? DEFAULT_RECORDING_SAMPLE_LIMITS.maxTotalSamples : limits.maxTotalSamples })
+    if (Object.values(this.sampleLimits).some(value => !Number.isSafeInteger(value) || value < 1)) throw new Error('invalid recording sample limits')
     this.intervalScope = cfg.getRecordingIntervalScope()
     ctx.on('poller/result', ({ objectId, points }: any) => this.onResult(objectId, points))
   }
@@ -112,6 +125,7 @@ export class Recorder {
     }) : null
   }
   private prepare(deviceId: number, intervalMs: number) {
+    this.syncIntervalScope()
     if (this.changingInterval.has(deviceId)) throw new Error('recording interval operation is already in progress')
     const obj = this.cfg.getObject(deviceId)
     if (!obj) throw new Error('device ' + deviceId + ' not found')
@@ -120,6 +134,7 @@ export class Recorder {
     if (active.some(s => s.intervalMs !== intervalMs) || active.length && obj.pollIntervalMs !== intervalMs) throw new Error('device already has an active recording with a different/currently changed interval')
     if (active.length && (!this.intervalLeases.has(deviceId) || !this.cfg.recordingIntervalLeaseValid(this.intervalLeases.get(deviceId)))) throw new Error('active recording interval ownership/configuration changed; do not join or overwrite it')
     if (this.sessions.size >= Recorder.MAX_SESSIONS && ![...this.sessions.values()].some(s => s.status === 'done')) throw new Error('too many active recordings')
+    if (this.retainedSamples >= this.sampleLimits.maxTotalSamples) throw new Error(`录制样本容量已满（${this.retainedSamples}/${this.sampleLimits.maxTotalSamples}）；请先list_recordings核对并删除已结束录制后重试，不会自动删除样本。`)
     return { originalPollInterval: active[0]?.originalPollInterval ?? obj.pollIntervalMs ?? 1000, active: active.length > 0 }
   }
   private addSession(session: RecordingSession, alreadyRecording: boolean): void {
@@ -137,15 +152,19 @@ export class Recorder {
     while (this.sessions.size > Recorder.MAX_SESSIONS) {
       const oldest = [...this.sessions.values()].filter(s => s.status === 'done').sort((a, b) => a.startedAt - b.startedAt)[0]
       if (!oldest) break
+      this.retainedSamples -= oldest.samples.length
       this.sessions.delete(oldest.id)
     }
+    this.syncIntervalScope()
   }
 
   /** 删除一段录制（含仍在录制中的，会先结束）。 */
   deleteRecording(id: string): boolean {
-    if (!this.sessions.has(id)) return false
-    this.finish(id)
-    this.sessions.delete(id)
+    const session = this.sessions.get(id)
+    if (!session) return false
+    this.finish(id, 'deleted')
+    // A post-restore notification can synchronously delete the same completed session.
+    if (this.sessions.get(id) === session) { this.retainedSamples -= session.samples.length; this.sessions.delete(id) }
     return true
   }
 
@@ -163,6 +182,7 @@ export class Recorder {
       addresses: selected,
       originalPollInterval: prepared.originalPollInterval,
       intervalRestore: 'pending', warnings: [],
+      sampleLimit: this.sampleLimits.maxSamplesPerSession, completionReason: null, quotaTruncated: false, discardedSamples: 0,
       status: 'recording',
       startedAt: Date.now(),
       finishedAt: null,
@@ -174,7 +194,7 @@ export class Recorder {
       triggeredBy: null,
     }
     this.addSession(session, prepared.active)
-    this.timers.set(session.id, setTimeout(() => this.finish(session.id), durationMs))
+    if (session.status === 'recording') this.timers.set(session.id, setTimeout(() => this.finish(session.id, 'duration'), durationMs))
     return session.id
   }
 
@@ -195,6 +215,7 @@ export class Recorder {
       addresses: selected,
       originalPollInterval: prepared.originalPollInterval,
       intervalRestore: 'pending', warnings: [],
+      sampleLimit: this.sampleLimits.maxSamplesPerSession, completionReason: null, quotaTruncated: false, discardedSamples: 0,
       status: 'recording',
       startedAt: Date.now(),
       finishedAt: null,
@@ -207,13 +228,15 @@ export class Recorder {
     }
     this.addSession(session, prepared.active)
     // 安全上限：10 分钟仍不触发则结束，避免无限录制
-    this.timers.set(session.id, setTimeout(() => this.finish(session.id), 10 * 60 * 1000))
+    if (session.status === 'recording') this.timers.set(session.id, setTimeout(() => this.finish(session.id, 'trigger-timeout'), 10 * 60 * 1000))
     return session.id
   }
 
   getRecording(id: string): RecordingSession | null {
+    this.syncIntervalScope()
     return this.sessions.get(id) ?? null
   }
+  getSampleStorageStatus() { return Object.freeze({ ...this.sampleLimits, retainedSamples: this.retainedSamples, remainingSamples: this.sampleLimits.maxTotalSamples - this.retainedSamples }) }
 
   /** Read-only current metadata plus bounded completion notices, independent of sample deletion/eviction. */
   getRecordingIntervalStatus(deviceId: number): RecordingIntervalStatus {
@@ -225,14 +248,23 @@ export class Recorder {
   private syncIntervalScope() {
     const scope = this.cfg.getRecordingIntervalScope()
     if (scope !== this.intervalScope) { this.intervalScope = scope; this.intervalNotices = []; this.droppedNotices = 0 }
+    for (const session of this.sessions.values()) {
+      if (session.status !== 'recording' || this.sessionScopes.get(session) === scope) continue
+      session.status = 'done'; session.finishedAt = Date.now(); session.completionReason = 'configuration-changed'; session.intervalRestore = 'preserved'
+      session.warnings.push('配置已切换，录制已结束并保留已有样本；未恢复旧配置间隔，也未修改当前配置。')
+      const timer = this.timers.get(session.id); if (timer) clearTimeout(timer)
+      this.timers.delete(session.id); this.intervalLeases.delete(session.deviceId)
+    }
   }
 
   listRecordings() {
+    this.syncIntervalScope()
     return [...this.sessions.values()].map((s) => ({
       id: s.id, deviceId: s.deviceId, mode: s.mode, status: s.status,
       slaveId: s.slaveId, addresses: s.addresses, trigger: s.trigger,
       sampleCount: s.samples.length, triggered: s.triggered, startedAt: s.startedAt, finishedAt: s.finishedAt,
       intervalRestore: s.intervalRestore, warnings: [...s.warnings],
+      sampleLimit: s.sampleLimit, completionReason: s.completionReason, quotaTruncated: s.quotaTruncated, discardedSamples: s.discardedSamples,
     }))
   }
 
@@ -246,15 +278,30 @@ export class Recorder {
     return { ts: p.timestamp, area: p.area, address: p.address, rawValue: p.rawValue, quality: p.quality, slaveId: p.slaveId ?? null, batchId: p.batchId ?? null, sourceVerified: validSlaveId(p.slaveId) }
   }
   private onResult(objectId: number, points: InputSample[]): void {
+    this.syncIntervalScope()
     for (const s of this.sessions.values()) {
       if (s.status !== 'recording' || s.deviceId !== objectId) continue
       const attributable = points.filter(p => (p.objectId === undefined || p.objectId === objectId) && (p.slaveId == null || validSlaveId(p.slaveId)))
       const matches = (p: InputSample) => s.addresses ? s.addresses.some(a => a.area === p.area && a.address === p.address && a.slaveId === p.slaveId) : s.slaveId === null || s.slaveId === p.slaveId
-      for (const p of attributable.filter(matches)) s.samples.push(this.sample(p))
+      const cutoff = s.mode === 'trigger' && !s.triggered ? Date.now() - s.trigger!.beforeMs : null
+      if (cutoff !== null) {
+        const retained = s.samples.filter(sm => new Date(sm.ts).getTime() >= cutoff)
+        this.retainedSamples -= s.samples.length - retained.length; s.samples = retained
+      }
+      const incoming = attributable.filter(p => matches(p) && (cutoff === null || Date.parse(p.timestamp) >= cutoff))
+      const room = Math.max(0, Math.min(this.sampleLimits.maxSamplesPerSession - s.samples.length, this.sampleLimits.maxTotalSamples - this.retainedSamples))
+      const accepted = Math.min(room, incoming.length)
+      for (let index = 0; index < accepted; index++) { s.samples.push(this.sample(incoming[index])); this.retainedSamples++ }
       if (s.mode === 'trigger' && !s.triggered) {
-        const cutoff = Date.now() - s.trigger!.beforeMs
-        s.samples = s.samples.filter(sm => new Date(sm.ts).getTime() >= cutoff)
         this.maybeTrigger(s, attributable) // Trigger selection is independent of capture addresses.
+      }
+      if (accepted < incoming.length) {
+        s.quotaTruncated = true; s.discardedSamples = incoming.length - accepted
+        const reason = s.samples.length >= this.sampleLimits.maxSamplesPerSession ? 'sample-limit' : 'storage-limit'
+        const warning = `录制达到${reason === 'sample-limit' ? '单段' : '全局'}样本上限，已提前结束；保留${s.samples.length}个原始样本，当前事件有${s.discardedSamples}个匹配样本未保留，之后未继续录制。请缩短时长/减少点位，或核对并删除已结束录制后重试。`
+        s.warnings.push(warning)
+        try { this.cfg.log('WARN', 'recorder', warning + ' recording=' + s.id) } catch { s.warnings.push('样本上限日志未保存，录制结果仍保留提前结束说明。') }
+        this.finish(s.id, reason)
       }
     }
   }
@@ -283,13 +330,15 @@ export class Recorder {
     s.triggeredBy = this.sample(p)
     const old = this.timers.get(s.id)
     if (old) clearTimeout(old)
-    this.timers.set(s.id, setTimeout(() => this.finish(s.id), s.trigger!.afterMs))
+    this.timers.set(s.id, setTimeout(() => this.finish(s.id, 'trigger-window'), s.trigger!.afterMs))
   }
 
-  private finish(id: string): void {
+  private finish(id: string, reason: RecordingCompletionReason = 'stopped'): void {
+    this.syncIntervalScope()
     const s = this.sessions.get(id)
     if (!s || s.status !== 'recording') return
     s.status = 'done'
+    s.completionReason = reason
     s.finishedAt = Date.now()
     const t = this.timers.get(id)
     if (t) clearTimeout(t)

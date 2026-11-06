@@ -200,3 +200,7 @@ AI 助手不设工具次数/轮数、请求超时、输入/响应长度、附件
 ### 发现和处理录制间隔核对记录
 
 优先只读`get_recording_interval_status {device_id}`检查本次checkedAt/current、活动录制及notices；Web设备概要也有“录制间隔核对”。删除样本不清核对记录，但仅保留当前进程当前配置最近100条，dropped是全局移出计数，重开/重启不保留。available=false或读取失败不能当作没有问题，current=null不能选同编号替代设备。先人工确认当前间隔符合预期；需要变更时使用现有设备编辑原快照条件，不盲目写回notices的originalIntervalMs，不用旧REST绕过。没有强制恢复或自动已解决能力，详见[提示与限制](../develop/40-录制间隔核对提示与只读检查.md)。
+
+### 录制容量与部分结果
+
+录制默认单段20万、服务实例保留总量50万个原始样本；开始返回sample_storage，容量已满时先list_recordings核对并经用户意图删除完成录制，不能为了重试静默删数据。读取结果必须检查completionReason/quotaTruncated/discardedSamples；done只表示停止，不能声称完成时长或完整触发窗口。discardedSamples仅为最后事件已知未保留数，不含未来未录数据；最后事件可能截断多字，不能补零或跨批。configuration-changed表示旧配置会话已终结，新设备不可继承其样本。未新增硬件写或提高限额参数，见[容量保护说明](../develop/41-录制样本容量与提前结束说明.md)。

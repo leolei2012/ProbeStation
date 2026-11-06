@@ -46,7 +46,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `ask_ai` | `question, context?, device_id?, provider?, model?, effort?` | 复用 AI 设置进行单次咨询，可附设备全部点位缓存；没有工具执行，不修改配置，消耗 API 额度 |
 | `start_recording` | `device_id, interval_ms, duration_ms, slave_id?, addresses?` | 连续采样：录 duration_ms，事后 get_recording 回放 |
 | `start_trigger_recording` | `device_id, interval_ms, trigger_area, trigger_address, operator, threshold?, before_ms, after_ms, slave_id?, trigger_slave_id?, addresses?` | 触发记录：条件命中缓存前后窗口（operator 支持 > < >= <= == != changed） |
-| `get_recording` | `recording_id` | 取录制完整采样序列（原始 16 位字） |
+| `get_recording` | `recording_id` | 取保留的原始16位字；先查完成原因与容量截断 |
 | `get_recording_interval_status` | `device_id` | 只读当前间隔/活动录制/当前配置保留的核对记录与移出计数，不恢复或连接 |
 | `list_recordings` | — | 列录制会话（不含 samples） |
 | `stop_recording` | `recording_id` | 提前结束/取消录制 |
@@ -140,3 +140,9 @@ export_points_xlsx会分配合法唯一页签，B1保留原组名，告警G可�
 ## 录制间隔核对提示
 
 `get_recording_interval_status {device_id}`只读返回本次checkedAt、current、active、notices、retention。核对记录独立于样本，当前配置最近100条，超限有全局dropped计数；reopen或进程重启不保留，不按当前值相等推断已处理。available=false表示服务未提供，current=null表示设备缺失。Web概要使用相同只读结果；失败保留旧记录并标记未核实。需调整时人工核对并使用既有设备编辑及原条件，不能盲目用旧原值或无条件REST恢复。详见[状态与覆盖边界](../../docs/develop/40-录制间隔核对提示与只读检查.md)。
+
+## 录制容量与完成原因
+
+默认每段最多200000原始样本，服务实例全部录制（含已结束保留）合计500000。满时开始失败且不改间隔；核对list_recordings后删除已结束录制可释放，不自动额外删旧数据。收到无法保留的匹配样本时提前结束并保留已有数据，quotaTruncated=true、completionReason=sample-limit/storage-limit，discardedSamples仅表示最后事件已知未保留数，不包括未来未录数据。触发前窗口先清理过期样本；间隔仍按原身份保护恢复。
+
+开始新增status/completion_reason/quota_truncated/sample_storage，get/list有sampleLimit/completionReason/quotaTruncated/discardedSamples，stop/delete有completion_reason/quota_truncated/discarded_samples。done不代表完整请求时长/窗口；检查完成原因、triggered及批次质量。configuration-changed表示配置重开后旧会话已停止，不写新配置；旧数据仍保留并占容量。没有新额度参数、落盘录制或字节级内存保证，详见[容量和兼容边界](../../docs/develop/41-录制样本容量与提前结束说明.md)。
