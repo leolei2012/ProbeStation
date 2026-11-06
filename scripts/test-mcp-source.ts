@@ -32,7 +32,7 @@ const originalCreate = http.createServer, originalRegister = McpServer.prototype
 try {
   http.createServer = (() => ({ listen: () => { listens++ } })) as any
   McpServer.prototype.registerTool = function (name: string, config: any, callback: any) { handlers.set(name, callback); schemas.set(name, config.inputSchema); return {} as any } as any
-  const ctx = { config: cfg, store, poller: {}, on: (name: string, fn: any) => { if (name === 'poller/result') recordingEvent = fn }, provide: (_name: string, service: any) => { factory = service.createServer } }
+  const ctx = { config: cfg, store, poller: {}, sink: { importPointBook: async () => ({ groups: 1, registers: 2, errors: [], warnings: [] }) }, on: (name: string, fn: any) => { if (name === 'poller/result') recordingEvent = fn }, provide: (_name: string, service: any) => { factory = service.createServer } }
   apply(ctx as any, { host: '127.0.0.1', port: 0 })
   const server = factory!(); await server.close()
 } finally { http.createServer = originalCreate; McpServer.prototype.registerTool = originalRegister }
@@ -51,6 +51,11 @@ try {
   failImportLog = true
   const logged = body(await run('import_points', { device_id: 1, points: [{ area: 'holding-register', address: 0, alias: 'processed' }] }))
   assert.equal(logged.updated, 1); assert.match(logged.warnings[0], /日志写入失败/)
+} finally { failImportLog = false }
+try {
+  failImportLog = true
+  const logged = body(await run('import_points_xlsx', { device_id: 1, content_b64: '' }))
+  assert.equal(logged.groups, 1); assert.match(logged.warnings[0], /MCP日志写入失败/)
 } finally { failImportLog = false }
 await run('import_points', { device_id: 1, points: [{ area: 'holding-register', address: 0, unit: null, enum: null }] })
 assert.equal(imported[0].unit, null); assert.equal(imported[0].enumMap, null)

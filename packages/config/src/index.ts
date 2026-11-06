@@ -29,6 +29,7 @@ export interface RegisterRecord { id: number; groupId: number; objectId: number;
 export interface RuleRecord { id: number; registerId: number; operator: string; threshold: number; message: string | null }
 export interface LogRecord { id: number; ts: string; level: string; source: string | null; message: string | null }
 export interface FirmwareRecord { id: number; name: string; version: string | null; size: number; crc32: number; filePath: string | null; createdAt: string | null }
+export interface PointBookImportReport { groups: number; registers: number; errors: string[]; warnings: string[] }
 
 const OBJECT_SELECT = 'SELECT id, name, ip, port, mode, is_active AS isActive, transport, serial_path AS serialPath, baud_rate AS baudRate, parity, stop_bits AS stopBits, data_bits AS dataBits, flow_control AS flowControl, slave_id AS slaveId, poll_interval_ms AS pollIntervalMs, timeout_ms AS timeoutMs, data_retain_seconds AS dataRetainSeconds FROM monitor_objects'
 const GROUP_SELECT = 'SELECT id, object_id AS objectId, name, slave_id AS slaveId, function_code AS functionCode, start_address AS startAddress, quantity, mode, is_active AS isActive FROM register_groups'
@@ -269,6 +270,31 @@ export class ConfigStore {
     try { this.notify('import', objectId) }
     catch { warnings.push('配置已提交，但变更通知失败，当前实例可能尚未刷新；请核对，勿重复导入。') }
     return { groups: groups.length, registers: registers.length, warnings }
+  }
+
+  /** Synchronous XLSX builder only: one replacement/append transaction, no partial config events. */
+  applyPointBookImport(objectId: number, replace: boolean, build: () => Pick<PointBookImportReport, 'groups' | 'registers' | 'errors'>): PointBookImportReport {
+    if (!Number.isSafeInteger(objectId) || objectId < 1 || !this.getObject(objectId)) throw Object.assign(new Error('导入目标设备不存在'), { statusCode: 404 })
+    if (this.restoring) throw new Error('配置正在批量更新，不能嵌套点位表导入')
+    const rejected = Symbol('invalid point book')
+    let result: Pick<PointBookImportReport, 'groups' | 'registers' | 'errors'> | undefined
+    this.db.exec('BEGIN IMMEDIATE'); this.restoring = true
+    try {
+      if (replace) for (const group of this.listGroups(objectId)) this.deleteGroup(group.id)
+      result = build()
+      if (!result.groups && !result.errors.length) result.errors.push('点位表没有分组页，未替换原配置。')
+      if (result.errors.length) throw rejected
+      this.db.exec('COMMIT')
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') }
+      catch (rollback) { throw new AggregateError([error, rollback], '点位表导入回滚失败，结果不确定，请核对配置，勿自动重试') }
+      if (error === rejected) return { groups: 0, registers: 0, errors: result!.errors, warnings: [] }
+      throw error
+    } finally { this.restoring = false }
+    const warnings: string[] = []
+    try { this.notify('point-book-import', objectId) }
+    catch { warnings.push('点位表已提交，但同步通知失败；请核对配置，勿重复导入。') }
+    return { ...result!, warnings }
   }
 
   /** 更新已有点位语义；来源/点位可精确选择，歧义跳过，有效行原子提交。 */

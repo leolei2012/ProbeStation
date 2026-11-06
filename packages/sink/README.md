@@ -9,7 +9,7 @@ interface Sink {
   exportCsv(objectId, start, end, registerIds?, tzOffsetMin?): Promise<string>   // CSV 字符串（宽表）
   exportXlsx(objectId, start, end, registerIds?, tzOffsetMin?): Promise<Buffer>  // XLSX 二进制
   exportPointSheet(objectId): Promise<{ buffer: Buffer; filename: string }>      // 点表 xlsx，分组=sheet
-  importPointBook(objectId, buffer, replace?): Promise<{ groups; registers; errors }> // 从该 xlsx 重建点位
+  importPointBook(objectId, buffer, replace?): Promise<{ groups; registers; errors; warnings }> // 原子重建或追加点位
 }
 ```
 
@@ -30,6 +30,10 @@ HTTP 接口将该错误返回为 **413 JSON**，含 `code`、`limit` 和说明�
 - 每分组 sheet 的布局固定（前两行分组头「分组/从站/功能码/起始地址/数量」，第4行数据列头 `别名|数据类型|单位|系数|偏移|枚举|功能码|起始地址|数量`），可供该文件的 `importPointBook` 对称回导（`importPointBook` replace=true 会全量重建该设备分组/寄存器）。
 
 端到端往返验证：`npx tsx scripts/test-pointsheet.ts` → `POINTSHEET ROUNDTRIP OK`。
+
+现整次替换/追加在一个配置事务内执行，已有校验发现任意行错误则回滚，返回groups/registers=0及errors；写入异常同样回滚，无部分通知。没有分组页不能清空设备。成功后一次point-book-import通知，提交后通知/日志失败只返回warnings，请核对而非自动重试。当前Web检查errors但未新增warnings展示。
+
+这不等于完整字段保真：旧XLSX解析器对分组从站、quantity、零倍率和多字跨度仍有已识别的独立待办。本轮没有改其成功解析语义或真实配置，范围与34组安全回归见[原子替换说明](../../docs/develop/08-XLSX点表原子替换.md)。
 
 ## 导出格式（宽表）
 

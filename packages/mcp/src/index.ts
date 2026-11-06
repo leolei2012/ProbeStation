@@ -457,13 +457,14 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ filename, b64: buffer.toString('base64'), bytes: buffer.length }) }] }
     })
     server.registerTool('import_points_xlsx', {
-      title: 'Import point sheet (xlsx)', description: '导入 v2 点位表，必须含告警规则 sheet（无告警也保留表头），不兼容旧版。覆盖设备全部分组、点位和告警；告警校验失败时保留原配置。传 content_b64，检查返回 errors。',
+      title: 'Import point sheet (xlsx)', description: '导入 v2 点位表，必须含告警规则 sheet（无告警也保留表头），不兼容旧版。事务覆盖设备全部分组、点位和告警；已有校验发现任一行错误或写入失败则整体回滚。传 content_b64，检查errors/warnings；警告可能表示已提交，不要自动重试。',
       inputSchema: { device_id: zz.number(), content_b64: zz.string() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
       const buf = Buffer.from(args.content_b64, 'base64')
       const res = await sink.importPointBook(args.device_id, buf, true)
-      cfg.log('INFO', 'mcp', 'import points xlsx device ' + args.device_id + ' => ' + JSON.stringify(res))
+      try { cfg.log('INFO', 'mcp', 'import points xlsx device ' + args.device_id + ' => ' + JSON.stringify(res)) }
+      catch { res.warnings.push('点位表导入已处理，但MCP日志写入失败；请核对返回结果，勿自动重复导入。') }
       return { content: [{ type: 'text', text: JSON.stringify(res) }] }
     })
 

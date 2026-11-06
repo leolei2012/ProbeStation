@@ -76,3 +76,7 @@ appendImportedPoints(objectId, groups, registers) 用于importer文件窗口，�
 ## 语义导入（2026-11-06）
 
 importPoints(objectId, points)更新已有点位，支持functionCode/address和可选slaveId/registerId；使用当前来源绑定，歧义或冲突跳过并返回候选，不选首项。省略语义字段保留原值，unit/enumMap显式null清除，alias=null保持旧值。quantity、归属、告警不变；显式dtype须可解码且完整字宽在组内。有效行原子提交，一次notify(point-import, objectId)，失败回滚。报告保留updated/skipped/errors，新增details/warnings；无效行跳过与重复目标按输入顺序执行的兼容语义保留。详见[输入/空值/事务契约](../../docs/develop/07-语义点表安全导入.md)。
+
+## 全量XLSX事务边界
+
+applyPointBookImport(objectId, replace, build)仅供Sink同步构建点表，事务包含旧配置删除和整次新图创建，不是通用异步事务接口。已有行校验失败整次回滚并返回0计数/errors；写入失败抛出异常，回滚失败明确不确定。成功后一次notify(point-book-import, objectId)，后续同步通知失败返回warnings。无分组页不能清空目标。详见[原子替换与未完成字段限制](../../docs/develop/08-XLSX点表原子替换.md)。
