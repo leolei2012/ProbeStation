@@ -1,5 +1,7 @@
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
+import { HistoryQueryMemoryPanel } from './HistoryQueryMemory'
+import { HistoryQueryMemory, QueryMemoryError, queryMemoryContext } from './history-query-memory'
 import { historyTimeRange, resolveHistoryTimeRange, editHistoryTime, changeHistoryInputZone, historyPresetRange } from './history-time-range'
 import { LivePointFilters } from './LivePointFilters'
 import { evaluateLivePoints, livePointFilterResult, type LivePointFilter } from './live-point-filter'
@@ -823,6 +825,8 @@ function DeviceView({ configurationReady, target, t, device, connected, groups, 
   busy: boolean; onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => Promise<void>; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
+  const queryMemory = useRef<HistoryQueryMemory>()
+  if (!queryMemory.current) queryMemory.current = new HistoryQueryMemory(device.id)
   useEffect(() => { if (target) setTab(target.view === 'history' ? 2 : target.view === 'diagnostics' ? 3 : 0) }, [target?.token])
   const [showEdit, setShowEdit] = useState(false)
   const registers = useMemo(() => withRegisterSources(groups.flatMap(g => g.registers), groups, device), [groups, device.mode, device.slaveId])
@@ -856,7 +860,7 @@ function DeviceView({ configurationReady, target, t, device, connected, groups, 
       <TabBar tabs={[{ id: 0, label: t('tabLive') }, { id: 1, label: t('liveCurve') }, { id: 2, label: t('tabHistory') }, ...(device.mode === 'slave' ? [] : [{ id: 3, label: t('tabRaw') }, { id: 4, label: t('tabFirmware') }]), { id: 5, label: t('pointCheckTab') }]} active={tab} onChange={setTab} />
       <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
-      {tab === 2 && <HistoryView configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
+      {tab === 2 && <HistoryView memory={queryMemory.current} configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
       {tab === 5 && (configurationReady ? <PointDiagnosticsPanel key={pointCheckContext} deviceId={device.id} points={registers} groups={groups} pointLabels={pointCheckLabels} fetcher={fetchPointDiagnostics} english={t('cancel') === 'Cancel'} /> : <p role="status">{t('pointCheckWaiting')}</p>)}
@@ -1195,7 +1199,7 @@ function deriveHistoryRows(pts: HistoryPoint[], registers: Register[], selectedR
   })
 }
 
-function HistoryView({ configurationReady, target, t, device, groups, registers }: { configurationReady: boolean; target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
+function HistoryView({ memory, configurationReady, target, t, device, groups, registers }: { memory: HistoryQueryMemory; configurationReady: boolean; target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
   const [mode, setMode] = useState<'table' | 'chart'>('table')
   const [valueMode, setValueMode] = useValueMode('ps-history-value-mode-' + device.id)
   const [range, setRange] = useState(() => historyPresetRange(60, Date.now(), 'local'))
@@ -1232,6 +1236,7 @@ function HistoryView({ configurationReady, target, t, device, groups, registers 
   const selectedRegisters = registers.filter(r => selected.has(r.id))
   const pointLabels = useMemo(() => buildPointLabels(registers, groups, t, device.mode === 'slave' ? device.slaveId : undefined), [registers, groups, t, device.mode, device.slaveId])
   const { start: startMs, end: endMs, valid } = useMemo(() => resolveHistoryTimeRange(range), [range])
+  const memoryContext = useMemo(() => queryMemoryContext(device, registers), [registers, device.id, device.mode, device.transport, device.ip, device.port, device.serialPath, device.slaveId, device.baudRate, device.parity, device.stopBits, device.dataBits, device.flowControl])
   const { start: queryStart, end: queryEnd } = historyQueryRange(mode === 'chart' && curveRange ? curveRange : { start: startMs, end: endMs })
   const selectionKey = [...selected].sort((a, b) => a - b).join(',')
   const plan = useMemo(() => valid ? historyQueryPlan({ objectId: device.id, start: queryStart, end: queryEnd, mode, page, registerIds: selectionKey ? selectionKey.split(',').map(Number) : [] }) : null, [device.id, queryStart, queryEnd, valid, mode, page, selectionKey])
@@ -1286,6 +1291,18 @@ function HistoryView({ configurationReady, target, t, device, groups, registers 
       <button className="btn primary" disabled={!plan || currentStatus === 'loading'} onClick={() => { cancelNavigation(); setRefresh(v => v + 1) }}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
       {currentStatus === 'loading' && <button className="btn" onClick={() => { cancelNavigation(); queryTask.current?.cancel() }}>{t('histCancel')}</button>}
     </HistoryTimeRange>
+    <HistoryQueryMemoryPanel memory={memory} context={memoryContext} ready={configurationReady} canSave={valid && selectedRegisters.length > 0} canViewport={valid && mode === 'chart' && !!curveRange} english={t('cancel') === 'Cancel'}
+      onSave={(name, scope) => {
+        const captured = scope === 'viewport' ? (mode === 'chart' ? curveRange : null) : { start: startMs, end: endMs }
+        if (!captured) throw new QueryMemoryError('invalid-query')
+        return memory.save(name, { ...captured, registerIds: [...selected], mode, valueMode, inputZone: range.zone, scope }, memoryContext, configurationReady)
+      }}
+      onRestore={id => memory.restore(id, memoryContext, configurationReady, saved => {
+        cancelNavigation(); queryTask.current?.cancel()
+        setRange(historyTimeRange(saved.start, saved.end, saved.inputZone)); setSelected(new Set(saved.points.map(p => p.id)))
+        setMode(saved.mode); setValueMode(saved.valueMode); setPage(0); setPreset(null); setCurveRange(null)
+        setNavigationRevision(value => value + 1); setRefresh(value => value + 1)
+      })} />
     {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
     {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} pointLabels={pointLabels} t={t} />}
     {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody key={navigationRevision} pointLabels={pointLabels} sourceSeries={data?.series} onViewportChange={view => { cancelNavigation(); setCurveRange(view) }} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>

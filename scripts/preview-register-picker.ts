@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url'
 
 // Static manual preview only. No app/config/store imports, sockets or database paths.
 const args = process.argv.slice(2)
-const previews = new Map<string, readonly [string, string]>([['', ['register-picker', '选点']], ['--settings', ['point-settings', '点位设置']], ['--comparison', ['history-comparison', '历史两点对比']], ['--diagnostics', ['point-diagnostics', '点表检查']], ['--backup', ['config-backup', '配置恢复']], ['--live-filter', ['live-point-filter', '实时点位筛选']], ['--markdown', ['assistant-markdown', '助手富文本加载']], ['--time-range', ['history-time-range', '历史时间输入']]])
+const previews = new Map<string, readonly [string, string]>([['', ['register-picker', '选点']], ['--settings', ['point-settings', '点位设置']], ['--comparison', ['history-comparison', '历史两点对比']], ['--diagnostics', ['point-diagnostics', '点表检查']], ['--backup', ['config-backup', '配置恢复']], ['--live-filter', ['live-point-filter', '实时点位筛选']], ['--markdown', ['assistant-markdown', '助手富文本加载']], ['--time-range', ['history-time-range', '历史时间输入']], ['--query-memory', ['history-query-memory', '本页暂存查询']]])
 const preview = previews.get(args[0] ?? '')
-if (args.length > 1 || !preview) throw new Error('只支持无参数、--settings、--comparison、--diagnostics、--backup、--live-filter、--markdown 或 --time-range；不会读取配置或数据库路径。')
+if (args.length > 1 || !preview) throw new Error('只支持无参数、--settings、--comparison、--diagnostics、--backup、--live-filter、--markdown 、--time-range 或 --query-memory；不会读取配置或数据库路径。')
 const [kind, title] = preview
 const root = fileURLToPath(new URL('../', import.meta.url)), output = resolve(root, `output/playwright/${kind}-preview.html`)
 const marker = `data-probestation-preview="${kind}"`

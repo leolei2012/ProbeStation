@@ -941,3 +941,12 @@ table.reg th, .btn { white-space: nowrap; }
 .history-time-controls .hist-input { max-width: 100%; min-width: 0; }
 .history-time-controls small { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .history-utc-range { font-size: 11px; color: var(--text-2); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.history-query-memory { margin: 12px 0; padding: 12px; border: 1px solid var(--border-2); border-radius: 8px; min-width: 0; }
+.history-query-memory summary { cursor: pointer; overflow-wrap: anywhere; }
+.history-query-memory .toolbar { flex-wrap: wrap; }
+.history-query-memory label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.history-query-memory input { max-width: 100%; min-width: 0; }
+.query-memory-entries { display: grid; gap: 10px; margin-top: 12px; }
+.query-memory-entry { border: 1px solid var(--border-2); border-radius: 6px; padding: 10px; min-width: 0; overflow-wrap: anywhere; }
+.query-memory-entry p { margin: 6px 0; }
+.query-memory-entry ul { padding-left: 22px; }
