@@ -1,3 +1,5 @@
+import { PointBookImportResult, type PointBookResult } from './PointBookImportResult'
+import { InvalidPointBookReportError, pointBookReportKind, uploadPointBook as sendPointBook, type PointBookReport } from './pointbook-result'
 import { PointLabel, buildPointLabels, type PointLabelData } from './PointLabel'
 import { RegisterSelectButton } from './RegisterPicker'
 import { sourceKey, sourceSample, withRegisterSources } from '../../../packages/core/src/sample-source.ts'
@@ -52,6 +54,7 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    pointBookReport: '点表导入结果', pointBookFile: '文件', pointBookCompleted: '导入已完成', pointBookRejected: '导入未完成', pointBookUncertain: '导入结果待核实', pointBookCounts: '{g} 个分组 · {r} 个点位', pointBookWarnings: '需要核对的提示', pointBookErrors: '错误详情', pointBookUncertainHint: '请求或返回异常，配置可能已更新。请核对当前配置后再决定是否重新导入。', pointBookInvalidReport: '服务端返回的导入结果格式无效。',
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
     histExportTooLarge: '超过 {n} 条原始行，导出会被截断，已停止生成文件。请取消并减少点位或缩小时间范围后重试。', histExportPreparing: '正在生成完整导出，可取消…', histExportTimeout: '导出超过 30 秒，已取消等待。请缩小时间范围后重试。',
@@ -120,6 +123,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    pointBookReport: 'Point table import result', pointBookFile: 'File', pointBookCompleted: 'Import completed', pointBookRejected: 'Import not completed', pointBookUncertain: 'Import outcome unconfirmed', pointBookCounts: '{g} groups · {r} points', pointBookWarnings: 'Items to review', pointBookErrors: 'Error details', pointBookUncertainHint: 'The request or response failed; configuration may have changed. Check the current configuration before deciding to import again.', pointBookInvalidReport: 'The server returned an invalid import report.',
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
     histExportTooLarge: 'More than {n} raw rows: exporting would truncate the data, so no file was generated. Cancel, select fewer points or narrow the time range and retry.', histExportPreparing: 'Preparing a complete export. You can cancel…', histExportTimeout: 'Export exceeded 30 seconds. Narrow the time range and retry.',
@@ -874,16 +878,23 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
   const toggleGroupPause = async (id: number) => {
     await operation.run(async () => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() })
   }
+  const [bookResult, setBookResult] = useState<PointBookResult | null>(null)
   const bookInputRef = useRef<HTMLInputElement>(null)
   const uploadBook = async (e: any) => {
     const file = e?.target?.files?.[0]
     if (!file || !device) return
     await operation.run(async () => {
-      const r = await fetch('/api/monitor_objects/' + device.id + '/points/book', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file })
-      if (!r.ok) throw new Error('HTTP ' + r.status)
-      const res = await r.json()
+      setBookResult(null)
+      let report: PointBookReport
+      try { report = await sendPointBook(device.id, file) }
+      catch (error) {
+        const message = error instanceof InvalidPointBookReportError ? t('pointBookInvalidReport') : error instanceof Error ? error.message : String(error)
+        setBookResult({ fileName: file.name, report: null, error: message })
+        throw new Error(message)
+      }
+      setBookResult({ fileName: file.name, report })
       onRefresh()
-      if (res.errors?.length) throw new Error(res.errors.join('; '))
+      if (report.errors.length) throw new Error(t(pointBookReportKind(report) === 'uncertain' ? 'pointBookUncertain' : 'pointBookRejected'))
     })
     if (bookInputRef.current) bookInputRef.current.value = ''
   }
@@ -916,6 +927,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
         <button className="btn" onClick={() => window.open('/api/monitor_objects/' + device.id + '/points/book')}>⬇ {t('exportPointBook')}</button>
         <input ref={bookInputRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={(e) => void uploadBook(e)} />
       </div>}
+      {bookResult && <PointBookImportResult result={bookResult} t={t} onDismiss={() => setBookResult(null)} />}
       {shown.map((g) => {
         const summary = summaries.get(g.id)!
         return (
