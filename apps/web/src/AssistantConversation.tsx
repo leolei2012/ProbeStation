@@ -1,5 +1,5 @@
 import type { DataTarget } from './DeviceIssues'
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { AssistantMessage } from './AssistantMessage'
 export type AssistantTurn = { entryIndex: number; startedAt: number; endedAt?: number; state: 'running' | 'completed' | 'stopped' | 'failed' }
 const labels = { running: '处理中', completed: '已完成', stopped: '已停止', failed: '执行失败' }

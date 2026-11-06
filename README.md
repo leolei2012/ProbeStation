@@ -93,6 +93,8 @@ npm run start   # 构建前端 + 一键启动
 
 ## 内置 AI 助手
 
+助手富文本解析器按需加载：首屏主JS构建体积由约536.35kB降为379.68kB，约减少29%；正文资源加载中/失败时保留纯文本，可手动重试，不重发消息或业务操作。已有会话/确认流程保持原装配，实际浏览器速度尚未测量。`npm run preview:markdown`可生成不联网模拟页，体积口径、构建边界和验收限制见[说明](docs/develop/26-助手富文本按需加载.md)。未部署运行实例。
+
 启动后点击左下角 **设置 → AI 助手**，选择第三方提供商并填写 API Key；各提供商的配置分别保存。聊天框右下角可切换提供商的模型和该模型支持的推理等级。底层复用 DSH 使用的 `@earendil-works/pi-ai`（0.87.x）；当前接入 API Key 提供商，尚未接入 OAuth、AWS/Vertex 等云凭据流程。自定义模型 API 保留以下 Chat Completions 接入。
 接口使用支持工具调用的 Chat Completions 协议，程序自动在基础地址后追加 `/chat/completions`；例如基础地址可以包含服务商要求的 `/v1`。远程地址要求 HTTPS，本机 `localhost` / `127.0.0.1` 可使用 HTTP 和免密模型服务。不需要额外启动 DSH 或 MCP 客户端。
 
@@ -130,7 +132,7 @@ TypeScript · Cordis 4（插件运行时）· schemastery（配置校验）· js
 ## 冒烟测试
 
 ```bash
-npm run check          # 前端及作用域服务类型检查 + 构建 + 51 组无硬件回归测试
+npm run check          # 类型检查 + 构建/按需依赖边界检查 + 52 组无硬件回归测试
 npm run typecheck:web  # 单独检查前端及其引用模块的类型
 npm run typecheck:services # 配置、历史存储和新增接口的类型检查
 npm test               # 纯函数、模拟提供商和临时数据库测试白名单

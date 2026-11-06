@@ -26,6 +26,8 @@
 .ai-message small { color: var(--text-3); display: block; margin-bottom: 5px; }
 .ai-message > div { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ai-message > .ai-markdown { white-space: normal; }
+.ai-plain-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-renderer-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 11px; color: var(--text-3); }
 .ai-markdown p, .ai-markdown ul, .ai-markdown ol, .ai-markdown pre, .ai-markdown blockquote { margin: 8px 0; }
 .ai-markdown ul, .ai-markdown ol { padding-left: 24px; }
 .ai-markdown h1, .ai-markdown h2, .ai-markdown h3 { font-size: 16px; margin: 16px 0 8px; }
