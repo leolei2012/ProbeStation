@@ -91,6 +91,7 @@ body { font-family: var(--font); color: var(--text-1); font-size: 14px; backgrou
 .hist-empty.warn { color: var(--error); }
 .export-options { display: flex; gap: 8px; margin-bottom: 4px; }
 .export-options .btn { flex: 1; }
+.history-export-range { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; line-height: 1.6; margin: 12px 0; }
 .hist-quick { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .reg-modal { width: 360px; max-height: 72vh; display: flex; flex-direction: column; }
 .reg-modal-actions { display: flex; gap: 8px; margin-bottom: 10px; }

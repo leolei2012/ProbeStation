@@ -11,6 +11,8 @@ import { PointSettingsEditor } from './PointSettingsEditor'
 import { ConfigBackupSettings } from './ConfigBackupSettings'
 import { HistoryQualitySummary } from './HistoryQualitySummary'
 import { HistoryQueryTimeoutError, runHistoryQuery } from './history-query'
+import { HistoryExportModal } from './HistoryExportModal'
+import { captureHistoryExport, historyExportUrl, type HistoryExportRequest } from './history-export'
 import { VirtualTableBody } from './VirtualTableBody'
 import { DeviceIssues, type DataTarget } from './DeviceIssues'
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -46,6 +48,7 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    histExportFull: '导出完整时间范围', histExportViewport: '导出当前缩放区间', histExportSelected: '{n} 个已选点位 · 原始历史（含批次状态）', histExportHint: '按所示时间范围导出，不受图例显隐、Y 轴范围或降采样影响。沿用每次 20 万条原始行上限，大范围请拆分导出。',
     histCancel: '取消查询', histCancelled: '查询已取消，可点击“查询”重新加载。', histTimeout: '查询超过 30 秒，请缩小时间范围后重试。',
     histCoverage: '当前视窗完整区间：{source} 个采样，显示 {shown} 个读数', histSampled: '峰谷保留降采样，放大自动加载细节', histOriginal: '原始采样',
     alarmDelete: '删除', alarmClose: '关闭',
@@ -110,6 +113,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    histExportFull: 'Export full time range', histExportViewport: 'Export zoomed time range', histExportSelected: '{n} selected points · Raw history with batch status', histExportHint: 'Export the stated time range regardless of legend visibility, Y-axis limits or downsampling. The existing 200,000 raw-row limit applies; split large ranges.',
     histCancel: 'Cancel query', histCancelled: 'Query cancelled. Click Query to reload.', histTimeout: 'Query exceeded 30 seconds. Narrow the time range and retry.',
     histCoverage: 'Full visible range: {source} samples, {shown} displayed', histSampled: 'Extrema preserved; zoom reloads detail', histOriginal: 'Original samples',
     alarmDelete: 'Delete', alarmClose: 'Close',
@@ -209,7 +213,7 @@ function formatLocalTs(iso: string): string {
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
 }
 
-/** 浏览器本地时区相对 UTC 的偏移分钟数（东八区为 -480），导出时传给后端做本地化。 */
+/** 浏览器本地时区相对 UTC 的偏移分钟数（东八区为 +480），导出时传给后端做本地化。 */
 function localTzOffsetMin(): number {
   return -new Date().getTimezoneOffset()
 }
@@ -1235,7 +1239,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
   const queryController = useRef<AbortController | null>(null)
-  const [showExport, setShowExport] = useState(false)
+  const [exportRequest, setExportRequest] = useState<HistoryExportRequest | null>(null)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
   useEffect(() => {
     if (target?.view !== 'history' || !target.start || !target.end) return
@@ -1274,10 +1278,11 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     setPreset(minutes); changeRange(localInput(start), localInput(now)); setRefresh(v => v + 1)
   }
   const rows = useMemo(() => deriveHistoryRows(data?.points ?? [], registers, selectedRegisters, valueMode), [data, registers, selected, valueMode])
-  const doExport = (format: 'csv' | 'xlsx') => {
-    if (!valid) return
-    const ids = selectedRegisters.map(r => r.id).join(',')
-    window.open('/api/export/' + format + '?object_id=' + device.id + '&start=' + new Date(startMs).toISOString() + '&end=' + new Date(endMs).toISOString() + '&tz=' + localTzOffsetMin() + (ids ? '&register_ids=' + ids : ''))
+  const beginExport = (scope: HistoryExportRequest['scope']) => {
+    if (!valid || !selectedRegisters.length) return
+    const exportRange = scope === 'viewport' ? (mode === 'chart' ? curveRange : null) : { start: startMs, end: endMs }
+    if (!exportRange) return
+    setExportRequest(captureHistoryExport(device.id, exportRange, selectedRegisters.map(r => r.id), localTzOffsetMin(), scope))
   }
   const currentStatus = data && (data.mode !== mode || Date.parse(data.start) !== queryStart || Date.parse(data.end) !== queryEnd) && status === 'done' ? 'loading' : status
   const errorText = error === 'timeout' ? t('histTimeout') : error
@@ -1287,7 +1292,8 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
       <ValueModeControl t={t} value={valueMode} onChange={setValueMode} />
       <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
       <div style={{ flex: 1 }} />
-      <button className="btn" disabled={!valid || selected.size === 0} onClick={() => setShowExport(true)}>{t(valueMode === 'physical' ? 'exportRaw' : 'export')}</button>
+      <button className="btn" disabled={!valid || selected.size === 0 || currentStatus === 'loading'} onClick={() => beginExport('full')}>{t('histExportFull')}</button>
+      {mode === 'chart' && <button className="btn" disabled={!valid || selected.size === 0 || !curveRange || currentStatus !== 'done'} onClick={() => beginExport('viewport')}>{t('histExportViewport')}</button>}
     </div>
     <p className="chart-hint" role="note">{t('histIntegrityHint')}</p>
     {valueMode === 'physical' && <p className="chart-hint">{t('physicalHistoryHint')}</p>}
@@ -1306,7 +1312,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
       <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={errorText} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
     </>}
-    {showExport && <ExportModal t={t} onClose={() => setShowExport(false)} onPick={format => { doExport(format); setShowExport(false) }} />}
+    {exportRequest && <HistoryExportModal request={exportRequest} t={t} onClose={() => setExportRequest(null)} onPick={format => { window.open(historyExportUrl(format, exportRequest), '_blank', 'noopener'); setExportRequest(null) }} />}
   </div>
 }
 
@@ -1343,23 +1349,6 @@ function HistoryTableBody({ t, rows, selectedRegisters, status, error, page, tot
         </>
       ))}
     </>
-  )
-}
-
-function ExportModal({ t, onClose, onPick }: { t: T; onClose: () => void; onPick: (fmt: 'csv' | 'xlsx') => void }) {
-  return (
-    <div className="modal-mask">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{t('exportTitle')}</h3>
-        <div className="export-options">
-          <button className="btn primary" onClick={() => onPick('csv')}>{t('exportCsv')}</button>
-          <button className="btn primary" onClick={() => onPick('xlsx')}>{t('exportXlsx')}</button>
-        </div>
-        <div className="modal-actions">
-          <button className="btn" onClick={onClose}>{t('cancel')}</button>
-        </div>
-      </div>
-    </div>
   )
 }
 
