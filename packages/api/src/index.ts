@@ -18,6 +18,7 @@ import { registerPointDiagnostics } from './point-diagnostics.ts'
 import { registerPointsImport } from './points-import.ts'
 import { registerPointSettings } from './point-settings.ts'
 import { registerDeviceSettings } from './device-settings.ts'
+import { registerGroupSettings } from './group-settings.ts'
 
 export const name = 'api'
 export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'ota']
@@ -73,6 +74,7 @@ export function apply(ctx: Context, config: Config): void {
     registerCurve(fastify, cfg, store)
     registerPointDiagnostics(fastify, cfg)
     registerPointSettings(fastify, cfg)
+    registerGroupSettings(fastify, cfg)
     registerDeviceSettings(fastify, cfg, { reconnect: id => poller.reconnectDevice(id), syncSlaves: async () => ctx.get('deviceSlaves', false)?.sync() })
     registerConfigBackup(fastify, cfg)
     registerSlave(fastify, ctx.get('slave', false))

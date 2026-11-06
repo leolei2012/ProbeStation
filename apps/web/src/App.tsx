@@ -21,6 +21,8 @@ import { RegisterSelectButton } from './RegisterPicker'
 import { sourceKey, sourceSample, withRegisterSources } from '../../../packages/core/src/sample-source.ts'
 import { decodeHistoricalSample, historyVerificationLabel } from '../../../packages/core/src/history-integrity.ts'
 import { DeviceModal, type DeviceFields } from './DeviceModal'
+import { GroupModal } from './GroupModal'
+import { fullGroupForEditing } from './group-settings-save'
 import type { DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { saveGuardedDeviceSettings } from './device-settings-save'
 import { DeviceSlaveStatus } from './DeviceSlaveStatus'
@@ -987,7 +989,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id] === 'Disconnected' ? t('groupDisconnected') : groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
             <button className="btn" disabled={operation.busy} onClick={() => toggleGroupPause(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
-            {configuring && <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>}
+            {configuring && <button className="btn" onClick={() => { try { setModal({ mode: 'edit', group: fullGroupForEditing(groups, g.id) }) } catch (e) { operation.setNotice({ error: true, text: e instanceof Error ? e.message : t('operationFailed') }) } }}>{t('edit')}</button>}
             {configuring && <button className="btn danger" disabled={operation.busy} onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>}
           </div>
           <GroupFold collapsed={!hasPointFilters && collapsed.has(g.id)}>{() => (<div className="register-table-scroll" key={pointFilterKey}><table className="reg realtime-table" style={{ minWidth: tableWidth }}>
@@ -1028,7 +1030,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
         </div>
       )})}
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
-      {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: t('operationOk') }) }} />}
+      {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={warnings => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') }) }} get={(url, signal) => request(url, { signal })} put={api.put} create={api.post} />}
       {alarmReg && <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} point={alarmReg} onClose={() => setAlarmReg(null)} />}
       {settingsReg && <PointSettingsEditor guarded name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} typeGroups={TYPE_GROUPS} available={(() => { const group = groups.find(g => g.id === settingsReg.groupId); return group ? group.startAddress + group.quantity - settingsReg.startAddress : 0 })()} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
         const warnings = await saveGuardedPointSettings(settingsReg.editBaseline, fields, api.put)
@@ -1055,54 +1057,6 @@ function GroupFold({ collapsed, children }: { collapsed: boolean; children: () =
   </div>
 }
 
-function GroupModal({ t, device, initial, onClose, onSaved }: {
-  t: T; device: Device; initial: DeviceGroup | null; onClose: () => void; onSaved: () => void
-}) {
-  const [name, setName] = useState(initial?.name ?? '')
-  const [slaveId, setSlaveId] = useState(String(initial?.slaveId ?? device.slaveId ?? 1))
-  const [functionCode, setFunctionCode] = useState(String(initial?.functionCode ?? 3))
-  const [startAddress, setStartAddress] = useState(String(initial?.startAddress ?? 0))
-  const [quantity, setQuantity] = useState(String(initial?.quantity ?? 1))
-  const [isActive, setIsActive] = useState(initial ? initial.isActive === 1 : true)
-  const operation = useOperation(t)
-  const save = () => operation.run(async () => {
-    const body = { name, slaveId: device.mode === 'slave' ? device.slaveId : Number(slaveId), functionCode: Number(functionCode), startAddress: Number(startAddress), quantity: Number(quantity), isActive: isActive ? 1 : 0 }
-    if (initial) await api.put('/api/groups/' + initial.id, body)
-    else await api.post('/api/monitor_objects/' + device.id + '/groups', body)
-    onSaved()
-  })
-  return (
-    <div className="modal-mask">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{initial ? t('editGroup') : t('newGroup')}</h3>
-
-        <label>{t('groupName')}</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-        <label>{t('slaveId')}</label>
-        <input value={device.mode === 'slave' ? device.slaveId : slaveId} disabled={device.mode === 'slave'} onChange={(e) => setSlaveId(e.target.value)} />
-        <label>{t('functionCode')}</label>
-        <select value={functionCode} onChange={(e) => setFunctionCode(e.target.value)}>
-          <option value="1">FC01 · {t('fcReadCoils')}</option>
-          <option value="2">FC02 · {t('fcReadDiscrete')}</option>
-          <option value="3">FC03 · {t('fcReadHolding')}</option>
-          <option value="4">FC04 · {t('fcReadInput')}</option>
-        </select>
-        <label>{t('startAddress')}</label>
-        <input value={startAddress} onChange={(e) => setStartAddress(e.target.value)} />
-        <label>{t('quantity')}</label>
-        <input value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        <label className="checkbox-row">
-          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
-          <span>{t('enable')}</span>
-        </label>
-        <div className="modal-actions">
-          <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" disabled={operation.busy} onClick={() => void save()}>{operation.busy ? t('working') : t('save')}</button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function WriteModal({ t, reg, deviceName, currentValue, local, onClose, onSaved }: { t: T; reg: Register; deviceName: string; currentValue: string; local?: boolean; onClose: () => void; onSaved: () => void }) {
   const [value, setValue] = useState('')

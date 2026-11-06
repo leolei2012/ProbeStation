@@ -9,6 +9,8 @@ import { DeviceModal } from '../../apps/web/src/DeviceModal'
 import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest, type DeviceEditBaseline } from '../../packages/core/src/device-settings-edit'
 import { saveGuardedDeviceSettings } from '../../apps/web/src/device-settings-save'
 import type { SerialPortList } from '../../apps/web/src/serial-ports'
+import { GroupModal } from '../../apps/web/src/GroupModal'
+import { captureGroupEditGraph, groupDeletionAcknowledged, parseGroupEditChanges, planGroupResize, type GroupEditGraph } from '../../packages/core/src/group-settings-edit'
 
 const group = { id: 1, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 4, mode: 'read' }
 const device = { id: 1, mode: 'master', slaveId: 1, transport: 'tcp', ip: 'mock.invalid', port: 502, serialPath: null, baudRate: 9600, parity: 'even', stopBits: 1, dataBits: 8, flowControl: 'none' }
@@ -23,11 +25,50 @@ const scenarios = [
 ]
 
 const words: Record<string, string> = {
+  editGroup: '编辑模拟分组', newGroup: '新建模拟分组', groupName: '分组名称', slaveId: '从站', functionCode: '功能码', startAddress: '起始地址', quantity: '数量', enable: '启用', fcReadCoils: '线圈', fcReadDiscrete: '离散输入', fcReadHolding: '保持寄存器', fcReadInput: '输入寄存器',
   editDeviceTitle: '编辑模拟设备', newDeviceTitle: '新建模拟设备', name: '名称', transport: '连接方式', transportTcp: 'TCP', transportRtu: 'RTU', ip: 'IP/主机名', port: '端口', baudRate: '波特率', parity: '校验位', stopBits: '停止位', flowControl: '流控', slaveIdLabel: '从站地址', pollIntervalLabel: '扫描间隔', timeoutLabel: '超时', pollIntervalHint: '仅页面模拟，不采集。', timeoutHint: '仅页面模拟，不连接。',
   pointSettings: '点位设置（纯模拟）', colAddr: '地址', colType: '类型', types: '模拟数值类型', pointUnit: '单位', pointFactor: '系数', pointOffset: '偏移', pointDecimals: '物理值小数位', pointDecimalsAuto: '自动',
   pointScaleHint: '物理值 = 原始值 × 系数 + 偏移。修改只保存在页面内存，不连接设备、不读写配置库。', pointZeroFactorHint: '系数为 0：有效原始值的物理换算结果等于偏移。原始采样值和告警比较不受影响。',
   pointInvalidScale: '系数和偏移必须填写有限数（系数可为 0）。', valueShort: '类型字宽超出分组', enumConfig: '枚举', enumHint: '不填时无枚举；也可测试重复值或空名称的校验。', enumValue: '原始整数', enumLabel: '标签', enumEmpty: '无枚举', enumLabelPlaceholder: '显示文字', enumRemove: '删除', enumAdd: '添加枚举', enumClear: '清空枚举',
   enumInvalidValue: '枚举值应为整数', enumDuplicate: '枚举值 {value} 重复', enumEmptyLabel: '请填写枚举标签', cancel: '取消', save: '保存到页面内存', working: '处理中', operationFailed: '模拟保存失败',
+}
+const initialGroupGraph = () => captureGroupEditGraph({
+  group: { id: 2, objectId: 1, name: '模拟分组', slaveId: 1, functionCode: 3, startAddress: 0, quantity: 2, mode: 'read', isActive: 1 },
+  device: { ...device, name: '模拟分组设备', pollIntervalMs: 1000, timeoutMs: 3000 },
+  registers: [20, 21].map((id, startAddress) => ({ id, objectId: 1, groupId: 2, alias: '模拟点 ' + id, functionCode: 3, startAddress, quantity: 1, dataType: 'uint16', unit: null, factor: 1, offset: 0, enumJson: null, decimalPlaces: null })),
+  rules: [{ id: 1, registerId: 21, operator: '>', threshold: 1, message: '模拟告警' }],
+})
+function GroupPreview({ show, setShow, disabled }: { show: boolean; setShow: (value: boolean) => void; disabled: boolean }) {
+  const [graph, setGraph] = useState<GroupEditGraph>(initialGroupGraph), [revision, setRevision] = useState(1)
+  const [readFail, setReadFail] = useState(false), [conflict, setConflict] = useState(false), [writeFail, setWriteFail] = useState(false), [result, setResult] = useState('尚未保存')
+  const token = (n: number) => 'v1:' + n.toString(16).padStart(64, '0')
+  return <section><h2>分组整图核对与缩扩容（纯模拟）</h2><p>模拟版本编号仅用于手测；真实API使用完整快照摘要。读取、删除确认、冲突及失败恢复均无网络和数据库。</p>
+    <label><input type="checkbox" checked={readFail} onChange={e => setReadFail(e.target.checked)} />下次读取失败一次，可在窗口重读</label>
+    <label><input type="checkbox" checked={conflict} onChange={e => setConflict(e.target.checked)} />保存前模拟并发新增点位和告警</label>
+    <label><input type="checkbox" checked={writeFail} onChange={e => setWriteFail(e.target.checked)} />下次保存失败一次（仅模拟提交前失败）</label>
+    <button className="btn" disabled={show || disabled} onClick={() => setShow(true)}>编辑模拟分组</button><button className="btn" disabled={show || disabled} onClick={() => { setGraph(initialGroupGraph()); setRevision(v => v + 1); setResult('已重置模拟数据') }}>重置模拟分组</button>
+    <pre>{result}</pre><pre>{JSON.stringify(graph, null, 2)}</pre>
+    {show && <GroupModal t={key => words[key] ?? key} device={graph.device} initial={{ ...graph.group, registers: graph.registers }} onClose={() => setShow(false)} onSaved={warnings => { setShow(false); setResult(['分组已保存（模拟）', ...warnings].join(' · ')) }}
+      get={async () => { if (readFail) { setReadFail(false); throw new Error('模拟快照读取失败，可重读；草稿不变。') }; return { ...graph, revision: token(revision) } }}
+      create={async () => { throw new Error('此模拟只测试编辑现有分组') }} put={async (_url, body) => {
+        if (writeFail) { setWriteFail(false); throw new Error('HTTP 400 模拟提交前拒绝，所有数据未变，可重试。') }
+        const request = body as any; let current = graph, version = revision
+        if (conflict) {
+          const id = Math.max(...current.registers.map(row => row.id)) + 1, ruleId = Math.max(0, ...current.rules.map(row => row.id)) + 1
+          current = captureGroupEditGraph({ ...current, registers: [...current.registers, { ...current.registers[0], id, alias: '并发新增点', startAddress: 2 }], rules: [...current.rules, { id: ruleId, registerId: id, operator: '>', threshold: 9, message: '并发新增告警' }] })
+          version++; setGraph(current); setRevision(version); setConflict(false)
+        }
+        if (request.expectedRevision !== token(version)) throw new Error('HTTP 409 分组、点位或告警已变化；本次未保存，草稿保留，请关闭重开。')
+        const changes = parseGroupEditChanges(request.changes, current.group), plan = planGroupResize(current, changes)
+        if (!groupDeletionAcknowledged(request.confirmedDeletion, plan)) throw new Error('请核对删除编号后确认')
+        const removed = new Set(plan.removeRegisterIds), removedRules = new Set(plan.removeRuleIds), nextGroup = { ...current.group, ...changes }
+        const nextId = Math.max(0, ...current.registers.map(row => row.id)) + 1
+        const added = plan.addAddresses.map((startAddress, i) => ({ id: nextId + i, objectId: 1, groupId: 2, alias: null, functionCode: nextGroup.functionCode, startAddress, quantity: 1, dataType: 'int16', unit: null, factor: 1, offset: 0, enumJson: null, decimalPlaces: null }))
+        const saved = captureGroupEditGraph({ ...current, group: nextGroup, registers: [...current.registers.filter(row => !removed.has(row.id)), ...added].sort((a, b) => a.startAddress - b.startAddress || a.id - b.id), rules: current.rules.filter(rule => !removedRules.has(rule.id)) })
+        setGraph(saved); setRevision(version + 1)
+        return { snapshot: { ...saved, revision: token(version + 1) }, deletedRegisterIds: plan.removeRegisterIds, deletedRuleIds: plan.removeRuleIds, addedRegisterIds: added.map(row => row.id), warnings: [] }
+      }} />}
+  </section>
 }
 function Preview() {
   const [settings, setSettings] = useState<PointSettings>({ dataType: 'uint32', unit: '旧单位', factor: 0, offset: 12.5, enumJson: null, decimalPlaces: 1 })
@@ -38,14 +79,16 @@ function Preview() {
   const [showDevice, setShowDevice] = useState(false), [deviceConflict, setDeviceConflict] = useState(false), [deviceWarning, setDeviceWarning] = useState(false)
   const [deviceSettings, setDeviceSettings] = useState<DeviceEditBaseline>(() => ({ ...device, name: '模拟设备', pollIntervalMs: 1000, timeoutMs: 3000 }))
   const [deviceResult, setDeviceResult] = useState('尚未保存')
+  const [showGroup, setShowGroup] = useState(false)
   return <main style={{ padding: 24 }}>
     <h1>纯 mock 点位设置流程</h1>
     <p>无服务、数据库或设备；保存只更新此页面内存。关闭页面即丢弃模拟配置。</p>
+    <GroupPreview show={showGroup} setShow={setShowGroup} disabled={show || showDevice || showGroup} />
     <h2>设备编辑并发保护（纯模拟）</h2>
     <p>可切到RTU查看模拟端口；注入固定清单，不枚举或打开系统端口。正常保存、冲突保留草稿和已保存但运行状态警告均只发生在页面内存。</p>
     <label><input type="checkbox" checked={deviceConflict} onChange={e => setDeviceConflict(e.target.checked)} />保存前模拟其他用户修改设备IP</label>
     <label><input type="checkbox" checked={deviceWarning} onChange={e => setDeviceWarning(e.target.checked)} />模拟配置已保存但连接应用失败</label>
-    <button className="btn" disabled={show || showDevice} onClick={() => setShowDevice(true)}>编辑模拟设备</button>
+    <button className="btn" disabled={show || showDevice || showGroup} onClick={() => setShowDevice(true)}>编辑模拟设备</button>
     <pre>{deviceResult}</pre><pre>{JSON.stringify(deviceSettings, null, 2)}</pre>
     {showDevice && <DeviceModal t={key => words[key] ?? key} initial={deviceSettings} portFetcher={mockPorts} onClose={() => setShowDevice(false)} onSave={async (fields, expected) => {
       if (!expected) throw new Error('缺少模拟编辑快照')
@@ -61,11 +104,11 @@ function Preview() {
     <h2>点位设置（纯模拟）</h2>
     <p>将“旧单位”改名后保持系数 0 保存并重新打开；再测试清空数字、负倍率、枚举重复、取消及失败重试。可缩至360px检查布局。</p>
     <p>原枚举不改动时，请检查下方发送字段中没有 enumJson；明确替换或清空后才会发送该字段。大映射可分页，错误会定位所在页。</p>
-    <div className="toolbar">{scenarios.map(scenario => <button key={scenario.name} className="btn" disabled={show || showDevice} onClick={() => { setSettings(previous => ({ ...previous, enumJson: scenario.value })); setPatch(null) }}>{scenario.name}</button>)}</div>
+    <div className="toolbar">{scenarios.map(scenario => <button key={scenario.name} className="btn" disabled={show || showDevice || showGroup} onClick={() => { setSettings(previous => ({ ...previous, enumJson: scenario.value })); setPatch(null) }}>{scenario.name}</button>)}</div>
     <label><input type="checkbox" checked={concurrent} onChange={e => setConcurrent(e.target.checked)} />保存前模拟其他用户更新枚举（仅页面内存）</label>
     <label><input type="checkbox" checked={conflict} onChange={e => setConflict(e.target.checked)} />保存前模拟其他用户更改单位，应拒绝旧草稿（仅页面内存）</label>
     <label><input type="checkbox" checked={failOnce} onChange={e => setFailOnce(e.target.checked)} />下次保存模拟失败一次，随后允许重试</label>
-    <button className="btn" disabled={show || showDevice} onClick={() => { setBaseline(capturePointEditBaseline(point(settings), group, device)); setShow(true) }}>编辑模拟点位</button>
+    <button className="btn" disabled={show || showDevice || showGroup} onClick={() => { setBaseline(capturePointEditBaseline(point(settings), group, device)); setShow(true) }}>编辑模拟点位</button>
     <pre aria-label="页面内存配置">{JSON.stringify(settings, null, 2)}</pre>
     <pre aria-label="最近发送字段">{patch === null ? '尚未保存' : JSON.stringify(patch, null, 2)}</pre>
     {show && baseline && <PointSettingsEditor guarded name="模拟点位 · 不接触实机" address={0} settings={settings} available={4}

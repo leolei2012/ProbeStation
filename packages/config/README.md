@@ -92,3 +92,9 @@ applyPointBookImport(objectId, replace, build)仅供Sink同步构建点表，事
 `updateObjectSettings(id, { expected, changes })`用于设备编辑新接口；快照仅含设备编辑表单字段，不含connected/isActive/dataRetainSeconds。BEGIN IMMEDIATE内比较整份表单旧值、校验合并结果、绑定写入并读回，失败回滚，不通知。提交后一次通知，异常转warnings；返回`{device,warnings}`。不调用poller或从站服务，连接处理由API提交后执行，冲突/非法输入不调用。旧updateObject兼容，不新增列或迁移。
 
 设备/点位已具备当前值条件保护；旧接口、MCP、导入及分组编辑尚未统一保护。分组quantity变化涉及现有点位与告警删除/新增，须另做整图核对与事务，详见[评估与边界](../../docs/develop/35-设备编辑冲突与分组风险评估.md)。
+
+## 分组图条件更新与原子缩扩容
+
+`getGroupSettings(id)`在一致读事务中返回`{group,device,registers,rules,revision}`，revision是规范图JSON的v1 SHA256摘要（当前值条件，不是授权或持久修订号）。`updateGroupSettings(id,{expectedRevision,changes,confirmedDeletion?})`在BEGIN IMMEDIATE内重读并比较整图，验证当前删除预览的确切点位/告警ID，再执行原缩扩容逻辑、读回并提交；失败回滚，提交后一次group通知，通知异常返回warnings。变动影响、已保存图与warnings均在结果中。
+
+公开`updateGroup`保留原调用/返回形状及原缩扩容政策，外部调用自动包事务；已有restoring批量事务内复用外层事务/通知，防嵌套BEGIN。旧调用没有expectedRevision，仍不能防止过期字段覆盖，且旧通知异常仍可能在提交后抛出；新接口提供明确已保存警告。新建/删除整个分组等流程未统一改造。没有新增表列或迁移；详见[策略、结果及限制](../../docs/develop/36-分组整图核对与原子缩扩容.md)。

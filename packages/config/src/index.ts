@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import net from 'node:net'
 import type { Context } from 'cordis'
 import z from 'schemastery'
@@ -15,6 +16,7 @@ import { registerWidth } from '../../core/src/codec.ts'
 import { semanticPointFields, type SemanticPointUpdate } from '../../core/src/semantic-import.ts'
 import { capturePointEditBaseline, parsePointEditRequest, pointEditMatches } from '../../core/src/point-settings-edit.ts'
 import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest } from '../../core/src/device-settings-edit.ts'
+import { captureGroupEditGraph, groupDeletionAcknowledged, groupEditInvalid, parseGroupEditChanges, planGroupResize, type GroupEditSnapshot } from '../../core/src/group-settings-edit.ts'
 
 export const name = 'config'
 
@@ -234,6 +236,16 @@ export class ConfigStore {
     return this.getGroup(id)!
   }
   updateGroup(id: number, fields: Record<string, unknown>): GroupRecord | undefined {
+    if (this.restoring) return this.updateGroupRows(id, fields) // Existing bulk transaction owns rollback and notification.
+    let result: GroupRecord | undefined
+    this.db.exec('BEGIN IMMEDIATE'); this.restoring = true
+    try { result = this.updateGroupRows(id, fields); this.db.exec('COMMIT') }
+    catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '分组更新回滚失败，结果待核实，勿自动重试。') }; throw error }
+    finally { this.restoring = false }
+    this.notify('group', id)
+    return result
+  }
+  private updateGroupRows(id: number, fields: Record<string, unknown>): GroupRecord | undefined {
     const before = this.getGroup(id)
     this.update('register_groups', id, fields, GROUP_MAP)
     const after = this.getGroup(id)
@@ -259,6 +271,50 @@ export class ConfigStore {
     }
     this.notify('group', id)
     return this.getGroup(id)
+  }
+  private groupEditSnapshot(id: number): GroupEditSnapshot {
+    const group = this.getGroup(id)
+    if (!group) throw Object.assign(new Error('分组已不存在，请关闭窗口并刷新。'), { statusCode: 404 })
+    const registers = this.listRegisters(id), ids = new Set(registers.map(row => row.id))
+    const graph = captureGroupEditGraph({ group, device: this.getObject(group.objectId), registers, rules: this.listRules().filter(rule => ids.has(rule.registerId)) })
+    return Object.freeze({ ...graph, revision: 'v1:' + createHash('sha256').update(JSON.stringify(graph)).digest('hex') })
+  }
+  /** Read one coherent graph; do not create a token from separately racing register/rule reads. */
+  getGroupSettings(id: number): GroupEditSnapshot {
+    if (!Number.isSafeInteger(id) || id < 1) return groupEditInvalid()
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请稍后重读。'), { statusCode: 409 })
+    this.db.exec('BEGIN')
+    try { const result = this.groupEditSnapshot(id); this.db.exec('COMMIT'); return result }
+    catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '分组快照读取结束失败，请核对数据库状态。') }; throw error }
+  }
+  updateGroupSettings(id: number, request: unknown) {
+    const raw = request as any
+    if (!Number.isSafeInteger(id) || id < 1 || !raw || typeof raw !== 'object' || Array.isArray(raw) || typeof raw.expectedRevision !== 'string' || !/^v1:[a-f0-9]{64}$/.test(raw.expectedRevision) || Object.keys(raw).some(key => !['expectedRevision', 'changes', 'confirmedDeletion'].includes(key))) return groupEditInvalid()
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请核对后重新编辑。'), { statusCode: 409 })
+    let result: { snapshot: GroupEditSnapshot; deletedRegisterIds: readonly number[]; deletedRuleIds: readonly number[]; addedRegisterIds: number[] }
+    this.db.exec('BEGIN IMMEDIATE'); this.restoring = true
+    try {
+      const before = this.groupEditSnapshot(id)
+      if (before.revision !== raw.expectedRevision) throw Object.assign(new Error('分组、点位、告警或设备来源已变化，本次未保存。草稿已保留；请记录修改，关闭并刷新后重新编辑。'), { statusCode: 409 })
+      const changes = parseGroupEditChanges(raw.changes, before.group), plan = planGroupResize(before, changes)
+      if (!groupDeletionAcknowledged(raw.confirmedDeletion, plan)) throw Object.assign(new Error('请先核对并确认本次将删除的点位和告警。'), { statusCode: 400 })
+      this.updateGroupRows(id, changes)
+      const snapshot = this.groupEditSnapshot(id), oldIds = new Set(before.registers.map(row => row.id))
+      const remaining = new Set(snapshot.registers.map(row => row.id)), remainingRules = new Set(snapshot.rules.map(row => row.id))
+      const deletedRegisterIds = before.registers.filter(row => !remaining.has(row.id)).map(row => row.id), deletedRuleIds = before.rules.filter(row => !remainingRules.has(row.id)).map(row => row.id)
+      const added = snapshot.registers.filter(row => !oldIds.has(row.id)), deleted = new Set(plan.removeRegisterIds), deletedRules = new Set(plan.removeRuleIds)
+      const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+      const byId = (a: { id: number }, b: { id: number }) => a.id - b.id
+      if (!equal(deletedRegisterIds, plan.removeRegisterIds) || !equal(deletedRuleIds, plan.removeRuleIds) || !equal(added.map(row => row.startAddress), plan.addAddresses) || !equal(snapshot.group, { ...before.group, ...changes }) || !equal(snapshot.device, before.device) || !equal(snapshot.registers.filter(row => oldIds.has(row.id)).sort(byId), before.registers.filter(row => !deleted.has(row.id)).sort(byId)) || !equal(snapshot.rules, before.rules.filter(row => !deletedRules.has(row.id)))) throw new Error('缩扩容实际结果与已核对计划不一致，事务已中止。')
+      result = { snapshot, deletedRegisterIds, deletedRuleIds, addedRegisterIds: added.map(row => row.id) }
+      this.db.exec('COMMIT')
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '分组保存回滚失败，结果待核实，勿自动重试。') }
+      throw error
+    } finally { this.restoring = false }
+    const warnings: string[] = []
+    try { this.notify('group', id) } catch { warnings.push('分组及点位/告警已保存，但变更通知失败；请刷新核对，勿重复保存。') }
+    return { ...result, warnings }
   }
   deleteGroup(id: number): void {
     this.db.prepare('DELETE FROM alarm_rules WHERE register_id IN (SELECT id FROM registers WHERE group_id = ?)').run(id)
