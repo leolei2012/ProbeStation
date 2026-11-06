@@ -18,6 +18,7 @@
     "scripts/fixtures/config-backup-preview.tsx",
     "scripts/fixtures/live-point-filter-preview.tsx",
     "scripts/fixtures/assistant-markdown-preview.tsx",
+    "scripts/fixtures/history-time-range-preview.tsx",
     "scripts/check-web-bundle.ts",
     "packages/api/src/config-backup.ts",
     "packages/api/src/history-assessment.ts",

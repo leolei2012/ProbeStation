@@ -935,3 +935,9 @@ table.reg th, .btn { white-space: nowrap; }
 .live-point-search input { width: 100%; box-sizing: border-box; }
 .live-point-status-filters { display: flex; flex-wrap: wrap; gap: 8px; }
 .live-point-status-filters strong { margin-left: 5px; font-variant-numeric: tabular-nums; }
+
+.history-time-controls .history-range { margin-bottom: 8px; }
+.history-time-controls .hist-label { display: flex; flex-direction: column; gap: 5px; max-width: 100%; min-width: 0; }
+.history-time-controls .hist-input { max-width: 100%; min-width: 0; }
+.history-time-controls small { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.history-utc-range { font-size: 11px; color: var(--text-2); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }

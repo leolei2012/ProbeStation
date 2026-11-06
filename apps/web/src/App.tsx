@@ -1,4 +1,6 @@
 import { HistoryComparison } from './HistoryComparison'
+import { HistoryTimeRange } from './HistoryTimeRange'
+import { historyTimeRange, resolveHistoryTimeRange, editHistoryTime, changeHistoryInputZone, historyPresetRange } from './history-time-range'
 import { LivePointFilters } from './LivePointFilters'
 import { evaluateLivePoints, livePointFilterResult, type LivePointFilter } from './live-point-filter'
 import { pickerSources } from './register-picker'
@@ -251,11 +253,6 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   const chunk = 0x8000
   for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk))
   return btoa(bin)
-}
-
-function toLocalInput(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0')
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes())
 }
 
 interface RegView { physical?: ReturnType<typeof physicalValue>; value: string; label: string | null; covered: boolean; invalid: boolean; writable: boolean }
@@ -1199,10 +1196,9 @@ function deriveHistoryRows(pts: HistoryPoint[], registers: Register[], selectedR
 }
 
 function HistoryView({ configurationReady, target, t, device, groups, registers }: { configurationReady: boolean; target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
-  const localInput = (date: Date) => toLocalInput(date) + ':' + String(date.getSeconds()).padStart(2, '0')
   const [mode, setMode] = useState<'table' | 'chart'>('table')
   const [valueMode, setValueMode] = useValueMode('ps-history-value-mode-' + device.id)
-  const [range, setRange] = useState(() => ({ start: localInput(new Date(Date.now() - 3600_000)), end: localInput(new Date()) }))
+  const [range, setRange] = useState(() => historyPresetRange(60, Date.now(), 'local'))
   const [preset, setPreset] = useState<number | null>(60)
   const [page, setPage] = useState(0)
   const [refresh, setRefresh] = useState(0)
@@ -1223,7 +1219,8 @@ function HistoryView({ configurationReady, target, t, device, groups, registers 
     if (!action) return
     if (action.invalid) { setNavigationNotice({ kind: 'invalid' }); setSelected(new Set()); return }
     if (action.range) {
-      setRange({ start: localInput(new Date(action.range.start)), end: localInput(new Date(action.range.end)) })
+      const nextRange = action.range
+      setRange(previous => historyTimeRange(nextRange.start, nextRange.end, previous.zone))
       setPreset(null); setPage(0); setMode('chart'); setCurveRange(null); setNavigationRevision(value => value + 1); setRefresh(value => value + 1); setNavigationNotice(null)
     }
     if (action.focus) {
@@ -1234,8 +1231,7 @@ function HistoryView({ configurationReady, target, t, device, groups, registers 
   const cancelNavigation = () => { navigation.current!.cancelPending(); setNavigationNotice(null) }
   const selectedRegisters = registers.filter(r => selected.has(r.id))
   const pointLabels = useMemo(() => buildPointLabels(registers, groups, t, device.mode === 'slave' ? device.slaveId : undefined), [registers, groups, t, device.mode, device.slaveId])
-  const startMs = Date.parse(range.start), endMs = Date.parse(range.end)
-  const valid = Number.isFinite(startMs) && Number.isFinite(endMs) && startMs < endMs
+  const { start: startMs, end: endMs, valid } = useMemo(() => resolveHistoryTimeRange(range), [range])
   const { start: queryStart, end: queryEnd } = historyQueryRange(mode === 'chart' && curveRange ? curveRange : { start: startMs, end: endMs })
   const selectionKey = [...selected].sort((a, b) => a - b).join(',')
   const plan = useMemo(() => valid ? historyQueryPlan({ objectId: device.id, start: queryStart, end: queryEnd, mode, page, registerIds: selectionKey ? selectionKey.split(',').map(Number) : [] }) : null, [device.id, queryStart, queryEnd, valid, mode, page, selectionKey])
@@ -1257,11 +1253,10 @@ function HistoryView({ configurationReady, target, t, device, groups, registers 
     return () => { task.dispose(); if (queryTask.current === task) queryTask.current = null }
   }, [plan, refresh])
   useEffect(() => { setCurveRange(null) }, [startMs, endMs])
-  const changeRange = (start: string, end: string) => { setRange({ start, end }); setCurveRange(null); setPage(0) }
   const applyPreset = (minutes: number) => {
-    const now = new Date()
-    const start = minutes === 0 ? new Date(now.getFullYear(), now.getMonth(), now.getDate()) : new Date(now.getTime() - minutes * 60_000)
-    setPreset(minutes); changeRange(localInput(start), localInput(now)); setRefresh(v => v + 1)
+    const now = Date.now()
+    setRange(previous => historyPresetRange(minutes, now, previous.zone))
+    setPreset(minutes); setCurveRange(null); setPage(0); setRefresh(v => v + 1)
   }
   const rows = useMemo(() => deriveHistoryRows(data?.points ?? [], registers, selectedRegisters, valueMode), [data, registers, selected, valueMode])
   const beginExport = (scope: HistoryExportRequest['scope']) => {
@@ -1285,14 +1280,12 @@ function HistoryView({ configurationReady, target, t, device, groups, registers 
     {navigationNotice && <p className={'chart-hint' + (navigationNotice.kind !== 'waiting' ? ' warn' : '')} role={navigationNotice.kind === 'waiting' ? 'status' : 'alert'}>{t(navigationNotice.kind === 'waiting' ? 'histNavigationWaiting' : navigationNotice.kind === 'missing' ? 'histNavigationMissing' : 'histNavigationInvalid').replace('{id}', String(navigationNotice.id ?? ''))}</p>}
     {valueMode === 'physical' && <p className="chart-hint">{t('physicalHistoryHint')}</p>}
     <div className="hist-quick history-presets">
-      {[5, 30, 60, 360, 1440, 0].map(minutes => <button key={minutes} className={'btn' + (preset === minutes ? ' selected' : '')} onClick={() => applyPreset(minutes)}>{minutes === 0 ? t('histToday') : minutes < 60 ? t('histMinutes').replace('{n}', String(minutes)) : t('histHours').replace('{n}', String(minutes / 60))}</button>)}
+      {[5, 30, 60, 360, 1440, 0].map(minutes => <button key={minutes} className={'btn' + (preset === minutes ? ' selected' : '')} onClick={() => applyPreset(minutes)}>{minutes === 0 ? t('histToday') + (t('cancel') === 'Cancel' ? ' (local)' : '（本地）') : minutes < 60 ? t('histMinutes').replace('{n}', String(minutes)) : t('histHours').replace('{n}', String(minutes / 60))}</button>)}
     </div>
-    <div className="toolbar history-range">
-      <label className="hist-label">{t('histStart')}<input className="hist-input" type="datetime-local" step="1" value={range.start} onChange={e => { setPreset(null); changeRange(e.target.value, range.end) }} /></label>
-      <label className="hist-label">{t('histEnd')}<input className="hist-input" type="datetime-local" step="1" value={range.end} onChange={e => { setPreset(null); changeRange(range.start, e.target.value) }} /></label>
+    <HistoryTimeRange range={range} onEdit={(field, text) => { const next = editHistoryTime(range, field, text); if (next === range) return; setPreset(null); setRange(next); setCurveRange(null); setPage(0) }} onZone={zone => setRange(previous => changeHistoryInputZone(previous, zone))} english={t('cancel') === 'Cancel'}>
       <button className="btn primary" disabled={!plan || currentStatus === 'loading'} onClick={() => { cancelNavigation(); setRefresh(v => v + 1) }}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
       {currentStatus === 'loading' && <button className="btn" onClick={() => { cancelNavigation(); queryTask.current?.cancel() }}>{t('histCancel')}</button>}
-    </div>
+    </HistoryTimeRange>
     {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
     {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} pointLabels={pointLabels} t={t} />}
     {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody key={navigationRevision} pointLabels={pointLabels} sourceSeries={data?.series} onViewportChange={view => { cancelNavigation(); setCurveRange(view) }} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>

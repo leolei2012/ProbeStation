@@ -19,6 +19,7 @@
     "preview:backup": "tsx scripts/preview-register-picker.ts --backup",
     "preview:live-filter": "tsx scripts/preview-register-picker.ts --live-filter",
     "preview:markdown": "tsx scripts/preview-register-picker.ts --markdown",
+    "preview:time-range": "tsx scripts/preview-register-picker.ts --time-range",
     "diagnose:points": "tsx scripts/diagnose-points.ts",
     "test:edition": "npm run build:web && tsx scripts/offline-test-app.ts",
     "typecheck:web": "tsc -p tsconfig.web.json",
