@@ -41,7 +41,7 @@ function enums(text: string): string | null {
 /** Parse/validate the existing v2 workbook entirely before any configuration writes. */
 export function parsePointBook(wb: ExcelJS.Workbook): { groups: BookGroup[]; errors: string[]; warnings: string[] } {
   const groups: BookGroup[] = [], errors: string[] = [], warnings: string[] = []
-  const locations = new Map<string, BookPoint[]>()
+  const locations = new Map<string, Array<{ sheet: string; point: BookPoint }>>()
   const key = (group: string, fc: number, address: number) => JSON.stringify([group, fc, address])
   for (const ws of wb.worksheets) {
     if (['设备信息', '告警规则'].includes(ws.name)) continue
@@ -49,6 +49,8 @@ export function parsePointBook(wb: ExcelJS.Workbook): { groups: BookGroup[]; err
     try {
       if (ws.rowCount < 4 || cell(ws.getRow(1), 1).trim() !== '分组') invalid('缺少分组头或点位列头')
       const name = cell(ws.getRow(1), 2) || ws.name, row2 = ws.getRow(2), header = ws.getRow(4)
+      if (!name.trim()) invalid('分组名不可全为空白')
+      if (!cell(ws.getRow(1), 2)) warnings.push(label + ' 未提供分组名，沿用工作表名称，请核对。')
       const values = new Map<string, string>()
       for (let column = 1; column <= 7; column += 2) {
         const field = cell(row2, column).trim(), value = cell(row2, column + 1).trim()
@@ -95,7 +97,7 @@ export function parsePointBook(wb: ExcelJS.Workbook): { groups: BookGroup[]; err
       for (const point of points) {
         if (point.startAddress < startAddress || point.startAddress + registerWidth(point.dataType) > startAddress + quantity) invalid('点位' + point.startAddress + '完整dtype字宽超出显式分组范围，未自动扩组')
         const id = key(name, point.functionCode, point.startAddress)
-        locations.set(id, [...(locations.get(id) ?? []), point])
+        locations.set(id, [...(locations.get(id) ?? []), { sheet: ws.name, point }])
       }
       groups.push(group)
     } catch (error: any) { errors.push(label + '：' + error.message) }
@@ -104,16 +106,21 @@ export function parsePointBook(wb: ExcelJS.Workbook): { groups: BookGroup[]; err
   if (!alarms) errors.push('缺少「告警规则」页，请使用新版点位表模板；无告警时保留空表头。')
   else {
     if (alarmHead.some((h, i) => cell(alarms.getRow(1), i + 1).trim() !== h)) errors.push('「告警规则」页列头不正确，请使用新版模板。')
+    const sheetHeader = cell(alarms.getRow(1), 7).trim()
+    if (sheetHeader && sheetHeader !== '点位工作表') errors.push('「告警规则」页第G列须为点位工作表，不能猜测定位列。')
     for (let ri = 2; ri <= alarms.rowCount; ri++) {
       const fields = alarmHead.map((_, i) => cell(alarms.getRow(ri), i + 1))
-      if (fields.every(f => !f.trim())) continue
+      const sheet = cell(alarms.getRow(ri), 7)
+      if (fields.every(f => !f.trim()) && !sheet.trim()) continue
       try {
         const [group, fc, address, rawOperator, limit, message] = fields
         const operator = rawOperator.trim().replace('≥', '>=').replace('≤', '<=').replace('≠', '!=').replace(/^=$/, '==')
         if (!group.trim() || !/^\d+$/.test(fc.trim()) || !/^\d+$/.test(address.trim()) || !ALARM_OPERATORS.includes(operator as any) || !limit.trim() || !Number.isFinite(Number(limit)) || message.length > 200) invalid('分组、功能码、地址、条件、阈值或提示无效')
-        const matches = locations.get(key(group.trim(), Number(fc), Number(address))) ?? []
+        if (sheet && (sheetHeader !== '点位工作表' || !sheet.trim())) invalid('工作表定位缺少列头或仅为空白')
+        let matches = locations.get(key(group, Number(fc), Number(address))) ?? []
+        if (sheet) matches = matches.filter(location => location.sheet.toLowerCase() === sheet.toLowerCase())
         if (matches.length !== 1) invalid(matches.length ? '对应点位不唯一' : '找不到对应点位')
-        matches[0].alarms.push({ operator, threshold: Number(limit), message: message.trim() || null })
+        matches[0].point.alarms.push({ operator, threshold: Number(limit), message: message.trim() || null })
       } catch (error: any) { errors.push('告警规则第 ' + ri + ' 行：' + error.message) }
     }
   }

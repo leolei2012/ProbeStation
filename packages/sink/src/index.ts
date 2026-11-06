@@ -1,6 +1,7 @@
 import type { Context } from 'cordis'
 import ExcelJS from 'exceljs'
 import { parsePointBook } from './pointbook.ts'
+import { assertExportableGroupName, createSheetNameAllocator } from './sheet-names.ts'
 import { areaForFunction, formatRegisterValue, decodeHistoricalSample, historyVerificationLabel, type HistoryVerification } from '@probebench/core'
 import { HISTORY_EXPORT_RAW_LIMIT, HistoryExportLimitError, historyExportReadRanges } from '../../core/src/history-export-policy.ts'
 import { withRegisterSources } from '../../core/src/sample-source.ts'
@@ -29,12 +30,6 @@ function tzLabel(offsetMin: number): string {
   const sign = offsetMin > 0 ? '+' : '-'
   const a = Math.abs(offsetMin)
   return 'UTC' + sign + String(Math.floor(a / 60)).padStart(2, '0') + ':' + String(a % 60).padStart(2, '0')
-}
-
-/** sheet 名不允许包含 :\/?*[]，超长截断。 */
-function sanitizeSheetName(n: string): string {
-  const cleaned = String(n).replace(/[\\/:*?[\]]/g, '_').slice(0, 31)
-  return cleaned || 'sheet'
 }
 
 /** enum_json 转可读 "值=标签;..." 字符串。 */
@@ -137,6 +132,17 @@ export class Sink {
     if (!obj) throw new Error('device not found: ' + objectId)
     const groups = this.ctx.config.listGroups(objectId)
     const rules = this.ctx.config.listRules()
+    const allocate = createSheetNameAllocator()
+    const sheets = groups.map((g: any) => {
+      assertExportableGroupName(g.name)
+      const regs = [...this.ctx.config.listRegisters(g.id)].sort((a: any, b: any) => a.startAddress - b.startAddress)
+      const counts = new Map<string, number>()
+      for (const reg of regs) { const key = JSON.stringify([reg.functionCode, reg.startAddress]); counts.set(key, (counts.get(key) ?? 0) + 1) }
+      if (regs.some((reg: any) => counts.get(JSON.stringify([reg.functionCode, reg.startAddress]))! > 1 && rules.some((rule: any) => rule.registerId === reg.id))) {
+        throw new Error('同一分组内同FC/地址的多个定义带有告警，v2点表不能唯一定位；未生成文件，请使用JSON配置备份。')
+      }
+      return { g, regs, name: allocate(g.name) }
+    })
     const wb = new ExcelJS.Workbook()
 
     // 设备信息 sheet
@@ -153,15 +159,12 @@ export class Sink {
     boldRows(info, 1)
 
     const alarmSheet = wb.addWorksheet('告警规则')
-    alarmSheet.addRow(['分组', '功能码', '起始地址', '告警条件', '原始值阈值', '告警提示'])
-    alarmSheet.columns = [{ width: 24 }, { width: 12 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 48 }]
+    alarmSheet.addRow(['分组', '功能码', '起始地址', '告警条件', '原始值阈值', '告警提示', '点位工作表'])
+    alarmSheet.columns = [{ width: 24 }, { width: 12 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 48 }, { width: 32 }]
     boldRows(alarmSheet, 1)
     alarmSheet.views = [{ state: 'frozen', ySplit: 1 }]
     // 每分组一个 sheet
-    for (const g of groups) {
-      const regs = [...this.ctx.config.listRegisters(g.id)].sort((a: any, b: any) => a.startAddress - b.startAddress)
-      const label = g.name || ('分组' + g.id)
-      const name = sanitizeSheetName(['设备信息', '告警规则'].includes(label) ? '分组_' + label : label)
+    for (const { g, regs, name } of sheets) {
       const s = wb.addWorksheet(name)
       // 第1、2行：分组头；(第3行留空)
       s.addRow(['分组', g.name])
@@ -174,7 +177,7 @@ export class Sink {
       // 第5行起：每行一条寄存器（固定列序；导出值均作字符串便于往返）
       for (const r of regs) {
         const alarms = rules.filter((rule: any) => rule.registerId === r.id).map(({ operator, threshold, message }: any) => ({ operator, threshold, message }))
-        for (const alarm of alarms) alarmSheet.addRow([g.name, r.functionCode, r.startAddress, alarm.operator, String(alarm.threshold), alarm.message ?? ''])
+        for (const alarm of alarms) alarmSheet.addRow([g.name, r.functionCode, r.startAddress, alarm.operator, String(alarm.threshold), alarm.message ?? '', name])
         s.addRow([
           r.alias ?? '', r.dataType ?? 'int16', r.unit ?? '', String(r.factor ?? 1), String(r.offset ?? 0),
           r.enumJson ? safeJson(r.enumJson) : '', String(r.functionCode), String(r.startAddress), String(r.quantity ?? 1), r.decimalPlaces == null ? '' : String(r.decimalPlaces), alarms.length || '',
@@ -185,7 +188,7 @@ export class Sink {
       s.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: head.length } }
       s.getColumn(11).eachCell((cell, row) => { if (row >= 5) cell.font = { color: { argb: 'FF777777' } } })
     }
-    alarmSheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 6 } }
+    alarmSheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 7 } }
     for (const sheet of wb.worksheets) {
       sheet.eachRow((row, index) => {
         row.height = 26
