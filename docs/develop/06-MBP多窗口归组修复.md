@@ -23,7 +23,7 @@ ConfigStore.appendImportedPoints先验证完整窗口图，再BEGIN IMMEDIATE写
 
 事务内抑制逐行config事件，成功后仅一次scope=import/id=目标设备的通知，监听者看到完整图。组/点位写入或提交失败回滚，不留下新半组且不通知；回滚本身失败会明确报“结果不确定”，不能自动重试。同步的提交后通知回调失败不能回滚已经提交的数据，会返回“已提交/勿重复导入”警告。空文件/无窗口保持0计数和警告，无写入通知。
 
-原服务import(objectId,filename,content)同步返回groups/registers计数及warnings，REST包装保持原格式。错误由现有服务错误通道返回；无效输入在写入前失败。不改变JSON备份恢复、XLSX点表或importPoints语义更新流程；后者按FC/地址取首项的多源歧义仍是独立待办。
+原服务import(objectId,filename,content)同步返回groups/registers计数及warnings，REST包装保持原格式。错误由现有服务错误通道返回；无效输入在写入前失败。本阶段未改变JSON备份恢复、XLSX点表或importPoints语义更新流程；后者的多源歧义已在随后阶段单独修复，见07-语义点表安全导入.md。
 
 ## 验证
 

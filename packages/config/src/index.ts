@@ -8,6 +8,11 @@ import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
 import { parseConfigBackup, type ConfigBackup } from './backup.ts'
 import { parseRegisterQuantity } from './register-quantity.ts'
 import { assertImportedPointTable, type ImportedPointGroup, type ImportedPointDefinition } from '../../core/src/point-import.ts'
+import { withRegisterSources } from '../../core/src/sample-source.ts'
+import { selectSourceRegister } from '../../core/src/register-selection.ts'
+import { areaForFunction, type ModbusFunctionCode } from '../../core/src/protocol.ts'
+import { registerWidth } from '../../core/src/codec.ts'
+import { semanticPointFields, type SemanticPointUpdate } from '../../core/src/semantic-import.ts'
 
 export const name = 'config'
 
@@ -266,27 +271,48 @@ export class ConfigStore {
     return { groups: groups.length, registers: registers.length, warnings }
   }
 
-  /** 点表语义导入：按 (functionCode, address) 匹配已有寄存器并更新语义。 */
-  importPoints(objectId: number, points: Array<{ functionCode: number; address: number; alias?: string | null; dataType?: string; unit?: string | null; factor?: number; offset?: number; enumMap?: Record<string, string> | null }>): { updated: number; skipped: number; errors: string[] } {
-    const regs = this.listRegistersByObject(objectId)
-    let updated = 0
+  /** 更新已有点位语义；来源/点位可精确选择，歧义跳过，有效行原子提交。 */
+  importPoints(objectId: number, points: SemanticPointUpdate[]) {
+    const device = this.getObject(objectId)
+    if (!Number.isSafeInteger(objectId) || objectId < 1 || !device) throw Object.assign(new Error('导入目标设备不存在'), { statusCode: 404 })
+    if (!Array.isArray(points)) throw Object.assign(new Error('点表必须为数组'), { statusCode: 400 })
+    const groups = this.listGroups(objectId), regs = withRegisterSources(this.listRegistersByObject(objectId), groups, device)
     let skipped = 0
     const errors: string[] = []
-    for (const p of points) {
-      const reg = regs.find((r) => r.functionCode === p.functionCode && r.startAddress === p.address)
-      if (!reg) { skipped++; errors.push('address ' + p.address + ' (fc=' + p.functionCode + ') not found'); continue }
-      const fields: Record<string, unknown> = {}
-      if (p.alias != null) fields.alias = p.alias
-      if (p.dataType != null) fields.dataType = p.dataType
-      if (p.unit !== undefined) fields.unit = p.unit
-      if (p.factor !== undefined) fields.factor = p.factor
-      if (p.offset !== undefined) fields.offset = p.offset
-      if (p.enumMap !== undefined) fields.enumJson = p.enumMap ? JSON.stringify(p.enumMap) : null
-      if (Object.keys(fields).length === 0) { skipped++; continue }
-      this.updateRegister(reg.id, fields)
-      updated++
+    const details: Array<{ row: number; code: string; error: string; candidates?: unknown[] }> = []
+    const plans: Array<{ id: number; fields: Record<string, unknown> }> = []
+    const reject = (row: number, code: string, error: string, candidates?: unknown[]) => {
+      skipped++; details.push({ row, code, error, ...(candidates ? { candidates } : {}) })
+      const choices = (candidates as Array<{ register_id: number; slave_id: number | null }> | undefined)?.map(c => `#${c.register_id}(从站${c.slave_id ?? '未知'})`).join(', ')
+      errors.push(`row ${row}: ${error}${choices ? ' 候选：' + choices : ''}`)
     }
-    return { updated, skipped, errors }
+    points.forEach((p, row) => {
+      if (!p || typeof p !== 'object') { reject(row, 'INVALID_SEMANTIC_ROW', '点表行必须为对象'); return }
+      if (![1, 2, 3, 4].includes(p.functionCode)) { reject(row, 'REGISTER_SELECTOR_INVALID', '语义导入只接受读取功能码FC01/02/03/04'); return }
+      const selected = selectSourceRegister(regs, { area: areaForFunction(p.functionCode as ModbusFunctionCode), address: p.address, slaveId: p.slaveId, registerId: p.registerId })
+      if ('error' in selected) { reject(row, selected.code, selected.error, selected.candidates); return }
+      const parsed = semanticPointFields(p)
+      if ('error' in parsed) { reject(row, 'INVALID_SEMANTIC_FIELD', parsed.error); return }
+      if (p.dataType !== undefined) {
+        const g = groups.find(g => g.id === selected.register.groupId), address = selected.register.startAddress, width = registerWidth(p.dataType)
+        if (!g || !Number.isInteger(g.startAddress) || !Number.isInteger(g.quantity) || g.quantity < 1 ||
+          g.startAddress + g.quantity > 65536 || address + width > 65536 || address < g.startAddress || address + width > g.startAddress + g.quantity) {
+          reject(row, 'SEMANTIC_WIDTH_OUTSIDE_GROUP', '新dtype的完整字宽超出所属分组，未扩组或修改该行'); return
+        }
+      }
+      if (!Object.keys(parsed.fields).length) { skipped++; return }
+      plans.push({ id: selected.register.id, fields: parsed.fields })
+    })
+    const warnings: string[] = []
+    if (plans.length) {
+      if (this.restoring) throw new Error('配置正在批量更新，不能嵌套语义导入')
+      this.db.exec('BEGIN IMMEDIATE'); this.restoring = true
+      try { for (const plan of plans) this.updateRegister(plan.id, plan.fields); this.db.exec('COMMIT') }
+      catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '语义导入回滚失败，结果不确定，勿自动重试') }; throw error }
+      finally { this.restoring = false }
+      try { this.notify('point-import', objectId) } catch { warnings.push('语义配置已提交，但同步通知失败，请核对，勿重复导入。') }
+    }
+    return { updated: plans.length, skipped, errors, details, warnings }
   }
   createRegister(groupId: number, objectId: number, alias: string | null, functionCode: number, startAddress: number, dataType = 'int16', extra?: Partial<Pick<RegisterRecord, 'unit' | 'factor' | 'offset' | 'enumJson' | 'decimalPlaces' | 'quantity'>>): RegisterRecord {
     const unit = extra?.unit ?? null

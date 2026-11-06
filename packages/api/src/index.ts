@@ -7,8 +7,7 @@ import fastifyStatic from '@fastify/static'
 import compress from '@fastify/compress'
 import { existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { areaForFunction, baseType, encodeRegister, functionCodeForArea, isHexType, isBinType, parseRawRegisterInput, registerWidth, smartParseCsv, smartParseTable, type ModbusArea } from '@probebench/core'
-import ExcelJS from 'exceljs'
+import { areaForFunction, baseType, encodeRegister, isHexType, isBinType, parseRawRegisterInput, registerWidth, type ModbusArea } from '@probebench/core'
 import { registerSlave } from './slave.ts'
 import { registerAssistant } from './assistant.ts'
 import { registerCurve } from './curve.ts'
@@ -16,32 +15,7 @@ import { registerConfigBackup } from './config-backup.ts'
 import { registerSerialPorts } from './serial-ports.ts'
 import { registerHistoryExport } from './history-export.ts'
 import { registerPointDiagnostics } from './point-diagnostics.ts'
-
-/** 把 exceljs 单元格转成字符串（处理公式/数字/文本）。 */
-function xlsxCellText(cell: any): string {
-  const v = cell?.value
-  if (v == null) return ''
-  if (typeof v === 'object' && !(v instanceof Date)) return String(v.result ?? v.text ?? '')
-  return String(v)
-}
-
-/** 读 XLSX 第一个工作表 → 二维字符串数组。 */
-async function readXlsxRows(buffer: Buffer): Promise<string[][]> {
-  const wb = new ExcelJS.Workbook()
-  await wb.xlsx.load(buffer as any)
-  const ws = wb.worksheets[0]
-  if (!ws) return []
-  const rows: string[][] = []
-  ws.eachRow((row: any) => {
-    const cells: string[] = []
-    row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
-      while (cells.length < colNumber - 1) cells.push('')
-      cells.push(xlsxCellText(cell))
-    })
-    rows.push(cells)
-  })
-  return rows
-}
+import { registerPointsImport } from './points-import.ts'
 
 export const name = 'api'
 export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'ota']
@@ -195,38 +169,7 @@ export function apply(ctx: Context, config: Config): void {
     fastify.delete('/api/registers/:id', async (req: any) => { cfg.deleteRegister(Number((req.params as any).id)); return { ok: true } })
 
     // ── 点表导入（语义批量更新） ────────────────────────────
-    fastify.post('/api/monitor_objects/:id/points/import', async (req: any) => {
-      const id = Number((req.params as any).id)
-      const body = req.body as any
-      let points: any[]
-      let parseReport: any = null
-      if (Array.isArray(body)) {
-        points = body
-      } else if (typeof body?.csv === 'string') {
-        const r = smartParseCsv(body.csv)
-        parseReport = r.report
-        points = r.points
-      } else if (typeof body?.xlsx === 'string') {
-        const rows = await readXlsxRows(Buffer.from(body.xlsx, 'base64'))
-        const r = smartParseTable(rows)
-        parseReport = r.report
-        points = r.points
-      } else {
-        return { code: 400, error: 'expect a JSON array, { csv }, or { xlsx }' }
-      }
-      const normalized = points.map((p: any) => ({
-        functionCode: functionCodeForArea(p.area as ModbusArea),
-        address: p.address,
-        alias: p.alias ?? null,
-        dataType: p.data_type ?? p.dataType ?? 'int16',
-        unit: p.unit ?? null,
-        factor: p.factor,
-        offset: p.offset,
-        enumMap: p.enum ?? p.enumMap ?? null,
-      }))
-      const result = cfg.importPoints(id, normalized)
-      return parseReport ? { ...result, parse: parseReport } : result
-    })
+    registerPointsImport(fastify, cfg)
 
     // ── 点表 xlsx（分组=sheet）导出 / 导入 ──────────────────
     fastify.get('/api/monitor_objects/:id/points/book', async (req: any, reply: any) => {

@@ -17,7 +17,9 @@ let latest: Record<string, any> = {}
 let rows: any[] = []
 let queriedSource: number | undefined
 let queryCalls = 0, cacheReads = 0
-const cfg = { getObject: () => recordingDevice, listGroups: () => groups, listRegistersByObject: () => ambiguous ? regs : [regs[0]], updateObject: (_id: number, fields: any) => { rateChanges.push(fields.pollIntervalMs); Object.assign(recordingDevice, fields) }, log: () => {} }
+let imported: any[] = [], failImportLog = false
+const cfg = { getObject: () => recordingDevice, listGroups: () => groups, listRegistersByObject: () => ambiguous ? regs : [regs[0]], updateObject: (_id: number, fields: any) => { rateChanges.push(fields.pollIntervalMs); Object.assign(recordingDevice, fields) }, log: () => { if (failImportLog) throw new Error('injected log failure') },
+  importPoints: (_id: number, points: any[]) => { imported = points; return { updated: points.length, skipped: 0, errors: [], details: [], warnings: [] } } }
 const store = {
   getLatestByObjectAll: () => latest,
   getLatestByObject: (_id: number, area: string, slaveId?: number) => { cacheReads++; return Object.fromEntries([0, 1].flatMap(address => {
@@ -38,6 +40,23 @@ assert.equal(listens, 1, 'listen was intercepted, no server or transport was act
 const args = { device_id: 1, area: 'holding-register', address: 0, start: '2026-11-06T00:00:00Z', end: '2026-11-06T00:01:00Z' }
 const run = async (name: string, input: any = args) => handlers.get(name)!(input)
 const body = (response: any) => JSON.parse(response.content[0].text)
+// Production import argument mapping: the config boundary is mocked, no real mutation.
+assert.equal(body(await run('import_points', { device_id: 1, points: [{ area: 'holding-register', address: 0, slave_id: 2, register_id: 2, alias: 'alias only' }] })).updated, 1)
+assert.deepEqual([imported[0].slaveId, imported[0].registerId, imported[0].dataType, imported[0].unit, imported[0].enumMap, imported[0].factor], [2, 2, undefined, undefined, undefined, undefined])
+await run('import_points', { device_id: 1, csv: '从站ID,寄存器地址,别名\n2,0,CSV' })
+assert.deepEqual([imported[0].slaveId, imported[0].dataType, imported[0].unit, imported[0].enumMap, imported[0].factor], [2, undefined, undefined, undefined, undefined])
+const parsedError = body(await run('import_points', { device_id: 1, csv: 'slave_id,address,alias\nwrong,0,unsafe' }))
+assert.equal(parsedError.updated, 0); assert.equal(parsedError.parse.skipped, 1); assert.match(parsedError.parse.errors[0], /slaveId/)
+try {
+  failImportLog = true
+  const logged = body(await run('import_points', { device_id: 1, points: [{ area: 'holding-register', address: 0, alias: 'processed' }] }))
+  assert.equal(logged.updated, 1); assert.match(logged.warnings[0], /日志写入失败/)
+} finally { failImportLog = false }
+await run('import_points', { device_id: 1, points: [{ area: 'holding-register', address: 0, unit: null, enum: null }] })
+assert.equal(imported[0].unit, null); assert.equal(imported[0].enumMap, null)
+const pointSchema = schemas.get('import_points').points
+assert.equal(pointSchema.safeParse([{ area: 'holding-register', address: 0, slave_id: 2, register_id: 2, unit: null, enum: null }]).success, true)
+for (const slave_id of [-1, 256, 1.5, '2', null]) assert.equal(pointSchema.safeParse([{ area: 'holding-register', address: 0, slave_id }]).success, false)
 for (const id of [1, 2]) for (const address of [0, 1]) latest[sourceKey('', 'holding-register', address, id)] = { rawValue: address ? id * 5 : 0, timestamp: args.start, quality: 'good', slaveId: id, batchId: 'same' }
 let out = body(await run('get_device_snapshot'))
 assert.deepEqual(out.map((p: any) => [p.slave_id, p.value, p.automatic_eligible]), [[1, 5, true], [2, 10, true]])

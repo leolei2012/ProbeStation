@@ -114,7 +114,7 @@ export function diagnosePointTable(input: unknown) {
     const definitions = new Set(points.map(p => JSON.stringify([p.canonical, p.row.factor ?? 1, p.row.offset ?? 0, p.row.unit ?? '', p.row.enumJson ?? null, p.row.decimalPlaces ?? null])))
     add('warning', definitions.size === 1 ? 'DUPLICATE_DEFINITION' : 'ALTERNATE_DEFINITION', definitions.size === 1 ? '同一来源/数据区/起始地址存在重复定义；可能有意，未自动删除。' : '同一来源/数据区/起始地址存在不同配置定义；可能是不同视图，请用点位 ID 区分。', refsFor(points))
   }
-  for (const points of imports.values()) if (points.length > 1) add('warning', 'IMPORT_MATCH_AMBIGUOUS', '现有语义导入只按功能码/地址取第一个匹配；这些点位无法由该导入格式唯一定位。', { objectId: points[0].row.objectId, registerIds: points.map(p => p.row.id) })
+  for (const points of imports.values()) if (points.length > 1) add('warning', 'IMPORT_MATCH_AMBIGUOUS', '这些点位无法仅由功能码/地址唯一定位；语义导入将跳过歧义行，请明确从站或点位ID。', { objectId: points[0].row.objectId, registerIds: points.map(p => p.row.id) })
   for (const points of effective.values()) {
     let cluster: Point[] = [], end = -1
     const flush = () => {

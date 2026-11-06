@@ -47,7 +47,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `get_recording` | `recording_id` | 取录制完整采样序列（原始 16 位字） |
 | `list_recordings` | — | 列录制会话（不含 samples） |
 | `stop_recording` | `recording_id` | 提前结束/取消录制 |
-| `import_points` | `device_id, points[]\|csv` | 批量导入/更新寄存器语义：支持 JSON 点数组或智能 CSV（自动识别列、0x/40001 地址、类型/存储区启发式） |
+| `import_points` | `device_id, points[]\|csv` | 更新已有语义；可选逐点 slave_id/register_id，歧义跳过并返回候选，省略字段/缺列保留原值 |
 | `create_group` | `device_id, name, function_code?, start_address, quantity, slave_id?` | 新建分组并自动建立 int16 点位；从站使用设备从站号 |
 | `update_group` | `group_id, name?, slave_id?, function_code?, start_address?, quantity?, is_active?` | 更改分组 |
 | `create_register` | `group_id, alias?, function_code?, start_address, data_type?` | 新增寄存器 |
@@ -107,3 +107,7 @@ read_register/query_history 可选 `slave_id`（0–255 整数）或 `register_i
 ## 只读点表诊断（2026-11-06）
 
 `diagnose_points {device_id}` 仅读 getObject/listGroups/listRegistersByObject，用共享纯函数报告点宽/范围/引用错误，以及重复、覆盖、重叠与语义导入歧义警告。返回 scope=point-table-structure、ok、complete、summary 和 issues；错误代码/位置/相关点位 ID 可用于人工定位，不返回连接凭据或完整配置。不会更新配置、查历史/缓存、连接设备或改变采样周期；不能把 ok 当作在线、采样有效或测试通过。默认覆盖 int16 占位行只计数，跨从站同址不作物理冲突，但旧语义导入缺源选择仍可能警告。完整规则和离线 CLI 见 [诊断说明](../../docs/develop/05-离线点表诊断.md)。
+
+## 语义点表更新（2026-11-06）
+
+import_points的JSON行支持可选slave_id/register_id；CSV识别来源/点位ID列。必须与设备、area/address一致，多候选返回details/candidates并跳过，不任选首项。JSON省略字段/CSV缺列保留原值；unit/enum显式null清除，存在但空白的CSV单元格沿用旧默认/清空行为。有效行原子提交，仍需检查updated/skipped/errors及新增details/warnings/parse，不能把工具返回当作全部行成功。数量/归属/告警不改；不是全量import_points_xlsx。见[完整兼容规则](../../docs/develop/07-语义点表安全导入.md)。注册器mock已验证参数映射，无实际MCP监听或配置写入。

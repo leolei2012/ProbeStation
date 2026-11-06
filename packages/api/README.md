@@ -85,3 +85,7 @@ export const inject = ['config', 'store', 'poller']
 `GET /api/monitor_objects/:id/point-diagnostics` 只读取该设备当前元数据，报告共享结构诊断（scope、ok、complete、summary、issues），不更新配置/访问硬件，不查询原始历史。成功完成扫描即 200，即使有诊断错误（ok=false）；无效 ID 为400，缺失设备404，读取失败500且不给出内部异常详情。诊断不是完整备份恢复校验、实时质量或测试通过。
 
 内置助手新增只读 diagnose_points 工具，沿用会话设备权限；只返回报告，不自动创建修改提案或写配置。fakeFetch 与只读配置替身已覆盖正常/歧义/权限/无变更路径。离线命令、错误与警告规则见 [诊断说明](../../docs/develop/05-离线点表诊断.md)。
+
+## 语义点表更新
+
+原POST /api/monitor_objects/:id/points/import支持JSON点数组、{csv}或{xlsx}（base64首sheet）；实现抽到points-import.ts，未新增全量替换入口。JSON可选slave_id/register_id，歧义行跳过并返回候选。省略字段/表格缺列保留原值，有列空单元格沿用旧清空/默认行为。报告兼容updated/skipped/errors并附details/warnings/parse；有效行事务提交，不自动改归属/扩组。400/404及非泄露500已用Fastify.inject验证，无服务启动。完整规则和例子见[语义导入](../../docs/develop/07-语义点表安全导入.md)。

@@ -31,6 +31,7 @@ export * from './sample-source.ts'
 export * from './register-selection.ts'
 export * from './point-diagnostics.ts'
 export * from './point-import.ts'
+export * from './semantic-import.ts'
 export * from './history-integrity.ts'
 export * from './history-export-policy.ts'
 

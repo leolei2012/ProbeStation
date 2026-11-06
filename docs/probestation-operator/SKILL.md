@@ -81,7 +81,7 @@ npm run start
 - 多字类型必须落在组读取范围内，例如 32 位值需要相邻两个 16 位字。按设备文档核对类型、字序及地址，不把“数据不足”改成 0。
 - `set_device_active {device_id, active}` 控制主站连接与采集，或启动/停止从站监听；`set_group_active {group_id, active}` 暂停/恢复组的数据发布，不能视为禁止外部主站访问从站内存。优先用明确状态，避免重复调用 toggle 导致状态反转。
 - `set_poll_interval` 只用于主站；多个分组轮流读取，组刷新周期约为间隔乘组数并受通信耗时影响。1ms 设置不保证 1kHz 采样。从站拒绝此工具，不用隐藏的采样字段模拟主动扫描。
-- `import_points` 支持 JSON/CSV 语义配置；Excel 点位表使用 `export_points_xlsx` / `import_points_xlsx`，按工具 schema 提供文件参数。先查看现有定义及导出结果，确认目标映射。
+- `import_points` 支持 JSON/CSV 语义配置，逐点可提供slave_id/register_id；歧义行跳过并返回候选，不任选首项。缺字段/缺列保留原值，有列空值仍按旧规则清空/默认；检查updated/skipped/errors/details/warnings/parse，不把部分成功当全部成功。见 [语义导入规则](../develop/07-语义点表安全导入.md)。全量Excel点位表使用 `export_points_xlsx` / `import_points_xlsx`，按工具 schema 提供文件参数。先查看现有定义及导出结果，确认目标映射。
 
 写入、OTA、删除配置、缩短历史保留时间都不是观测所必需的步骤。只在用户已授权的范围执行；目标或写值单位不清楚时先补齐信息，不重复索要已明确给予的授权。
 
