@@ -19,7 +19,9 @@ export function SerialPortPickerView({ value, onChange, state, refresh, english 
       <span>{state.source === 'mock' ? text('模拟端口清单，不是实机端口。', 'Mock list, not actual system ports.') : text('清单来自运行后端的电脑；只枚举，不连接。可继续手工输入。', 'Ports on the backend computer; enumeration only. Manual input is supported.')}</span>
       {state.status === 'loading' && <span role="status">{text('正在读取串口清单…', 'Loading serial ports…')}</span>}
       {state.status === 'ready' && state.ports.length === 0 && <span role="status">{text('系统未发现串口，可手工输入路径后保留。', 'No system ports found. You can keep a manually entered path.')}</span>}
-      {state.status === 'error' && <span className="warn" role="alert">{text('读取失败，请刷新重试或手工输入。已有清单可能已过时，已填路径保持不变。', 'Could not load ports. Refresh or enter a path. Previous results may be stale; your path is unchanged.')}</span>}
+      {state.status === 'error' && <span className="warn" role="alert">{state.error === 'enumeration-timeout'
+        ? text('读取串口清单超过 10 秒，已取消等待。请刷新重试或手工输入；旧清单可能已过时，已填路径保持不变。', 'Loading serial ports exceeded 10 seconds. Refresh or enter a path; previous results may be stale, and your path is unchanged.')
+        : text('读取失败，请刷新重试或手工输入。已有清单可能已过时，已填路径保持不变。', 'Could not load ports. Refresh or enter a path. Previous results may be stale; your path is unchanged.')}</span>}
     </div>
   </div>
 }

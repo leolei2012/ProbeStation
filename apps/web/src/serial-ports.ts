@@ -1,3 +1,6 @@
+import { RequestTimeoutError, runRequestWithTimeout } from './request-timeout'
+
+export const SERIAL_PORT_TIMEOUT_MS = 10_000
 export interface SerialPortOption { path: string; manufacturer?: string; description?: string }
 export interface SerialPortList { ports: SerialPortOption[]; source: 'system' | 'mock'; location: 'backend'; enumerationOnly: true }
 export interface SerialPortState { status: 'idle' | 'loading' | 'ready' | 'error'; ports: SerialPortOption[]; source: 'system' | 'mock' | null; error: string | null }
@@ -14,20 +17,20 @@ export class SerialPortLoader {
   private sequence = 0
   private controller?: AbortController
   state = initialSerialPortState()
-  constructor(private readonly changed: (state: SerialPortState) => void) {}
+  constructor(private readonly changed: (state: SerialPortState) => void, private readonly options: { timeoutMs?: number } = {}) {}
   cancel() { this.sequence++; this.controller?.abort() }
   async refresh(fetcher: (signal: AbortSignal) => Promise<SerialPortList>) {
     this.controller?.abort()
     const sequence = ++this.sequence, controller = this.controller = new AbortController()
     this.state = { ...this.state, status: 'loading', error: null }; this.changed(this.state)
     try {
-      const result = await fetcher(controller.signal)
+      const result = await runRequestWithTimeout(fetcher, controller.signal, this.options.timeoutMs ?? SERIAL_PORT_TIMEOUT_MS)
       if (controller.signal.aborted || sequence !== this.sequence) return
       if (!Array.isArray(result.ports) || !['system', 'mock'].includes(result.source) || result.location !== 'backend' || result.enumerationOnly !== true || result.ports.some(p => typeof p.path !== 'string' || !p.path)) throw new Error('Invalid serial port response')
       this.state = { status: 'ready', ports: result.ports, source: result.source, error: null }
-    } catch {
+    } catch (error) {
       if (controller.signal.aborted || sequence !== this.sequence) return
-      this.state = { ...this.state, status: 'error', error: 'enumeration-failed' }
+      this.state = { ...this.state, status: 'error', error: error instanceof RequestTimeoutError ? 'enumeration-timeout' : 'enumeration-failed' }
     }
     this.changed(this.state)
   }

@@ -74,11 +74,13 @@ assert.equal(entered, 'COM99', 'refresh/render never invokes the controlled path
 
 let resolveOld!: (value: SerialPortList) => void
 const old = loader.refresh(() => new Promise(resolve => { resolveOld = resolve }))
+await Promise.resolve() // Let the old provider start before replacing it.
 await loader.refresh(async () => ({ ...result, ports: [{ path: 'COM7' }] }))
 resolveOld(result); await old
 assert.deepEqual(loader.state.ports, [{ path: 'COM7' }], 'late responses cannot overwrite a newer refresh')
 let resolveClosed!: (value: SerialPortList) => void
 const closing = loader.refresh(() => new Promise(resolve => { resolveClosed = resolve }))
+await Promise.resolve()
 const beforeClose = states.length
 loader.cancel(); resolveClosed(result); await closing
 assert.equal(states.length, beforeClose, 'unmounted picker receives no late update')
