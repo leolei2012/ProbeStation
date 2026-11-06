@@ -19,6 +19,7 @@
     "preview:backup": "tsx scripts/preview-register-picker.ts --backup",
     "preview:live-filter": "tsx scripts/preview-register-picker.ts --live-filter",
     "preview:markdown": "tsx scripts/preview-register-picker.ts --markdown",
+    "preview:curve-selection": "tsx scripts/preview-register-picker.ts --curve-selection",
     "preview:history-context": "tsx scripts/preview-register-picker.ts --history-context",
     "preview:alarm-history": "tsx scripts/preview-register-picker.ts --alarm-history",
     "preview:alarm-rules": "tsx scripts/preview-register-picker.ts --alarm-rules",

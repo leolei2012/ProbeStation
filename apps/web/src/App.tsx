@@ -1,6 +1,8 @@
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
 import { HistoryReadNotice } from './HistoryReadNotice'
+import { HistoryCurveSelection } from './HistoryCurveSelection'
+import { planHistoryCurve } from '../../../packages/core/src/history-curve-plan'
 import { historyReadContextKey, reduceHistoryRead, historyReadView, type HistoryReadState } from './history-read-context'
 import { HistoryQueryMemoryPanel } from './HistoryQueryMemory'
 import { HistoryQueryMemory, QueryMemoryError, queryMemoryContext } from './history-query-memory'
@@ -1248,7 +1250,12 @@ function HistoryView({ memory, configurationReady, target, t, device, groups, re
   useEffect(() => { setPage(0); if (!configurationReady || contextKey === null) setCurveRange(null) }, [contextKey, configurationReady])
   const { start: queryStart, end: queryEnd } = historyQueryRange(mode === 'chart' && curveRange ? curveRange : { start: startMs, end: endMs })
   const selectionKey = [...selected].sort((a, b) => a - b).join(',')
-  const plan = useMemo(() => valid && configurationReady && contextKey !== null ? historyQueryPlan({ objectId: device.id, start: queryStart, end: queryEnd, mode, page, registerIds: selectionKey ? selectionKey.split(',').map(Number) : [], contextKey, revision: refresh }) : null, [device.id, queryStart, queryEnd, valid, configurationReady, contextKey, mode, page, selectionKey, refresh])
+  const curveSelection = useMemo(() => mode === 'chart' && configurationReady && contextKey !== null ? planHistoryCurve(groups, registers, selectionKey ? selectionKey.split(',').map(Number) : []) : { registers: [], entries: [] }, [mode, configurationReady, contextKey, groups, registers, selectionKey])
+  const curveSelected = useMemo(() => new Set(curveSelection.registers.map(r => r.id)), [curveSelection])
+  const requestSelectionKey = mode === 'chart' ? curveSelection.registers.map(r => r.id).sort((a, b) => a - b).join(',') : selectionKey
+  const noCurvePoints = mode === 'chart' && selected.size > 0 && curveSelection.registers.length === 0
+  useEffect(() => { if (noCurvePoints) setCurveRange(null) }, [noCurvePoints])
+  const plan = useMemo(() => valid && configurationReady && contextKey !== null ? historyQueryPlan({ objectId: device.id, start: queryStart, end: queryEnd, mode, page, registerIds: requestSelectionKey ? requestSelectionKey.split(',').map(Number) : [], contextKey, revision: refresh }) : null, [device.id, queryStart, queryEnd, valid, configurationReady, contextKey, mode, page, requestSelectionKey, refresh])
   const { data, status: currentStatus, error, contextChanged } = historyReadView(plan, readState)
   useEffect(() => {
     const task = startHistoryQuery<HistoryPayload>(plan, async (url, signal) => {
@@ -1304,9 +1311,10 @@ function HistoryView({ memory, configurationReady, target, t, device, groups, re
         setMode(saved.mode); setValueMode(saved.valueMode); setPage(0); setPreset(null); setCurveRange(null)
         setNavigationRevision(value => value + 1); setRefresh(value => value + 1)
       })} />
+    {mode === 'chart' && configurationReady && contextKey !== null && <HistoryCurveSelection plan={curveSelection} pointLabels={pointLabels} onTable={() => { cancelNavigation(); setMode('table'); setPage(0) }} english={t('cancel') === 'Cancel'} />}
     {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
     {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} pointLabels={pointLabels} t={t} />}
-    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : !configurationReady || contextKey === null ? null : mode === 'chart' ? <ChartBody queryContextKey={contextKey} key={navigationRevision} pointLabels={pointLabels} sourceSeries={data?.series} onViewportChange={view => { cancelNavigation(); setCurveRange(view) }} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>
+    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : !configurationReady || contextKey === null || noCurvePoints ? null : mode === 'chart' ? <ChartBody queryContextKey={contextKey} key={navigationRevision} pointLabels={pointLabels} sourceSeries={data?.series} onViewportChange={view => { cancelNavigation(); setCurveRange(view) }} valueMode={valueMode} t={t} registers={registers} selected={curveSelected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
       <HistoryTableBody pointLabels={pointLabels} t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={errorText} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
     </>}

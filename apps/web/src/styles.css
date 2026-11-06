@@ -959,3 +959,10 @@ table.reg th, .btn { white-space: nowrap; }
 .alarm-history-action .btn { white-space: normal; }
 .alarm-history-hint { font-size: 12px; margin: 4px 0; }
 .alarm-active-list > div > strong { min-width: 0; overflow-wrap: anywhere; }
+.history-curve-selection { margin: 12px 0; padding: 12px; min-width: 0; border: 1px solid var(--border-2); border-radius: 8px; }
+.history-curve-selection summary { cursor: pointer; overflow-wrap: anywhere; }
+.history-curve-selection .toolbar, .history-curve-selection label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.history-curve-selection select { max-width: 100%; min-width: 0; }
+.history-curve-selection ul { padding: 0; list-style: none; }
+.history-curve-selection li { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--border-1); overflow-wrap: anywhere; }
+.history-curve-selection .point-label-name, .history-curve-selection .point-label-detail { white-space: normal; overflow-wrap: anywhere; }

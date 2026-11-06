@@ -34,6 +34,7 @@ export * from './point-import.ts'
 export * from './semantic-import.ts'
 export * from './history-integrity.ts'
 export * from './history-export-policy.ts'
+export * from './history-curve-plan.ts'
 
 export function apply(ctx: Context, config: Config): void {
   ctx.logger('core').info(
