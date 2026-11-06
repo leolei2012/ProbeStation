@@ -15,6 +15,7 @@ const cfg = {
   getObject: (id: number) => objects.get(id),
   updateObject: (id: number, fields: Record<string, unknown>) => { const o = objects.get(id); if (o) Object.assign(o, fields) },
   listObjects: () => [...objects.values()],
+  listGroups: () => [{ id: 1, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 512 }],
 }
 
 const recorder = new Recorder(ctx as any, cfg as any)
@@ -25,7 +26,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
   const id = recorder.startRecording(1, 50, 400)
   if (cfg.getObject(1)!.pollIntervalMs !== 50) throw new Error('poll rate not set to 50 during recording')
   for (let i = 0; i < 8; i++) {
-    emit('poller/result', { objectId: 1, points: [{ objectId: 1, area: 'holding-register', address: 0, timestamp: new Date().toISOString(), rawValue: i, quality: 'good' }] })
+    emit('poller/result', { objectId: 1, points: [{ objectId: 1, area: 'holding-register', address: 0, timestamp: new Date().toISOString(), rawValue: i, quality: 'good', slaveId: 1, batchId: 'continuous-' + i }] })
     await sleep(40)
   }
   await sleep(300)
@@ -40,7 +41,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 {
   const id = recorder.startTriggerRecording(1, 50, 'holding-register', 0x100, '>', 100, 200, 300)
   for (let v = 0; v <= 150; v += 10) {
-    emit('poller/result', { objectId: 1, points: [{ objectId: 1, area: 'holding-register', address: 0x100, timestamp: new Date().toISOString(), rawValue: v, quality: 'good' }] })
+    emit('poller/result', { objectId: 1, points: [{ objectId: 1, area: 'holding-register', address: 0x100, timestamp: new Date().toISOString(), rawValue: v, quality: 'good', slaveId: 1, batchId: 'trigger-' + v }] })
     await sleep(30)
   }
   await sleep(400)
@@ -54,4 +55,3 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 }
 
 console.log('RECORDER TEST OK')
-process.exit(0)

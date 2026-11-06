@@ -42,8 +42,8 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `update_alarm_rule` | `rule_id, operator?, threshold?, message?` | 编辑规则，省略字段保留 |
 | `delete_alarm_rule` | `rule_id` | 删除指定规则 |
 | `ask_ai` | `question, context?, device_id?, provider?, model?, effort?` | 复用 AI 设置进行单次咨询，可附设备全部点位缓存；没有工具执行，不修改配置，消耗 API 额度 |
-| `start_recording` | `device_id, interval_ms, duration_ms, addresses?` | 连续采样：录 duration_ms，事后 get_recording 回放 |
-| `start_trigger_recording` | `device_id, interval_ms, trigger_address, operator, threshold?, before_ms, after_ms, addresses?` | 触发记录：条件命中缓存前后窗口（operator 支持 > < >= <= == != changed） |
+| `start_recording` | `device_id, interval_ms, duration_ms, slave_id?, addresses?` | 连续采样：录 duration_ms，事后 get_recording 回放 |
+| `start_trigger_recording` | `device_id, interval_ms, trigger_area, trigger_address, operator, threshold?, before_ms, after_ms, slave_id?, trigger_slave_id?, addresses?` | 触发记录：条件命中缓存前后窗口（operator 支持 > < >= <= == != changed） |
 | `get_recording` | `recording_id` | 取录制完整采样序列（原始 16 位字） |
 | `list_recordings` | — | 列录制会话（不含 samples） |
 | `stop_recording` | `recording_id` | 提前结束/取消录制 |
@@ -85,4 +85,15 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 
 `read_register` / `query_history` 仍按设备+area+address 定位；若当前有多个匹配点位会返回缺失/来源歧义错误，不再选择第一项。`get_device_snapshot` 按每个点位当前目标从站取缓存，返回 slave_id、verification、automatic_eligible。缓存多字还需同一有效采样时间、同批和质量有效才能给语义值。query_history 按目标来源读取并保留 NULL 原始来源；旧兼容值不能自动评估，歧义为未知，多字原始历史仍不进行合并解码。只读 handler 通过 mock 注册器测试，未启动真实 MCP 传输或模型。
 
-本阶段未改造录制、触发录制、写入等其他地址型工具的多从站选择契约；这些能力不能作为多从站重叠地址支持的验收依据。没有调用或测试实机写入。
+录制/触发录制的来源选择随后已补齐，见下文。写入等其他地址型工具仍未统一提供显式从站选择，不能据此宣称全部 MCP 工具支持多从站重叠地址。没有调用或测试实机写入。
+
+## 录制来源选择（2026-11-06）
+
+- `start_recording` 新增可选 `slave_id` 作为默认录制源；`addresses` 支持 `{area,address,slave_id?}`，每项来源可覆盖默认值。不筛地址/来源（包括旧的空 addresses）仍录制所有来源，逐样本保留 slaveId、batchId、sourceVerified；来源缺失保持 NULL，sourceVerified=false，不补为当前配置或 1。非法非空源编号的事件不录入。
+- 指定地址却省略来源时，只有当前配置能唯一确定来源才接受；无配置/多源重叠时拒绝，要求显式选择，在改采样周期或创建会话前失败。同来源重叠分组不构成来源歧义。本地 slave 模式使用设备自身编号。解析结果固定在会话内，不随分组之后修改而漂移。
+- `start_trigger_recording` 新增 `trigger_slave_id`：显式值优先，其次继承 `slave_id`，否则从当前配置唯一解析。它与录制范围独立，可从站 2 触发、只录从站 1。返回的 addresses/trigger 是解析后的 camelCase 描述，get_recording/list_recordings 同时给出范围；触发证据为 triggeredBy。
+- 触发条件保持**原始 16 位单字**比较，不按 dtype 合并或作物理值换算。只用目标来源的唯一候选、good 质量、有效整数原始字及不早于布防/前次采样的有效时间。未知/其他源不触发、不改变 changed 基线；目标坏值或重复候选清空 changed 基线，完整有效值恢复。局部 slave 的单字允许无 batchId，不生成批次；原始多字录制的自动消费仍须自行验证同来源/area/采样时间/完整批次及质量。
+- sourceVerified 仅代表来源元数据存在，不代表质量、完整多字、物理身份认证或 PASS/FAIL。录制仅在进程内存中保存，没有持久化/导入旧录制路径；重启不会恢复会话，外部保存的缺身份旧记录不能据当前配置回填。
+- 同设备同间隔录制可并行，最后一个停止才恢复最初间隔；不同间隔或期间已修改当前间隔时拒绝叠加。停止时若当前周期已经改成别的值则保留该值。最近 50 段上限只淘汰已结束记录，50 段全部活动时拒绝新会话。毫秒参数为整数且不超过 Node 定时器上限 2147483647；触发等待仍有原有 10 分钟上限。
+
+回归 `test-recorder`、`test-recorder-source`、`test-mcp-source` 使用 mock 事件/配置/时钟/工具注册器，不监听端口、不连接设备或修改真实配置。详细兼容契约和示例见 [录制隔离说明](../../docs/develop/03-录制从站隔离.md)。

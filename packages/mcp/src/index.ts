@@ -624,31 +624,38 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     // ── 连续采样 + 触发记录 ─────────────────────────
+    const sourceId = zz.number().int().min(0).max(255).optional()
+    const recordingAddresses = zz.array(zz.object({ area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number().int().min(0).max(65535), slave_id: sourceId })).optional()
+    const addressSelection = (addresses: Array<{ area: string; address: number; slave_id?: number }> | undefined) => addresses?.map(a => ({ area: a.area, address: a.address, slaveId: a.slave_id }))
+    const recordingResult = (id: string) => {
+      const rec = recorder.getRecording(id)!
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ recording_id: id, slave_id: rec.slaveId, addresses: rec.addresses, trigger: rec.trigger }) }] }
+    }
+    const recordingError = (error: unknown) => ({ content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'invalid recording request' }], isError: true })
     server.registerTool('start_recording', {
-      title: 'Start recording', description: '连续采样：以 interval_ms 间隔录 duration_ms 毫秒，事后 get_recording 回放（期间临时把设备扫描间隔调到 interval_ms，结束后恢复）。addresses 为 {area, address} 数组，缺省=全部',
-      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), duration_ms: zz.number(), addresses: zz.array(zz.object({ area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number() })).optional() },
+      title: 'Start recording', description: '连续录制原始16位字，临时改变设备扫描间隔，结束后恢复。slave_id 为默认录制来源，addresses[].slave_id 可覆盖；无地址/来源筛选时保留所有来源。省略地址来源仅在配置唯一时接受，歧义需显式选择。回放保留 slaveId/batchId，缺来源不补全。',
+      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), duration_ms: zz.number(), slave_id: sourceId, addresses: recordingAddresses },
     }, async (args) => {
-      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
-      if (!Number.isInteger(args.interval_ms) || args.interval_ms < 1) return { content: [{ type: 'text', text: 'interval_ms must be an integer >= 1' }], isError: true }
-      if (!Number.isInteger(args.duration_ms) || args.duration_ms < 1) return { content: [{ type: 'text', text: 'duration_ms must be a positive integer' }], isError: true }
-      const id = recorder.startRecording(args.device_id, args.interval_ms, args.duration_ms, args.addresses)
-      cfg.log('INFO', 'mcp', 'start recording ' + id + ' (device ' + args.device_id + ', ' + args.interval_ms + 'ms x ' + args.duration_ms + 'ms)')
-      return { content: [{ type: 'text', text: JSON.stringify({ recording_id: id }) }] }
+      try {
+        const id = recorder.startRecording(args.device_id, args.interval_ms, args.duration_ms, addressSelection(args.addresses), args.slave_id)
+        cfg.log('INFO', 'mcp', 'start recording ' + id + ' (device ' + args.device_id + ', ' + args.interval_ms + 'ms x ' + args.duration_ms + 'ms)')
+        return recordingResult(id)
+      } catch (error) { return recordingError(error) }
     })
 
     server.registerTool('start_trigger_recording', {
-      title: 'Start trigger recording', description: '触发记录：trigger_area + trigger_address 满足 operator/阈值时，缓存触发前 before_ms + 触发后 after_ms 的采样。operator 支持 > < >= <= == != changed；addresses 为 {area, address} 数组，缺省=全部',
-      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), trigger_area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), trigger_address: zz.number(), operator: zz.string(), threshold: zz.number().optional(), before_ms: zz.number(), after_ms: zz.number(), addresses: zz.array(zz.object({ area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number() })).optional() },
+      title: 'Start trigger recording', description: '按原始16位字触发（不合并dtype/不换算物理值），缓存 before_ms/after_ms。trigger_slave_id 选择触发从站，缺省继承 slave_id 或唯一配置；歧义拒绝。slave_id/addresses[].slave_id 仅筛选录制数据，独立于触发选择。来源不明、坏质量、重复候选、无效/倒序时间不能触发。会临时改变设备扫描间隔。',
+      inputSchema: { device_id: zz.number(), interval_ms: zz.number(), trigger_area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), trigger_address: zz.number(), trigger_slave_id: sourceId, slave_id: sourceId, operator: zz.string(), threshold: zz.number().optional(), before_ms: zz.number(), after_ms: zz.number(), addresses: recordingAddresses },
     }, async (args) => {
-      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
-      if (!Number.isInteger(args.interval_ms) || args.interval_ms < 1) return { content: [{ type: 'text', text: 'interval_ms must be an integer >= 1' }], isError: true }
-      const id = recorder.startTriggerRecording(args.device_id, args.interval_ms, args.trigger_area, args.trigger_address, args.operator, args.threshold ?? 0, args.before_ms ?? 0, args.after_ms ?? 0, args.addresses)
-      cfg.log('INFO', 'mcp', 'start trigger recording ' + id + ' (device ' + args.device_id + ', trigger addr ' + args.trigger_address + ' ' + args.operator + ' ' + (args.threshold ?? 0) + ')')
-      return { content: [{ type: 'text', text: JSON.stringify({ recording_id: id }) }] }
+      try {
+        const id = recorder.startTriggerRecording(args.device_id, args.interval_ms, args.trigger_area, args.trigger_address, args.operator, args.threshold ?? 0, args.before_ms, args.after_ms, addressSelection(args.addresses), args.slave_id, args.trigger_slave_id)
+        cfg.log('INFO', 'mcp', 'start trigger recording ' + id + ' (device ' + args.device_id + ', source ' + recorder.getRecording(id)!.trigger!.slaveId + ', trigger addr ' + args.trigger_address + ' ' + args.operator + ' ' + (args.threshold ?? 0) + ')')
+        return recordingResult(id)
+      } catch (error) { return recordingError(error) }
     })
 
     server.registerTool('get_recording', {
-      title: 'Get recording', description: '取某次录制的完整采样序列（samples 为原始 16 位字，消费端按类型解码）',
+      title: 'Get recording', description: '取录制的完整原始16位字、slaveId/batchId 与触发证据 triggeredBy。多字消费需自行验证同来源/area/采样时间/完整批次及质量；sourceVerified 仅表示来源元数据存在，不能当自动 PASS/FAIL。NULL 来源不推断。',
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
       const rec = recorder.getRecording(args.recording_id)

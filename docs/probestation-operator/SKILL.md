@@ -108,7 +108,7 @@ MCP 用 `list_alarm_rules` 查询，`create_alarm_rule {register_id, operator, t
 - `get_device_stats` 检查历史覆盖区间；`get_data_retention` 检查保留规则。保留 0 表示永久，设备覆盖优先全局。
 - `export_history {device_id,start,end,format?,register_ids?,tz_offset_min?}` 导出 CSV（默认）或 XLSX，返回 filename、b64、bytes；解码 base64 保存到用户指定位置。时间必须带时区，tz_offset_min 只影响展示，例如中国为 480。未指定点位时导出该设备全部已配置点位。
 - `delete_history {device_id,start,end,dry_run?}` 只清理该设备、包含两端的时间范围。默认 dry_run=true 返回 affected_rows；用户授权的范围明确后才传 false 删除。保留点位配置和实时缓存，运行设备仍可能产生新数据；也可通过已删除设备的 ID 清理遗留历史。
-- `start_recording` 和 `start_trigger_recording` 会临时改变设备采样周期，不是只读查询；用户需要录制时使用。addresses 是 `{area,address}` 数组；触发记录还需要 trigger_area。用返回的 recording_id 调用 get_recording / stop_recording，报告实际状态和采样时间，不承诺绝对采样频率。
+- `start_recording` 和 `start_trigger_recording` 会临时改变设备采样周期，不是只读查询；用户需要录制时使用。addresses 是 `{area,address,slave_id?}` 数组；可选顶层 slave_id 设默认录制源，每项 slave_id 可覆盖。未筛选时保留全部来源；指定地址省略来源只在当前配置唯一时接受，歧义需显式选择。触发记录还需要 trigger_area，可选 trigger_slave_id 独立选择触发源，否则继承 slave_id 或唯一配置；条件比较原始16位单字。回放保留 slaveId/batchId/sourceVerified，缺来源不猜测，sourceVerified 不表示完整/有效多字或 PASS/FAIL。用返回的 recording_id 调用 get_recording / stop_recording，报告实际状态和采样时间，不承诺绝对采样频率。
 
 无 MCP 时，REST 只读入口如下（查询参数需 URL 编码）：
 

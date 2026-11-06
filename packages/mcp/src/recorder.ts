@@ -1,4 +1,13 @@
 import { randomUUID } from 'node:crypto'
+import { validSlaveId } from '../../core/src/sample-source.ts'
+import { areaForFunction, type ModbusFunctionCode } from '../../core/src/protocol.ts'
+
+export interface RecordingAddress { area: string; address: number; slaveId?: number }
+type SourceAddress = RecordingAddress & { slaveId: number }
+type InputSample = { objectId?: number; area: string; address: number; timestamp: string; rawValue: number; quality: string; slaveId?: number | null; batchId?: string | null }
+const areas = ['coil', 'discrete-input', 'holding-register', 'input-register']
+const operators = ['>', '<', '>=', '<=', '==', '!=', 'changed']
+const MAX_TIMEOUT_MS = 2 ** 31 - 1
 
 /** 一条采样（原始 16 位字 + 时间戳 + 质量）。 */
 export interface RecordingSample {
@@ -7,10 +16,15 @@ export interface RecordingSample {
   address: number
   rawValue: number
   quality: string
+  slaveId: number | null
+  batchId: string | null
+  /** Source metadata is present; not physical authentication or automatic PASS/FAIL. */
+  sourceVerified: boolean
 }
 
 /** 触发条件。 */
 export interface RecordingTrigger {
+  slaveId: number
   area: string
   address: number
   operator: '>' | '<' | '>=' | '<=' | '==' | '!=' | 'changed'
@@ -25,7 +39,9 @@ export interface RecordingSession {
   deviceId: number
   mode: 'continuous' | 'trigger'
   intervalMs: number
-  addresses: Array<{ area: string; address: number }> | null
+  /** Default capture source; null records all sources when addresses is null. */
+  slaveId: number | null
+  addresses: SourceAddress[] | null
   originalPollInterval: number
   status: 'recording' | 'done'
   startedAt: number
@@ -34,6 +50,8 @@ export interface RecordingSession {
   trigger: RecordingTrigger | null
   triggered: boolean
   lastTriggerValue: number | null
+  lastTriggerTimestamp: number | null
+  triggeredBy: RecordingSample | null
 }
 
 /**
@@ -52,16 +70,50 @@ export class Recorder {
     ctx.on('poller/result', ({ objectId, points }: any) => this.onResult(objectId, points))
   }
 
-  private addSession(session: RecordingSession): void {
+  private checkSlave(slaveId?: number) {
+    if (slaveId !== undefined && !validSlaveId(slaveId)) throw new Error('slaveId must be an integer byte (0–255)')
+  }
+  private checkAddress(area: string, address: number) {
+    if (!areas.includes(area) || !Number.isInteger(address) || address < 0 || address > 65535) throw new Error('invalid recording area/address')
+  }
+  private checkTime(value: number, name: string, min = 0) {
+    if (!Number.isSafeInteger(value) || value < min || value > MAX_TIMEOUT_MS) throw new Error(name + ' must be an integer in ' + min + '..' + MAX_TIMEOUT_MS)
+  }
+  private resolveSource(deviceId: number, area: string, address: number, slaveId?: number): number {
+    this.checkAddress(area, address); this.checkSlave(slaveId)
+    if (slaveId !== undefined) return slaveId
+    const device = this.cfg.getObject(deviceId)
+    const sources: number[] = device?.mode === 'slave' ? [device.slaveId ?? 1] : (this.cfg.listGroups?.(deviceId) ?? [])
+      .filter((g: any) => areaForFunction(g.functionCode as ModbusFunctionCode) === area && address >= g.startAddress && address < g.startAddress + g.quantity)
+      .map((g: any) => g.slaveId ?? 1)
+    const unique = [...new Set(sources)]
+    if (unique.length !== 1 || !validSlaveId(unique[0])) throw new Error('recording source is missing or ambiguous; specify slaveId explicitly')
+    return unique[0]
+  }
+  private selectAddresses(deviceId: number, addresses: RecordingAddress[] | undefined, slaveId?: number): SourceAddress[] | null {
+    this.checkSlave(slaveId)
+    if (addresses !== undefined && !Array.isArray(addresses)) throw new Error('addresses must be an array')
+    return addresses?.length ? addresses.map(a => {
+      this.checkSlave(a.slaveId)
+      return { area: a.area, address: a.address, slaveId: this.resolveSource(deviceId, a.area, a.address, a.slaveId ?? slaveId) }
+    }) : null
+  }
+  private prepare(deviceId: number, intervalMs: number) {
+    const obj = this.cfg.getObject(deviceId)
+    if (!obj) throw new Error('device ' + deviceId + ' not found')
+    this.checkTime(intervalMs, 'intervalMs', 1)
+    const active = [...this.sessions.values()].filter(s => s.deviceId === deviceId && s.status === 'recording')
+    if (active.some(s => s.intervalMs !== intervalMs) || active.length && obj.pollIntervalMs !== intervalMs) throw new Error('device already has an active recording with a different/currently changed interval')
+    if (this.sessions.size >= Recorder.MAX_SESSIONS && ![...this.sessions.values()].some(s => s.status === 'done')) throw new Error('too many active recordings')
+    return { originalPollInterval: active[0]?.originalPollInterval ?? obj.pollIntervalMs ?? 1000, active: active.length > 0 }
+  }
+  private addSession(session: RecordingSession, alreadyRecording: boolean): void {
+    if (!alreadyRecording) this.cfg.updateObject(session.deviceId, { pollIntervalMs: session.intervalMs })
     this.sessions.set(session.id, session)
     while (this.sessions.size > Recorder.MAX_SESSIONS) {
-      let oldestId: string | null = null
-      let oldestTs = Infinity
-      for (const s of this.sessions.values()) {
-        if (s.startedAt < oldestTs) { oldestTs = s.startedAt; oldestId = s.id }
-      }
-      if (oldestId != null) this.sessions.delete(oldestId)
-      else break
+      const oldest = [...this.sessions.values()].filter(s => s.status === 'done').sort((a, b) => a.startedAt - b.startedAt)[0]
+      if (!oldest) break
+      this.sessions.delete(oldest.id)
     }
   }
 
@@ -74,16 +126,18 @@ export class Recorder {
   }
 
   /** 连续采样：以 intervalMs 间隔录 durationMs 秒（毫秒）。addresses 缺省 = 全部。 */
-  startRecording(deviceId: number, intervalMs: number, durationMs: number, addresses?: Array<{ area: string; address: number }>): string {
-    const obj = this.cfg.getObject(deviceId)
-    if (!obj) throw new Error('device ' + deviceId + ' not found')
+  startRecording(deviceId: number, intervalMs: number, durationMs: number, addresses?: RecordingAddress[], slaveId?: number): string {
+    const prepared = this.prepare(deviceId, intervalMs)
+    this.checkTime(durationMs, 'durationMs', 1)
+    const selected = this.selectAddresses(deviceId, addresses, slaveId)
     const session: RecordingSession = {
       id: randomUUID(),
       deviceId,
       mode: 'continuous',
       intervalMs,
-      addresses: addresses && addresses.length > 0 ? addresses : null,
-      originalPollInterval: obj.pollIntervalMs ?? 1000,
+      slaveId: slaveId ?? null,
+      addresses: selected,
+      originalPollInterval: prepared.originalPollInterval,
       status: 'recording',
       startedAt: Date.now(),
       finishedAt: null,
@@ -91,34 +145,41 @@ export class Recorder {
       trigger: null,
       triggered: false,
       lastTriggerValue: null,
+      lastTriggerTimestamp: null,
+      triggeredBy: null,
     }
-    this.addSession(session)
-    this.cfg.updateObject(deviceId, { pollIntervalMs: intervalMs })
+    this.addSession(session, prepared.active)
     this.timers.set(session.id, setTimeout(() => this.finish(session.id), durationMs))
     return session.id
   }
 
   /** 触发记录：trigger_address 满足 operator/阈值时，缓存触发前 beforeMs + 触发后 afterMs。 */
-  startTriggerRecording(deviceId: number, intervalMs: number, triggerArea: string, triggerAddress: number, operator: string, threshold: number, beforeMs: number, afterMs: number, addresses?: Array<{ area: string; address: number }>): string {
-    const obj = this.cfg.getObject(deviceId)
-    if (!obj) throw new Error('device ' + deviceId + ' not found')
+  startTriggerRecording(deviceId: number, intervalMs: number, triggerArea: string, triggerAddress: number, operator: string, threshold: number, beforeMs: number, afterMs: number, addresses?: RecordingAddress[], slaveId?: number, triggerSlaveId?: number): string {
+    const prepared = this.prepare(deviceId, intervalMs)
+    this.checkTime(beforeMs, 'beforeMs'); this.checkTime(afterMs, 'afterMs')
+    if (!operators.includes(operator) || !Number.isFinite(threshold)) throw new Error('invalid trigger operator/threshold')
+    this.checkSlave(triggerSlaveId)
+    const selected = this.selectAddresses(deviceId, addresses, slaveId)
+    const triggerSource = this.resolveSource(deviceId, triggerArea, triggerAddress, triggerSlaveId ?? slaveId)
     const session: RecordingSession = {
       id: randomUUID(),
       deviceId,
       mode: 'trigger',
       intervalMs,
-      addresses: addresses && addresses.length > 0 ? addresses : null,
-      originalPollInterval: obj.pollIntervalMs ?? 1000,
+      slaveId: slaveId ?? null,
+      addresses: selected,
+      originalPollInterval: prepared.originalPollInterval,
       status: 'recording',
       startedAt: Date.now(),
       finishedAt: null,
       samples: [],
-      trigger: { area: triggerArea, address: triggerAddress, operator: operator as RecordingTrigger['operator'], threshold, beforeMs, afterMs },
+      trigger: { slaveId: triggerSource, area: triggerArea, address: triggerAddress, operator: operator as RecordingTrigger['operator'], threshold, beforeMs, afterMs },
       triggered: false,
       lastTriggerValue: null,
+      lastTriggerTimestamp: null,
+      triggeredBy: null,
     }
-    this.addSession(session)
-    this.cfg.updateObject(deviceId, { pollIntervalMs: intervalMs })
+    this.addSession(session, prepared.active)
     // 安全上限：10 分钟仍不触发则结束，避免无限录制
     this.timers.set(session.id, setTimeout(() => this.finish(session.id), 10 * 60 * 1000))
     return session.id
@@ -128,9 +189,10 @@ export class Recorder {
     return this.sessions.get(id) ?? null
   }
 
-  listRecordings(): Array<{ id: string; deviceId: number; mode: string; status: string; sampleCount: number; triggered: boolean; startedAt: number; finishedAt: number | null }> {
+  listRecordings() {
     return [...this.sessions.values()].map((s) => ({
       id: s.id, deviceId: s.deviceId, mode: s.mode, status: s.status,
+      slaveId: s.slaveId, addresses: s.addresses, trigger: s.trigger,
       sampleCount: s.samples.length, triggered: s.triggered, startedAt: s.startedAt, finishedAt: s.finishedAt,
     }))
   }
@@ -141,24 +203,29 @@ export class Recorder {
     return true
   }
 
-  private onResult(objectId: number, points: Array<{ objectId: number; area: string; address: number; timestamp: string; rawValue: number; quality: string }>): void {
+  private sample(p: InputSample): RecordingSample {
+    return { ts: p.timestamp, area: p.area, address: p.address, rawValue: p.rawValue, quality: p.quality, slaveId: p.slaveId ?? null, batchId: p.batchId ?? null, sourceVerified: validSlaveId(p.slaveId) }
+  }
+  private onResult(objectId: number, points: InputSample[]): void {
     for (const s of this.sessions.values()) {
       if (s.status !== 'recording' || s.deviceId !== objectId) continue
-      const matches = (p: any) => !s.addresses || s.addresses.some((a) => a.area === p.area && a.address === p.address)
-      const toRecord = points.filter(matches)
-      for (const p of toRecord) s.samples.push({ ts: p.timestamp, area: p.area, address: p.address, rawValue: p.rawValue, quality: p.quality })
+      const attributable = points.filter(p => (p.objectId === undefined || p.objectId === objectId) && (p.slaveId == null || validSlaveId(p.slaveId)))
+      const matches = (p: InputSample) => s.addresses ? s.addresses.some(a => a.area === p.area && a.address === p.address && a.slaveId === p.slaveId) : s.slaveId === null || s.slaveId === p.slaveId
+      for (const p of attributable.filter(matches)) s.samples.push(this.sample(p))
       if (s.mode === 'trigger' && !s.triggered) {
-        // 保持 before 窗口有界
         const cutoff = Date.now() - s.trigger!.beforeMs
-        s.samples = s.samples.filter((sm) => new Date(sm.ts).getTime() >= cutoff)
-        this.maybeTrigger(s, points) // 触发检查看全量，不受 addresses 过滤影响
+        s.samples = s.samples.filter(sm => new Date(sm.ts).getTime() >= cutoff)
+        this.maybeTrigger(s, attributable) // Trigger selection is independent of capture addresses.
       }
     }
   }
 
-  private maybeTrigger(s: RecordingSession, points: Array<{ area: string; address: number; rawValue: number }>): void {
-    const p = points.find((p) => p.area === s.trigger!.area && p.address === s.trigger!.address)
-    if (!p) return
+  private maybeTrigger(s: RecordingSession, points: InputSample[]): void {
+    const candidates = points.filter(p => p.slaveId === s.trigger!.slaveId && p.area === s.trigger!.area && p.address === s.trigger!.address)
+    if (!candidates.length) return // Other/unknown sources must not update a changed baseline.
+    const p = candidates[0], time = Date.parse(p.timestamp)
+    if (candidates.length !== 1 || p.quality !== 'good' || !Number.isInteger(p.rawValue) || p.rawValue < 0 || p.rawValue > 65535 || !Number.isFinite(time)) { s.lastTriggerValue = null; return }
+    if (time < s.startedAt || s.lastTriggerTimestamp !== null && time < s.lastTriggerTimestamp) return
     const v = p.rawValue
     let hit = false
     switch (s.trigger!.operator) {
@@ -171,8 +238,10 @@ export class Recorder {
       case 'changed': hit = s.lastTriggerValue !== null && v !== s.lastTriggerValue; break
     }
     s.lastTriggerValue = v
+    s.lastTriggerTimestamp = time
     if (!hit) return
     s.triggered = true
+    s.triggeredBy = this.sample(p)
     const old = this.timers.get(s.id)
     if (old) clearTimeout(old)
     this.timers.set(s.id, setTimeout(() => this.finish(s.id), s.trigger!.afterMs))
@@ -187,6 +256,7 @@ export class Recorder {
     if (t) clearTimeout(t)
     this.timers.delete(id)
     const obj = this.cfg.getObject(s.deviceId)
-    if (obj) this.cfg.updateObject(s.deviceId, { pollIntervalMs: s.originalPollInterval })
+    const otherActive = [...this.sessions.values()].some(other => other.id !== id && other.deviceId === s.deviceId && other.status === 'recording')
+    if (obj && !otherActive && obj.pollIntervalMs === s.intervalMs) this.cfg.updateObject(s.deviceId, { pollIntervalMs: s.originalPollInterval })
   }
 }
