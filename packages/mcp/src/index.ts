@@ -13,6 +13,8 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z as zz } from 'zod'
 import { areaForFunction, encodeRegister, invertSemantic, parseEnum, registerWidth, resolveSemantic, smartParseCsv, type ModbusArea } from '@probebench/core'
 import { Recorder } from './recorder.ts'
+import { registerConfigEditTools } from './config-edit.ts'
+import { configEditRegistrar } from './config-edit-registry.ts'
 
 /** 把 RegisterRecord 映射成语义寄存器（factor/offset/unit/enum）。 */
 function semanticOf(r: any) {
@@ -59,6 +61,7 @@ export function apply(ctx: Context, config: Config): void {
 
   // 每个会话一个独立 McpServer：Protocol 只能连一个 transport，多会话/多连接必须各自实例。
   function registerTools(server: McpServer): void {
+    registerConfigEditTools(configEditRegistrar(server), cfg, { reconnect: id => poller.reconnectDevice(id), syncSlaves: async () => ctx.get('deviceSlaves', false)?.sync() })
     server.registerTool('list_devices', {
       title: 'List devices', description: '列出所有设备的 id、名称、mode（master/slave）、连接参数和启停状态；实时连接/监听状态用 get_device_health 查询。', inputSchema: {},
     }, async () => ({ content: [{ type: 'text', text: JSON.stringify(cfg.listObjects()) }] }))
@@ -115,46 +118,6 @@ export function apply(ctx: Context, config: Config): void {
       cfg.log('INFO', 'mcp', 'create device ' + obj.id + ' ' + name)
       // createObject 已 emit config/changed，poller 若在跑会自动 refreshSchedule 纳入该设备
       return { content: [{ type: 'text', text: JSON.stringify(obj) }] }
-    })
-
-    server.registerTool('update_device', {
-      title: 'Update device', description: '修改设备角色 mode（master/slave）、transport（tcp/rtu）和连接参数；主站重连，从站重新监听。切为 TCP 从站时提供本机监听 IP 和端口；RTU 从站数据位必须为 8。',
-      inputSchema: {
-        device_id: zz.number(),
-        name: zz.string().optional(),
-        mode: zz.enum(['master', 'slave']).optional(),
-        transport: zz.enum(['tcp', 'rtu']).optional(),
-        ip: zz.string().optional(),
-        port: zz.number().optional(),
-        serial_path: zz.string().optional(),
-        baud_rate: zz.number().optional(),
-        parity: zz.string().optional(),
-        stop_bits: zz.number().optional(),
-        data_bits: zz.number().optional(),
-        flow_control: zz.string().optional(),
-        slave_id: zz.number().optional(),
-        poll_interval_ms: zz.number().optional(),
-        timeout_ms: zz.number().optional(),
-      },
-    }, async (args) => {
-      if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
-      const fields: Record<string, unknown> = {}
-      const snake2camel: Record<string, string> = {
-        name: 'name', mode: 'mode', ip: 'ip', port: 'port', transport: 'transport',
-        serial_path: 'serialPath', baud_rate: 'baudRate', parity: 'parity', stop_bits: 'stopBits',
-        data_bits: 'dataBits', flow_control: 'flowControl', slave_id: 'slaveId',
-        poll_interval_ms: 'pollIntervalMs', timeout_ms: 'timeoutMs',
-      }
-      for (const [k, v] of Object.entries(args)) {
-        if (k === 'device_id' || v === undefined) continue
-        const mapped = snake2camel[k]
-        if (mapped) fields[mapped] = v
-      }
-      const updated = cfg.updateObject(args.device_id, fields)
-      if (updated.mode !== 'slave') { try { await poller.reconnectDevice(args.device_id) } catch { /* 忽略 */ } }
-      await ctx.get('deviceSlaves', false)?.sync()
-      cfg.log('INFO', 'mcp', 'update device ' + args.device_id)
-      return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
     })
 
     server.registerTool('delete_device', {
@@ -394,23 +357,6 @@ export function apply(ctx: Context, config: Config): void {
       for (let i = 0; i < g.quantity; i++) cfg.createRegister(g.id, g.objectId, null, g.functionCode, g.startAddress + i, 'int16')
       cfg.log('INFO', 'mcp', 'create group ' + g.id + ' "' + g.name + '"')
       return { content: [{ type: 'text', text: JSON.stringify(g) }] }
-    })
-
-    server.registerTool('update_group', {
-      title: 'Update group', description: '更改分组（名称/从站ID/功能码/起始地址/数量/启停）',
-      inputSchema: { group_id: zz.number(), name: zz.string().optional(), slave_id: zz.number().optional(), function_code: zz.number().optional(), start_address: zz.number().optional(), quantity: zz.number().optional(), is_active: zz.number().optional() },
-    }, async (args) => {
-      if (!cfg.getGroup(args.group_id)) return { content: [{ type: 'text', text: 'group not found' }], isError: true }
-      const fields: Record<string, unknown> = {}
-      if (args.name !== undefined) fields.name = args.name
-      if (args.slave_id !== undefined) fields.slaveId = args.slave_id
-      if (args.function_code !== undefined) fields.functionCode = args.function_code
-      if (args.start_address !== undefined) fields.startAddress = args.start_address
-      if (args.quantity !== undefined) fields.quantity = args.quantity
-      if (args.is_active !== undefined) fields.isActive = args.is_active
-      const updated = cfg.updateGroup(args.group_id, fields)
-      cfg.log('INFO', 'mcp', 'update group ' + args.group_id)
-      return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
     })
 
     server.registerTool('import_points', {

@@ -24,7 +24,9 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 |---|---|---|
 | `list_devices` | — | 设备列表（id/名称/IP/端口/状态） |
 | `list_registers` | `device_id` | 某设备寄存器定义（id/别名/地址/类型） |
-| `create_device` / `update_device` | name 或 device_id、mode?、transport?、连接参数 | mode=master/slave；主站主动连接，从站在本机监听 TCP 或 RTU |
+| `create_device` | name、mode?、transport?、连接参数 | mode=master/slave；创建可能开始运行 |
+| `get_device_edit_snapshot` | `device_id` | 只读原expected，供设备编辑条件保存 |
+| `update_device` | `device_id, expected`、原可选变更字段 | 有条件修改，缺expected拒绝；返回原设备字段及已保存/warnings |
 | `delete_device` | `device_id` | 删除设备、分组、点位和告警，释放监听；保留历史 |
 | `get_device_health` | `device_id` | 主站连接/轮询状态；从站 slave_service 监听、请求、连接数及错误 |
 | `set_device_active` | `device_id, active` | 主站连接/断开，从站启动/停止监听 |
@@ -49,7 +51,9 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `stop_recording` | `recording_id` | 提前结束/取消录制 |
 | `import_points` | `device_id, points[]\|csv` | 更新已有语义；可选逐点 slave_id/register_id，歧义跳过并返回候选，省略字段/缺列保留原值 |
 | `create_group` | `device_id, name, function_code?, start_address, quantity, slave_id?` | 新建分组并自动建立 int16 点位；从站使用设备从站号 |
-| `update_group` | `group_id, name?, slave_id?, function_code?, start_address?, quantity?, is_active?` | 更改分组 |
+| `get_group_edit_snapshot` | `group_id` | 一致的组/点位/告警/来源快照及revision |
+| `preview_group_update` | `group_id, expected_revision`、原可选变更字段 | 只读核对原版本并给出完整增删计划 |
+| `update_group` | `group_id, expected_revision`、原变更字段、确认删除ID数组 | 条件更新；删除须传confirmed_delete_register_ids/confirmed_delete_rule_ids |
 | `create_register` | `group_id, alias?, function_code?, start_address, data_type?` | 新增寄存器 |
 | `update_register` | `register_id, alias?, data_type?, unit?, factor?, offset?, enum?` | 更改点位语义配置 |
 | `delete_register` | `register_id` | 删除寄存器 |
@@ -115,3 +119,14 @@ import_points的JSON行支持可选slave_id/register_id；CSV识别来源/点位
 全量import_points_xlsx先校验整本v2计划，再事务替换；错误保留原配置，无分组页拒绝清空。现保留分组从站/显式范围、独立quantity和零倍率，检查多字完整覆盖，不补占位。缺来源/FC默认1/FC03及推导范围均会返回warnings要求核对，缺quantity默认1。提交后通知/日志失败也可能只返回警告，不自动重试。v2其他未定义字段不猜测，范围与限制见[说明](../../docs/develop/09-XLSX点表字段保真.md)。
 
 export_points_xlsx会分配合法唯一页签，B1保留原组名，告警G可引用页签；现点位L/告警H可选文件内“点位标识”支持同页同址多个定义各自告警。它不是数据库register_id，不入库、不用于其他MCP工具。所有显式条件须一致，重复/失效/冲突ID拒绝；旧无标识仍只接受唯一匹配，不猜归属。详见[页签](../../docs/develop/10-XLSX工作表名称与告警定位.md)与[文件内身份](../../docs/develop/11-XLSX文件内点位标识.md)。
+
+## 配置编辑条件迁移
+
+`update_device`、`update_group`保留工具名、原snake_case变更字段和结果根部的设备/组字段。执行更新时新增条件必需：schema中条件字段可选是为了让旧参数形状得到明确的`isError:true` / `CONFIG_PRECONDITION_REQUIRED`（status 428）和next_tool；缺条件不执行，也不临时读取新条件套在旧意图上。旧客户端需升级，不能把此行为称为完全向后兼容。
+
+- 设备：`get_device_edit_snapshot {device_id}`取得expected，核对原值后，`update_device {device_id, expected, ...原变更字段}`。
+- 分组：`get_group_edit_snapshot {group_id}`取得revision及完整图；`preview_group_update {group_id, expected_revision:revision, ...原变更字段}`核对计划。确定删除对象后，在`update_group`显式带同一expected_revision、原变更及`confirmed_delete_register_ids:plan.delete_register_ids`、`confirmed_delete_rule_ids:plan.delete_rule_ids`。没有删除可省略确认数组。
+- 预览拒绝过期版本，不自动返回新条件；保存时服务端在同一事务内再核对。冲突409需重新审阅，不自动重试；不退回旧REST。
+- 成功结果保留原记录字段，增加configuration_saved=true及warnings；组另附revision和实际增删ID。连接应用/通知/日志失败是已保存警告，不能当作配置未保存重试。设备MCP原master重连、随后从站同步的顺序保留，本轮没有变更硬件策略。
+
+新读工具只读配置，不枚举、连接或探测仪器。条件是并发保护，不是鉴权/授权或持久幂等键。旧REST、update_register、窄状态命令、助手/录制等剩余调用不因此获得保护，详见[清单及边界](../../docs/develop/37-旧调用方梳理与MCP条件更新.md)。先查运行实例tools/list，不能假设本地代码已部署。

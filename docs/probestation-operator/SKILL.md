@@ -72,6 +72,10 @@ npm run start
 
 ## 3. 配置和控制
 
+新版本MCP配置编辑须使用条件：先`get_device_edit_snapshot {device_id}`核对expected，再`update_device {device_id, expected, ...变更}`。分组先`get_group_edit_snapshot {group_id}`读取revision及完整点位/告警，再用同一`expected_revision`调用`preview_group_update`核对原变更；更新时原条件和变更保持一致，涉及删除须显式传已核对的`confirmed_delete_register_ids`、`confirmed_delete_rule_ids`。读取/预览只读配置，不连接设备。
+
+缺条件的旧更新调用返回`CONFIG_PRECONDITION_REQUIRED`（428），冲突返回409；不要自动重读新条件给旧草稿放行或改走无条件REST。先查看实际tools/list，缺新工具时报告版本限制。保存成功保留记录字段并新增configuration_saved/warnings；已保存但连接应用、通知或日志失败需核对运行状态，不重复保存。`update_register`、窄状态命令、助手提案/录制等尚未统一具备条件更新，不能泛称全平台防并发覆盖。详见[迁移与剩余调用](../develop/37-旧调用方梳理与MCP条件更新.md)。
+
 - 先检查设备 `mode`：`master` 主动读取外部设备，`slave` 在本机监听外部主站。`create_device` / `update_device` 支持 mode 和 transport；省略 mode 创建主站。切换角色会释放旧连接或监听，不能只把远端 IP 原样用于本地监听。
 - TCP 从站填写本机监听地址（例如 `0.0.0.0`）和未占用端口；外部主站连接运行本软件的电脑实际 IP，不连接 `0.0.0.0`。RTU 从站占用独立串口，数据位必须为 8，从站号 1–247；不能与启用的主站设备共用该串口。
 - 从站没有扫描间隔，等待外部主站读写。`get_device_health` 的 connected 对从站表示监听已启动，polling=false，poll_interval_ms=null；slave_service 提供 running、error、requests、connections 等状态。请求数/连接数为 0 是正常等待，不是“未连接”故障。端口占用或串口打不开才是服务异常。
