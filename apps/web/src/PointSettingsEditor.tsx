@@ -1,8 +1,9 @@
-import { useId, useRef, useState } from 'react'
-import { registerWidth } from '../../../packages/core/src/codec'
+import React, { useId, useRef, useState } from 'react'
+import { isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec'
+import { parsePointSettingsDraft, type PointSettings } from './point-settings'
+export type { PointSettings } from './point-settings'
 
 type Row = { id: number; value: string; label: string }
-export type PointSettings = { dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null; decimalPlaces?: number | null }
 export function PointSettingsEditor({ name, address, settings, available, typeGroups, t, onClose, onSave }: {
   name: string; address: number; settings: PointSettings; available: number; typeGroups: { key: string; types: string[] }[]; t: (key: string) => string
   onClose: () => void; onSave: (value: PointSettings) => Promise<void>
@@ -30,19 +31,11 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
   }
   const save = async () => {
     if (lock.current) return
-    if (dataType !== settings.dataType && registerWidth(dataType) > available) { setError(t('valueShort')); return }
-    const numericFactor = Number(factor), numericOffset = Number(offset)
-    if (!factor.trim() || !offset.trim() || !Number.isFinite(numericFactor) || !Number.isFinite(numericOffset) || numericFactor === 0) { setError(t('pointInvalidScale')); return }
-    const map: Record<string, string> = Object.create(null)
-    for (const row of rows) {
-      if (!/^-?\d+$/.test(row.value.trim())) { setError(t('enumInvalidValue')); return }
-      const key = BigInt(row.value.trim()).toString()
-      if (Object.hasOwn(map, key)) { setError(t('enumDuplicate').replace('{value}', key)); return }
-      if (!row.label.trim()) { setError(t('enumEmptyLabel')); return }
-      map[key] = row.label.trim()
-    }
+    let next: PointSettings
+    try { next = parsePointSettingsDraft({ dataType, unit, factor, offset, decimalPlaces, rows }, settings.dataType, available, t) }
+    catch (e) { setError(e instanceof Error ? e.message : t('operationFailed')); return }
     lock.current = true; setBusy(true); setError('')
-    try { await onSave({ dataType, unit: unit.trim() || null, factor: numericFactor, offset: numericOffset, enumJson: rows.length ? JSON.stringify(map) : null, decimalPlaces: decimalPlaces === '' ? null : Number(decimalPlaces) }); onClose() }
+    try { await onSave(next); onClose() }
     catch (e: any) { setError(e.message || t('operationFailed')) }
     finally { lock.current = false; setBusy(false) }
   }
@@ -60,6 +53,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
       </div>
       <label className="point-decimals-label">{t('pointDecimals')}<select aria-label={t('pointDecimals')} value={decimalPlaces} disabled={busy} onChange={e => setDecimalPlaces(e.target.value)}><option value="">{t('pointDecimalsAuto')}</option>{Array.from({ length: 9 }, (_, i) => <option key={i} value={i}>{i}</option>)}</select></label>
       <p className="enum-hint point-scale-note">{t('pointScaleHint')}</p>
+      {factor.trim() && Number(factor) === 0 && !isHexType(dataType) && !isBinType(dataType) && <p className="chart-hint" role="note">{t('pointZeroFactorHint')}</p>}
       <h4 className="point-enum-title">{t('enumConfig')}</h4>
       <p className="enum-hint">{t('enumHint')}</p>
       <div className="enum-columns"><span>{t('enumValue')}</span><span>{t('enumLabel')}</span><span /></div>
