@@ -16,14 +16,16 @@ async function request(path: string, method = 'GET', body?: unknown, signal?: Ab
 export function useAlarmRules(deviceId: number) {
   const [rules, setRules] = useState<AlarmRule[]>([])
   const [error, setError] = useState('')
+  const [ready, setReady] = useState(false)
   const lock = useRef(false), sequence = useRef(0)
   useEffect(() => {
     const controller = new AbortController()
     setRules([])
+    setReady(false); setError('')
     const load = async () => {
       if (lock.current) return
       const seq = ++sequence.current
-      try { const next = await request('/api/rules', 'GET', undefined, controller.signal); if (!controller.signal.aborted && seq === sequence.current) { setRules(next); setError('') } }
+      try { const next = await request('/api/rules', 'GET', undefined, controller.signal); if (!controller.signal.aborted && seq === sequence.current) { setRules(next); setError(''); setReady(true) } }
       catch (e: any) { if (!controller.signal.aborted && seq === sequence.current) setError(e.message) }
     }
     const refresh = () => void load()
@@ -31,7 +33,7 @@ export function useAlarmRules(deviceId: number) {
     void load(); const timer = setInterval(refresh, 10000)
     return () => { controller.abort(); clearInterval(timer); window.removeEventListener('alarm-rules-changed', refresh) }
   }, [deviceId])
-  return { rules, setRules, error, setError, lock, sequence }
+  return { rules, setRules, error, setError, lock, sequence, ready }
 }
 
 export function AlarmPanel({ t, device, groups, latest, groupErrors, now, threshold, point, onClose }: {

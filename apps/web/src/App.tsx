@@ -1,4 +1,7 @@
 import { HistoryComparison } from './HistoryComparison'
+import { LivePointFilters } from './LivePointFilters'
+import { evaluateLivePoints, livePointFilterResult, type LivePointFilter } from './live-point-filter'
+import { pickerSources } from './register-picker'
 import { PointDiagnosticsPanel } from './PointDiagnostics'
 import { captureHistoryAnchor, historyComparisonContext, updateHistoryComparison, type HistoryComparisonState } from './history-comparison'
 import { HistoryNavigation } from './history-navigation'
@@ -12,8 +15,6 @@ import { decodeHistoricalSample, historyVerificationLabel } from '../../../packa
 import { SerialPortPicker } from './SerialPortPicker'
 import { DeviceSlaveStatus } from './DeviceSlaveStatus'
 import { ColumnControl, ValueModeControl, useDisplayColumns, useValueMode } from './DataDisplayControls'
-import { alarmMatches } from '../../../packages/core/src/alarm.ts'
-import { readAlarmValue } from './alarm-value'
 import { AlarmPanel, useAlarmRules } from './AlarmPanel'
 import { ValueReading } from './ValueReading'
 import { physicalValue, displayNumber, curveValue, type ValueMode } from './physical-value'
@@ -884,7 +885,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [settingsReg, setSettingsReg] = useState<Register | null>(null)
-  const { rules: alarmRules } = useAlarmRules(device.id)
+  const { rules: alarmRules, ready: alarmRulesReady, error: alarmRuleError } = useAlarmRules(device.id)
   const [alarmReg, setAlarmReg] = useState<Register | null>(null)
   const [configuring, setConfiguring] = useState(false)
   const [columns, setColumns] = useDisplayColumns(device.id)
@@ -893,7 +894,11 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
   const columnCount = 1 + Number(shownColumns.address) + Number(shownColumns.type) + Number(showValue) + Number(shownColumns.action)
   const tableWidth = 220 + (shownColumns.address ? 90 : 0) + (shownColumns.type ? 140 : 0) + (showValue ? 240 : 0) + (shownColumns.action ? 90 : 0)
   const [search, setSearch] = useState('')
-  const [issuesOnly, setIssuesOnly] = useState(false)
+  const [pointFilter, setPointFilter] = useState<LivePointFilter>('all')
+  const [sourceFilter, setSourceFilter] = useState('')
+  const deviceSlaveId = device.mode === 'slave' ? device.slaveId : undefined
+  const sources = pickerSources(groups, deviceSlaveId), activeSource = sources.includes(sourceFilter) ? sourceFilter : '', sourcesKey = sources.join(',')
+  useEffect(() => { if (sourceFilter && !sources.includes(sourceFilter)) setSourceFilter('') }, [sourceFilter, sourcesKey])
   const operation = useOperation(t)
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -926,7 +931,10 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
     if (bookInputRef.current) bookInputRef.current.value = ''
   }
   const views = useMemo(() => buildRegViews(groups, latest, device.id, device.mode === 'slave' ? device.slaveId : undefined), [groups, latest, device.id, device.mode, device.slaveId])
-  const health = (g: DeviceGroup, r: Register) => pointHealth(Array.from({ length: registerWidth(r.dataType) }, (_, i) => sourceSample(latest, device.id, areaForFunctionCode(g.functionCode), r.startAddress + i, device.mode === 'slave' ? device.slaveId : g.slaveId)), now, threshold, !device.isActive || !g.isActive, !!groupErrors[g.id])
+  const pointStates = useMemo(() => evaluateLivePoints(groups, views, latest, device, alarmRules, groupErrors, now, threshold), [groups, views, latest, device.id, device.isActive, device.mode, device.slaveId, alarmRules, groupErrors, now, threshold])
+  const filteredPoints = useMemo(() => livePointFilterResult(groups, pointStates, search, activeSource, pointFilter, deviceSlaveId), [groups, pointStates, search, activeSource, pointFilter, deviceSlaveId])
+  const hasPointFilters = !!search.trim() || !!activeSource || pointFilter !== 'all'
+  const pointFilterKey = JSON.stringify([search.trim(), activeSource, pointFilter])
   // Summarize the full group before applying search or issue filters.
   const summaries = new Map(groups.map(g => {
     const state = pointHealth(Array.from({ length: g.quantity }, (_, i) => sourceSample(latest, device.id, areaForFunctionCode(g.functionCode), g.startAddress + i, device.mode === 'slave' ? device.slaveId : g.slaveId)), now, threshold, !device.isActive || !g.isActive, !!groupErrors[g.id])
@@ -934,20 +942,15 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
     const status = !device.isActive || !g.isActive ? 'pausedData' : groupErrors[g.id] ? 'groupCommunicationError' : state.timestamp === null ? 'notSampled' : incomplete ? 'groupPartialData' : state.stale ? 'groupOldValues' : 'fresh'
     return [g.id, { ...state, status }] as const
   }))
-  const shown = groups.map(g => ({ ...g, registers: g.registers.filter(r => {
-    const match = (r.alias ?? '').toLowerCase().includes(search.toLowerCase()) || String(r.startAddress).includes(search) || ('0x' + r.startAddress.toString(16)).includes(search.toLowerCase())
-    const rv = views.get(r.id)
-    return match && (!issuesOnly || (!rv?.covered && (health(g, r).stale || rv?.invalid)))
-  }) })).filter(g => g.registers.length > 0 || (!search && !issuesOnly))
+  const shown = groups.map(g => ({ ...g, registers: g.registers.filter(r => filteredPoints.visibleIds.has(r.id)) })).filter(g => g.registers.length > 0 || !hasPointFilters)
   return (
     <div>
 
       <div className="observation-toolbar">
         <div className="seg"><button className={!configuring ? 'selected' : ''} aria-pressed={!configuring} onClick={() => setConfiguring(false)}>{t('observe')}</button><button className={configuring ? 'selected' : ''} aria-pressed={configuring} onClick={() => setConfiguring(true)}>{t('configure')}</button></div>
-        <input className="hist-input point-search" aria-label={t('searchPoints')} placeholder={t('searchPoints')} value={search} onChange={e => setSearch(e.target.value)} />
-        <label className="issues-filter"><input type="checkbox" checked={issuesOnly} onChange={e => setIssuesOnly(e.target.checked)} />{t('onlyIssues')}</label>
         <ColumnControl t={t} columns={columns} configuring={configuring} onChange={setColumns} />
       </div>
+      <LivePointFilters search={search} source={activeSource} sources={sources} mode={pointFilter} counts={filteredPoints.counts} rulesReady={alarmRulesReady} ruleError={!!alarmRuleError} onSearch={setSearch} onSource={setSourceFilter} onMode={setPointFilter} onClear={() => { setSearch(''); setSourceFilter(''); setPointFilter('all') }} english={t('cancel') === 'Cancel'} />
       {configuring && <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
         <button className="btn" disabled={operation.busy} onClick={() => bookInputRef.current?.click()}>⬆ {t('importPointBook')}</button>
@@ -964,8 +967,8 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
             <span title={t('groupTimeHint') + (summary.timestamp === null ? '' : ' · ' + formatLocalTs(new Date(summary.timestamp).toISOString()))}>{t('updatedAt')}: <strong>{summary.ageSeconds === null ? '—' : t('secondsAgo').replace('{n}', String(summary.ageSeconds))}</strong></span>
           </div>
           <div className="group-head">
-            <button className="group-collapse" aria-label={g.name} aria-expanded={!collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}><span className={'group-chevron' + (collapsed.has(g.id) ? ' is-collapsed' : '')}>▾</span></button>
-            <button className="group-name group-name-toggle" aria-expanded={!collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}>{g.name}</button>
+            <button className="group-collapse" disabled={hasPointFilters} aria-label={g.name} aria-expanded={hasPointFilters || !collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}><span className={'group-chevron' + (!hasPointFilters && collapsed.has(g.id) ? ' is-collapsed' : '')}>▾</span></button>
+            <button className="group-name group-name-toggle" disabled={hasPointFilters} aria-expanded={hasPointFilters || !collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}>{g.name}</button>
             <span className="kv">FC{g.functionCode} · 从站 {device.mode === 'slave' ? device.slaveId : g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个</span>
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id] === 'Disconnected' ? t('groupDisconnected') : groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
@@ -973,21 +976,18 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
             {configuring && <button className="btn" onClick={() => setModal({ mode: 'edit', group: g })}>{t('edit')}</button>}
             {configuring && <button className="btn danger" disabled={operation.busy} onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>}
           </div>
-          <GroupFold collapsed={collapsed.has(g.id)}>{() => (<div className="register-table-scroll"><table className="reg realtime-table" style={{ minWidth: tableWidth }}>
+          <GroupFold collapsed={!hasPointFilters && collapsed.has(g.id)}>{() => (<div className="register-table-scroll" key={pointFilterKey}><table className="reg realtime-table" style={{ minWidth: tableWidth }}>
             <colgroup>{shownColumns.address && <col className="rt-address" />}<col className="rt-description" />{shownColumns.type && <col className="rt-type" />}{showValue && <col className="rt-value" />}{shownColumns.action && <col className="rt-action" />}</colgroup>
             <thead><tr>{shownColumns.address && <th>{t('colAddr')}</th>}<th>{t('colAlias')}</th>{shownColumns.type && <th>{t('colType')}</th>}{showValue && <th className="rt-numeric-cell"><div className="rt-value-stack"><div className="rt-value-line"><span className="rt-value-heading">{t('colValue')}</span></div></div></th>}{shownColumns.action && <th className="rt-action-cell">{t(configuring ? 'pointSettings' : 'write')}</th>}</tr></thead>
             <VirtualTableBody items={g.registers} columns={columnCount}>
               {(r) => {
                 const rv = views.get(r.id)
-                const state = health(g, r)
-                const words = Array.from({ length: registerWidth(r.dataType) }, (_, i) => sourceSample(latest, device.id, areaForFunctionCode(g.functionCode), r.startAddress + i, device.mode === 'slave' ? device.slaveId : g.slaveId))
-                const alarmValue = rv?.covered ? null : readAlarmValue(r.dataType, words, now, threshold, !device.isActive || !g.isActive, !!groupErrors[g.id])
-                const alarmActive = alarmValue !== null && alarmRules.some(rule => rule.registerId === r.id && alarmMatches(alarmValue, rule.operator, rule.threshold))
+                const { health: state, alarmActive } = pointStates.get(r.id)!
                 const writable = rv?.writable && (device.mode === 'slave' || [1, 3].includes(g.functionCode))
                 return (
-                  <tr key={r.id}>
+                  <tr key={r.id} data-register-id={r.id}>
                     {shownColumns.address && <td className="kv" data-label={t('colAddr')}>{r.startAddress}</td>}
-                    <td className="rt-description-cell">{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span className="rt-name" title={r.alias || '—'}>{r.alias || '—'}</span>}</td>
+                    <td className="rt-description-cell">{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span className="rt-name" title={`${r.alias || '—'} · #${r.id} · FC${g.functionCode} · ${r.startAddress}`}>{r.alias || '—'}</span>}</td>
                     {shownColumns.type && <td data-label={t('colType')}><span className="point-type">{r.dataType}</span></td>}
                     {showValue && <td data-label={t('colValue')} className={'value rt-numeric-cell rt-stacked-cell' + (state.stale ? ' stale-value' : '') + (alarmActive ? ' alarm-value' : '')}>
                       <div className="rt-value-stack">

@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url'
 
 // Static manual preview only. No app/config/store imports, sockets or database paths.
 const args = process.argv.slice(2)
-if (args.length && (args.length !== 1 || !['--settings', '--comparison', '--diagnostics', '--backup'].includes(args[0]))) throw new Error('只支持无参数、--settings、--comparison、--diagnostics 或 --backup；不会读取配置或数据库路径。')
-const kind = args[0] === '--backup' ? 'config-backup' : args[0] === '--diagnostics' ? 'point-diagnostics' : args[0] === '--comparison' ? 'history-comparison' : args.length ? 'point-settings' : 'register-picker'
-const title = kind === 'config-backup' ? '配置恢复' : kind === 'point-diagnostics' ? '点表检查' : kind === 'history-comparison' ? '历史两点对比' : kind === 'point-settings' ? '点位设置' : '选点'
+const previews = new Map<string, readonly [string, string]>([['', ['register-picker', '选点']], ['--settings', ['point-settings', '点位设置']], ['--comparison', ['history-comparison', '历史两点对比']], ['--diagnostics', ['point-diagnostics', '点表检查']], ['--backup', ['config-backup', '配置恢复']], ['--live-filter', ['live-point-filter', '实时点位筛选']]])
+const preview = previews.get(args[0] ?? '')
+if (args.length > 1 || !preview) throw new Error('只支持无参数、--settings、--comparison、--diagnostics、--backup 或 --live-filter；不会读取配置或数据库路径。')
+const [kind, title] = preview
 const root = fileURLToPath(new URL('../', import.meta.url)), output = resolve(root, `output/playwright/${kind}-preview.html`)
 const marker = `data-probestation-preview="${kind}"`
 try {

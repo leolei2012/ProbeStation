@@ -927,3 +927,11 @@ table.reg th, .btn { white-space: nowrap; }
 .backup-file-name, .backup-outcome { overflow-wrap: anywhere; }
 .backup-outcome { margin: 12px 0; padding: 12px; border: 1px solid var(--border-2); border-radius: 8px; }
 .config-backup-settings .warn > small { display: block; }
+
+.live-point-filters { margin: 12px 0 18px; }
+.live-point-filters .toolbar { align-items: end; margin-bottom: 10px; }
+.live-point-filters label { display: flex; flex-direction: column; gap: 5px; }
+.live-point-search { flex: 1; min-width: min(280px, 100%); }
+.live-point-search input { width: 100%; box-sizing: border-box; }
+.live-point-status-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.live-point-status-filters strong { margin-left: 5px; font-variant-numeric: tabular-nums; }
