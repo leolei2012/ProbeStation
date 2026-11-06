@@ -1,0 +1,24 @@
+import React, { useEffect, useState } from 'react'
+import { pointEnumChanged, type PointEnumAction, type PointEnumDraft } from './point-enum-draft'
+
+export function PointEnumEditor({ state, onAction, busy = false, issueIndex = null, issueRevision = 0, english = false }: { state: PointEnumDraft; onAction: (action: PointEnumAction) => void; busy?: boolean; issueIndex?: number | null; issueRevision?: number; english?: boolean }) {
+  const [page, setPage] = useState(0), pages = Math.max(1, Math.ceil(state.rows.length / 20)), current = Math.min(page, pages - 1)
+  useEffect(() => { if (issueIndex !== null && issueIndex >= 0 && issueIndex < state.rows.length) setPage(Math.floor(issueIndex / 20)) }, [issueIndex, issueRevision])
+  const text = (zh: string, en: string) => english ? en : zh, opaque = state.source === 'opaque' && state.intent === 'preserve', changed = pointEnumChanged(state)
+  return <section className="point-enum-editor" aria-label={text('枚举编辑', 'Enum editing')}>
+    <p className="enum-hint" role="status">{changed ? state.rows.length ? text('枚举有草稿修改，保存时将替换映射。', 'Enum draft changed; saving replaces the mapping.') : text('已明确清空枚举草稿，保存后才会清除现有枚举。', 'Enum draft cleared explicitly; saving will clear the stored mapping.') : text('枚举未修改：保存其他字段不会发送枚举字段，保留服务端现值。', 'Enum unchanged: saving other fields omits the enum field and keeps the server value.')}</p>
+    <p className="enum-hint">{text('修改枚举行后按现有规则校验整份映射：整数键规范化、标签去除首尾空白。可撤销枚举草稿，其他字段草稿保留。', 'Edited rows validate the whole map using existing rules: canonical integer keys and trimmed labels. Revert the enum draft without changing other drafts.')}</p>
+    {opaque ? <div className="point-enum-opaque"><p className="warn" role="status">{text('原枚举无法逐行读取，未当作空映射，也不会自动清空或转换。其他字段仍可保存。', 'Original enum cannot be read as rows. It is not treated as empty, cleared or coerced. Other fields can still be saved.')}</p><button type="button" className="btn" disabled={busy} onClick={() => { onAction({ type: 'replace-opaque' }); setPage(0) }}>{text('用新映射替换原文（从空白行开始）', 'Replace original with a new map (start with a blank row)')}</button></div> : <>
+      <p className="enum-hint">{text('解析后条目', 'Parsed entries')}: {state.rows.length}{state.rows.length ? ` · ${current * 20 + 1}–${Math.min((current + 1) * 20, state.rows.length)}` : ''}</p>
+      <div className="enum-columns"><span>{text('原始整数值', 'Raw integer')}</span><span>{text('显示标签', 'Label')}</span><span /></div>
+      <div className="enum-rows">{!state.rows.length && <p className="enum-empty">{text('暂无可编辑枚举行。', 'No editable enum rows.')}</p>}{state.rows.slice(current * 20, (current + 1) * 20).map((row, index) => {
+        const number = current * 20 + index
+        return <div className="enum-row" key={row.id}><input aria-label={`${text('原始整数值', 'Raw integer')} ${number + 1}`} aria-invalid={issueIndex === number || undefined} value={row.value} maxLength={40} disabled={busy} onChange={e => onAction({ type: 'update', id: row.id, field: 'value', text: e.target.value })} /><input aria-label={`${text('显示标签', 'Label')} ${number + 1}`} aria-invalid={issueIndex === number || undefined} value={row.label} maxLength={120} disabled={busy} onChange={e => onAction({ type: 'update', id: row.id, field: 'label', text: e.target.value })} /><button type="button" className="btn" disabled={busy} aria-label={`${text('删除枚举行', 'Remove enum row')} ${number + 1}`} onClick={() => onAction({ type: 'remove', id: row.id })}>×</button></div>
+      })}</div>
+      {pages > 1 && <div className="toolbar"><button type="button" className="btn" disabled={busy || current === 0} onClick={() => setPage(current - 1)}>{text('上一页', 'Previous')}</button><span>{current + 1}/{pages} · {text('全部', 'Total')} {state.rows.length}</span><button type="button" className="btn" disabled={busy || current + 1 >= pages} onClick={() => setPage(current + 1)}>{text('下一页', 'Next')}</button></div>}
+      <button type="button" className="btn" disabled={busy} onClick={() => { onAction({ type: 'add' }); setPage(Math.floor(state.rows.length / 20)) }}>＋ {text('添加枚举', 'Add enum row')}</button>
+    </>}
+    <div className="enum-tools"><button type="button" className="btn" disabled={busy || state.original === null && state.rows.length === 0} onClick={() => { onAction({ type: 'clear' }); setPage(0) }}>{text('清空枚举（保存后生效）', 'Clear enum (applies on save)')}</button><button type="button" className="btn" disabled={busy || state.intent === 'preserve'} onClick={() => { onAction({ type: 'restore' }); setPage(0) }}>{text('撤销枚举草稿，保留原文', 'Revert enum draft; keep original')}</button></div>
+    {state.original !== null && <details className="point-enum-original"><summary>{text('本次打开时的原枚举文本（只读）', 'Original enum text at opening (read only)')}</summary><pre>{state.original || text('（空字符串）', '(empty string)')}</pre></details>}
+  </section>
+}

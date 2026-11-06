@@ -966,3 +966,10 @@ table.reg th, .btn { white-space: nowrap; }
 .history-curve-selection ul { padding: 0; list-style: none; }
 .history-curve-selection li { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--border-1); overflow-wrap: anywhere; }
 .history-curve-selection .point-label-name, .history-curve-selection .point-label-detail { white-space: normal; overflow-wrap: anywhere; }
+
+.point-enum-editor .enum-tools, .point-enum-editor .toolbar { flex-wrap: wrap; }
+.point-enum-editor .btn { white-space: normal; }
+.point-enum-original { margin: 12px 0; font-size: 12px; overflow-wrap: anywhere; }
+.point-enum-original pre { max-height: 24vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.point-enum-editor input[aria-invalid="true"] { border-color: var(--error); }
+.point-enum-opaque .warn { color: var(--error); font-size: 12px; line-height: 1.7; }

@@ -1,12 +1,13 @@
 import React, { useId, useRef, useState } from 'react'
 import { isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec'
-import { parsePointSettingsDraft, type PointSettings } from './point-settings'
+import { parsePointSettingsUpdate, type PointSettings, type PointSettingsUpdate } from './point-settings'
+import { createPointEnumDraft, updatePointEnumDraft } from './point-enum-draft'
+import { PointEnumEditor } from './PointEnumEditor'
 export type { PointSettings } from './point-settings'
 
-type Row = { id: number; value: string; label: string }
 export function PointSettingsEditor({ name, address, settings, available, typeGroups, t, onClose, onSave }: {
   name: string; address: number; settings: PointSettings; available: number; typeGroups: { key: string; types: string[] }[]; t: (key: string) => string
-  onClose: () => void; onSave: (value: PointSettings) => Promise<void>
+  onClose: () => void; onSave: (value: PointSettingsUpdate) => Promise<void>
 }) {
   const titleId = useId()
   const [dataType, setDataType] = useState(settings.dataType)
@@ -14,27 +15,18 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
   const [factor, setFactor] = useState(String(settings.factor ?? 1))
   const [offset, setOffset] = useState(String(settings.offset ?? 0))
   const [decimalPlaces, setDecimalPlaces] = useState(settings.decimalPlaces == null ? '' : String(settings.decimalPlaces))
-  const enumJson = settings.enumJson
-  const nextId = useRef(0)
-  const [rows, setRows] = useState<Row[]>(() => {
-    try {
-      const map = enumJson ? JSON.parse(enumJson) : {}
-      if (!map || typeof map !== 'object' || Array.isArray(map)) return []
-      return Object.entries(map).map(([value, label]) => ({ id: nextId.current++, value, label: String(label) }))
-    } catch { return [] }
-  })
+  const [enums, setEnums] = useState(() => createPointEnumDraft(settings.enumJson))
+  const [enumIssueIndex, setEnumIssueIndex] = useState<number | null>(null)
+  const [enumIssueRevision, setEnumIssueRevision] = useState(0)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
-  const update = (id: number, field: 'value' | 'label', value: string) => {
-    setRows(prev => prev.map(row => row.id === id ? { ...row, [field]: value } : row)); setError('')
-  }
   const save = async () => {
     if (lock.current) return
-    let next: PointSettings
-    try { next = parsePointSettingsDraft({ dataType, unit, factor, offset, decimalPlaces, rows }, settings.dataType, available, t) }
-    catch (e) { setError(e instanceof Error ? e.message : t('operationFailed')); return }
-    lock.current = true; setBusy(true); setError('')
+    let next: PointSettingsUpdate
+    try { next = parsePointSettingsUpdate({ dataType, unit, factor, offset, decimalPlaces }, enums, settings.dataType, available, t) }
+    catch (e) { setError(e instanceof Error ? e.message : t('operationFailed')); setEnumIssueIndex(e instanceof Error && 'enumRowIndex' in e && Number.isInteger(e.enumRowIndex) ? e.enumRowIndex as number : null); setEnumIssueRevision(previous => previous + 1); return }
+    lock.current = true; setBusy(true); setError(''); setEnumIssueIndex(null)
     try { await onSave(next); onClose() }
     catch (e: any) { setError(e.message || t('operationFailed')) }
     finally { lock.current = false; setBusy(false) }
@@ -56,16 +48,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
       {factor.trim() && Number(factor) === 0 && !isHexType(dataType) && !isBinType(dataType) && <p className="chart-hint" role="note">{t('pointZeroFactorHint')}</p>}
       <h4 className="point-enum-title">{t('enumConfig')}</h4>
       <p className="enum-hint">{t('enumHint')}</p>
-      <div className="enum-columns"><span>{t('enumValue')}</span><span>{t('enumLabel')}</span><span /></div>
-      <div className="enum-rows">
-        {!rows.length && <p className="enum-empty">{t('enumEmpty')}</p>}
-        {rows.map((row, index) => <div className="enum-row" key={row.id}>
-          <input aria-label={`${t('enumValue')} ${index + 1}`} value={row.value} maxLength={40} placeholder={String(index)} disabled={busy} onChange={e => update(row.id, 'value', e.target.value)} />
-          <input aria-label={`${t('enumLabel')} ${index + 1}`} value={row.label} maxLength={120} placeholder={t('enumLabelPlaceholder')} disabled={busy} onChange={e => update(row.id, 'label', e.target.value)} />
-          <button className="btn" type="button" aria-label={`${t('enumRemove')} ${index + 1}`} disabled={busy} onClick={() => { setRows(prev => prev.filter(r => r.id !== row.id)); setError('') }}>×</button>
-        </div>)}
-      </div>
-      <div className="enum-tools"><button className="btn" type="button" disabled={busy || rows.length >= 200} onClick={() => setRows(prev => [...prev, { id: nextId.current++, value: '', label: '' }])}>＋ {t('enumAdd')}</button><button className="btn" type="button" disabled={busy || !rows.length} onClick={() => { setRows([]); setError('') }}>{t('enumClear')}</button></div>
+      <PointEnumEditor state={enums} busy={busy} issueIndex={enumIssueIndex} issueRevision={enumIssueRevision} english={t('cancel') === 'Cancel'} onAction={action => { setEnums(prev => updatePointEnumDraft(prev, action)); setError(''); setEnumIssueIndex(null) }} />
       {error && <div className="write-msg error" role="alert">{error}</div>}
       <div className="modal-actions"><button className="btn" type="button" disabled={busy} onClick={onClose}>{t('cancel')}</button><button className="btn primary" disabled={busy} type="submit">{t(busy ? 'working' : 'save')}</button></div>
     </form>
