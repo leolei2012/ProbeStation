@@ -11,8 +11,8 @@ let recordingEvent: (payload: any) => void = () => {}
 const recordingDevice = { id: 1, mode: 'master', pollIntervalMs: 1000 }
 const rateChanges: number[] = []
 let factory: (() => McpServer) | undefined, listens = 0, ambiguous = true
-const groups = [1, 2].map(id => ({ id, slaveId: id, functionCode: 3, startAddress: 0, quantity: 2 }))
-const regs = groups.map(g => ({ id: g.id, groupId: g.id, startAddress: 0, functionCode: 3, dataType: 'uint32' }))
+const groups = [1, 2].map(id => ({ id, objectId: 1, slaveId: id, functionCode: 3, startAddress: 0, quantity: 2 }))
+const regs = groups.map(g => ({ id: g.id, groupId: g.id, objectId: 1, startAddress: 0, functionCode: 3, dataType: 'uint32' }))
 let latest: Record<string, any> = {}
 let rows: any[] = []
 let queriedSource: number | undefined
@@ -47,6 +47,13 @@ assert.equal(ambiguity.code, 'REGISTER_AMBIGUOUS'); assert.deepEqual(ambiguity.c
 const explicitSourceRead = await run('read_register', { ...args, slave_id: 2 })
 assert.equal(explicitSourceRead.isError, undefined, 'an explicit source should make an otherwise ambiguous read usable')
 assert.equal(body(explicitSourceRead).register_id, 2); assert.equal(body(explicitSourceRead).value, 10)
+const beforeDiagnose = [cacheReads, queryCalls, rateChanges.length]
+const diagnosis = body(await run('diagnose_points', { device_id: 1 }))
+assert.equal(diagnosis.scope, 'point-table-structure'); assert.equal(diagnosis.summary.errors, 0)
+assert.ok(diagnosis.issues.some((i: any) => i.code === 'IMPORT_MATCH_AMBIGUOUS'))
+assert.deepEqual([cacheReads, queryCalls, rateChanges.length], beforeDiagnose, 'diagnostics only read configured definitions')
+assert.equal((await run('diagnose_points', { device_id: 0 })).isError, true)
+assert.equal(schemas.get('diagnose_points').device_id.safeParse(0).success, false)
 assert.equal(body(await run('read_register', { ...args, register_id: 2 })).value, 10)
 const semanticDuplicate = { ...regs[0], id: 99, factor: 2 }
 regs.push(semanticDuplicate)
@@ -93,7 +100,7 @@ groups.splice(1)
 out = body(await run('query_history')); assert.equal(out.points[0].value, null); assert.equal(out.points[0].compatibility_value, '1'); assert.equal(out.points[0].verification, 'unverified')
 
 // Production MCP argument mapping, with only mocked config/event handlers and no transport.
-groups.push({ id: 2, slaveId: 2, functionCode: 3, startAddress: 0, quantity: 2 })
+groups.push({ id: 2, objectId: 1, slaveId: 2, functionCode: 3, startAddress: 0, quantity: 2 })
 const recArgs = { device_id: 1, interval_ms: 10, duration_ms: 600000 }
 const triggerArgs = { device_id: 1, interval_ms: 10, trigger_area: 'holding-register', trigger_address: 0, operator: '>', threshold: 10, before_ms: 10000, after_ms: 600000 }
 const eventPoint = (slaveId: number | null, rawValue: number) => ({ objectId: 1, area: 'holding-register', address: 0, timestamp: new Date().toISOString(), slaveId, rawValue, quality: 'good', batchId: 'recording-' + slaveId })

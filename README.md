@@ -32,6 +32,12 @@
 
 ---
 
+## 离线点表诊断
+
+用已导出的 JSON 配置备份执行 `npm run diagnose:points -- "备份.json"`，无需启动主应用。检查 dtype 完整字宽、分组/地址边界、引用关系、重复定义、重叠组和已知导入歧义；错误与警告分开，兼容默认覆盖占位行，quantity 元数据不作为字宽。只读报告，不导入、扩组、删点或读取数据库。JSON 输出：`npm run --silent diagnose:points -- --json "备份.json"`。有错误退出码 1，仅警告为 0，输入失败为 2。
+
+新代码还提供只读 `GET /api/monitor_objects/:id/point-diagnostics`、MCP/内置助手 `diagnose_points`，仅读当前配置、不触碰硬件；本轮未部署或重启现有实例。报告不是设备在线/采样质量或 PASS/FAIL 结论，规则与限制见 [点表诊断说明](docs/develop/05-离线点表诊断.md)。
+
 ## 快速开始
 
 ```bash

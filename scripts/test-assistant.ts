@@ -6,7 +6,7 @@ import Fastify from 'fastify'
 import { registerAssistant, assistantTools } from '../packages/api/src/assistant.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'probestation-ai-test-'))
-const device: any = { id: 1, name: '台架', pollIntervalMs: 1000, timeoutMs: 3000 }
+const device: any = { id: 1, mode: 'master', name: '台架', pollIntervalMs: 1000, timeoutMs: 3000 }
 const reg = { id: 10, objectId: 1, groupId: 2, alias: '计数', dataType: 'uint32', functionCode: 3, startAddress: 0, factor: 1, offset: 0 }
 const logs: string[] = []
 let historyCount = 1
@@ -111,6 +111,14 @@ try {
   const noSource = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
   assert.equal(noSource.count, 0); assert.equal(noSource.points[0].compatibilityValue, 65538); assert.equal(noSource.points[0].automaticEligible, false)
   ambiguousAddress = true
+  const beforeDiagnosis = { requests: historyRequests.length, logs: logs.length, interval: device.pollIntervalMs }
+  s = await turn(id, call('diagnose_points', { device_id: 1 }))
+  const pointDiagnosis = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
+  assert.equal(pointDiagnosis.scope, 'point-table-structure'); assert.equal(pointDiagnosis.summary.errors, 0)
+  assert.ok(pointDiagnosis.issues.some((i: any) => i.code === 'IMPORT_MATCH_AMBIGUOUS'))
+  assert.deepEqual({ requests: historyRequests.length, logs: logs.length, interval: device.pollIntervalMs }, beforeDiagnosis)
+  s = await turn(id, call('diagnose_points', { device_id: 3 }))
+  assert.ok(s.entries.at(-2).content.includes('超出当前会话'))
   s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))
   assert.ok(s.entries.at(-2).content.includes('地址不唯一'))
   const selectionError = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))

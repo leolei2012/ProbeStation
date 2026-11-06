@@ -1,3 +1,4 @@
+import { diagnoseDevicePoints } from '../../core/src/point-diagnostics.ts'
 import { selectSourceRegister } from '../../core/src/register-selection.ts'
 import { sourceSample, withRegisterSources } from '../../core/src/sample-source.ts'
 import { decodeHistoricalSample, decodeLatestSample } from '../../core/src/history-integrity.ts'
@@ -198,6 +199,14 @@ export function apply(ctx: Context, config: Config): void {
       title: 'List registers', description: '列出某设备的寄存器定义（id、别名、地址、类型）',
       inputSchema: { device_id: zz.number() },
     }, async (args) => ({ content: [{ type: 'text', text: JSON.stringify(cfg.listRegistersByObject(args.device_id)) }] }))
+
+    server.registerTool('diagnose_points', {
+      title: 'Diagnose point table', description: '只读离线检查当前点表结构：dtype宽度/分组/地址边界、引用错误、重复定义、重叠组和语义导入歧义。区分错误和警告，覆盖占位行兼容；不改配置、不连接/轮询硬件，不代表设备在线或测试通过。',
+      inputSchema: { device_id: zz.number().int().min(1).max(Number.MAX_SAFE_INTEGER) },
+    }, async (args) => {
+      try { return { content: [{ type: 'text', text: JSON.stringify(diagnoseDevicePoints(cfg, args.device_id)) }] } }
+      catch (error: any) { return { content: [{ type: 'text', text: error.statusCode === 400 || error.statusCode === 404 ? error.message : '点表诊断失败' }], isError: true } }
+    })
 
     server.registerTool('set_device_active', {
       title: 'Start/stop device', description: '主站：active=true 连接并轮询，false 停止；从站：true 启动监听，false 停止监听。停止再启动从站保留本次程序运行期间的内存值。',

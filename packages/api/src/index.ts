@@ -15,6 +15,7 @@ import { registerCurve } from './curve.ts'
 import { registerConfigBackup } from './config-backup.ts'
 import { registerSerialPorts } from './serial-ports.ts'
 import { registerHistoryExport } from './history-export.ts'
+import { registerPointDiagnostics } from './point-diagnostics.ts'
 
 /** 把 exceljs 单元格转成字符串（处理公式/数字/文本）。 */
 function xlsxCellText(cell: any): string {
@@ -94,6 +95,7 @@ export function apply(ctx: Context, config: Config): void {
     registerSerialPorts(fastify)
     registerAssistant(fastify, { cfg, store, poller }, dataDir)
     registerCurve(fastify, cfg, store)
+    registerPointDiagnostics(fastify, cfg)
     registerConfigBackup(fastify, cfg)
     registerSlave(fastify, ctx.get('slave', false))
 

@@ -103,3 +103,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 read_register/query_history 可选 `slave_id`（0–255 整数）或 `register_id`（从 list_registers/candidates 发现的正安全整数）。两者同时给出必须与当前点位所属设备、area、address 和配置目标从站一致。只有一个匹配时沿用旧调用方式；同从站同地址存在多个语义定义时需要 register_id。不匹配不降级到其他来源，非法输入/无匹配/歧义在读缓存或历史前返回 isError=true，text 为 JSON：error、code（REGISTER_SELECTOR_INVALID/REGISTER_NOT_FOUND/REGISTER_AMBIGUOUS）、candidates（仅当前设备该地址的 register_id/group_id/slave_id/alias/data_type）。
 
 选择只决定当前点位与期望来源，不赋值给旧 NULL 历史，也不解除质量/完整批次要求；指定来源仍不能把旧未归属数据变成已验证值。query_history 返回所选 register_id/slave_id/group_id，逐行 slave_id 仍是原始来源。MCP 多字原始历史继续不自动合并。本轮不增加 write_register 的来源参数，不执行写入或任何设备操作。示例与兼容边界见 [只读选点说明](../../docs/develop/04-只读点位选择.md)。
+
+## 只读点表诊断（2026-11-06）
+
+`diagnose_points {device_id}` 仅读 getObject/listGroups/listRegistersByObject，用共享纯函数报告点宽/范围/引用错误，以及重复、覆盖、重叠与语义导入歧义警告。返回 scope=point-table-structure、ok、complete、summary 和 issues；错误代码/位置/相关点位 ID 可用于人工定位，不返回连接凭据或完整配置。不会更新配置、查历史/缓存、连接设备或改变采样周期；不能把 ok 当作在线、采样有效或测试通过。默认覆盖 int16 占位行只计数，跨从站同址不作物理冲突，但旧语义导入缺源选择仍可能警告。完整规则和离线 CLI 见 [诊断说明](../../docs/develop/05-离线点表诊断.md)。

@@ -1,3 +1,4 @@
+import { diagnoseDevicePoints } from '../../core/src/point-diagnostics.ts'
 import { selectSourceRegister } from '../../core/src/register-selection.ts'
 import { decodeLatestSample } from '../../core/src/history-integrity.ts'
 import { sourceSample, withRegisterSources } from '../../core/src/sample-source.ts'
@@ -41,6 +42,7 @@ export const assistantTools = [
   tool('list_points', '查看设备分组和寄存器定义，含类型和语义配置。', { device_id: properties.device_id, offset: properties.offset }, ['device_id']),
   tool('get_snapshot', '最近采集缓存，非即时硬件读取；原始解码值及各字时间/质量，须判断是否过期。返回全部点位。', { device_id: properties.device_id, offset: properties.offset }, ['device_id']),
   tool('query_history', '同一时刻合并多字，原始解码值，不应用 factor/offset。可选 slave_id/register_id 精确选点；歧义返回 candidates，按列表重选，不能猜测。只有已验证值进入统计。', properties, ['device_id', 'area', 'address', 'start', 'end']),
+  tool('diagnose_points', '只读离线点表结构诊断：dtype字宽越界、引用不一致、重复/覆盖定义和导入歧义，区分错误/警告，不改配置、不访问设备，不表示在线或测试通过。', { device_id: properties.device_id }),
   tool('get_diagnostics', '设备通信统计及缓存中的全部报文。', { device_id: properties.device_id }),
   tool('get_history_stats', '设备历史数量、覆盖时间与保留策略。', { device_id: properties.device_id }),
   tool('propose_config_change', '只创建待人工确认的单字段修改，不执行。device支持name/pollIntervalMs/timeoutMs；group支持name/isActive；register支持alias/unit/factor/offset。不能写硬件、删除、升级。', {
@@ -116,6 +118,7 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
     const offset = a.offset === undefined ? 0 : integer(a.offset, 0, Number.MAX_SAFE_INTEGER)
     if (name === 'list_points') { const all = sourceRegisters(d.id); return { groups: cfg.listGroups(d.id), registers: all.slice(offset), total: all.length, offset } }
     if (name === 'get_snapshot') { const all = sourceRegisters(d.id); return { readAt: new Date().toISOString(), device: d, points: snapshot(all.slice(offset), store.getLatestByObjectAll(d.id)), total: all.length, offset } }
+    if (name === 'diagnose_points') return diagnoseDevicePoints(cfg, d.id)
     if (name === 'get_diagnostics') return { stats: poller.getDeviceDiagnostics(d.id), frames: poller.getDeviceFrames(d.id, Number.MAX_SAFE_INTEGER) }
     if (name === 'get_history_stats') return store.statsByObject(d.id)
     if (name === 'query_history') {
@@ -236,7 +239,7 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
         }
         for (const call of m.tool_calls) {
           controller.signal.throwIfAborted()
-          s.partial = ''; s.activity = '正在查询：' + ({ list_devices: '设备列表', list_points: '寄存器定义', get_snapshot: '当前数据', query_history: '历史曲线', get_diagnostics: '通信诊断', get_history_stats: '历史覆盖范围', propose_config_change: '准备配置提案' } as Record<string, string>)[call.function.name]
+          s.partial = ''; s.activity = '正在查询：' + ({ list_devices: '设备列表', list_points: '寄存器定义', get_snapshot: '当前数据', query_history: '历史曲线', diagnose_points: '点表诊断', get_diagnostics: '通信诊断', get_history_stats: '历史覆盖范围', propose_config_change: '准备配置提案' } as Record<string, string>)[call.function.name]
           let result: any
           try { if (config.mode === 'read' && call.function.name === 'propose_config_change') fail('当前为只读问答模式，不能创建修改提案'); result = await execute(s, call.function.name, JSON.parse(call.function.arguments)) }
           catch (e: any) { result = { error: e.message } }

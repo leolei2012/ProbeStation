@@ -1,3 +1,4 @@
+import { registerPointDiagnostics } from '../packages/api/src/point-diagnostics.ts'
 /** Isolated read-only test edition. Deliberately imports no CLI bootstrap, drivers,
  * poller, slave, MCP server, assistant/provider or real database paths. */
 import Fastify from 'fastify'
@@ -96,6 +97,7 @@ export async function createOfflineTestApp() {
   app.get('/api/data/stats', () => store.statsByObject(device.id))
   app.get('/api/monitor_objects/:id/stats', () => store.statsByObject(device.id))
   registerCurve(app, cfg, store)
+  registerPointDiagnostics(app, cfg)
   // Only metadata enumeration is enabled; no serial port is ever opened by this route.
   registerSerialPorts(app)
   registerHistoryExport(app, sink)

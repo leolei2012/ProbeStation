@@ -64,6 +64,12 @@ npm run start
 
 `read_register` 读取采集缓存，并不主动发一次新的 Modbus 读取。报告值时同时报告 timestamp、quality、连接/暂停状态；null 或旧时间不能当作当前有效读数。可结合 `get_device_health`、`get_raw_frames` 诊断。多从站同设备/area 重复地址时，未精确选择会返回结构化 candidates；按用户已明确的来源传 slave_id，或从候选/list_registers 发现后传 register_id。同从站重复语义定义也需 register_id。不得为了查询成功任选第一个候选；所选 ID、从站、设备、area/address 必须一致，旧 NULL 来源不会因显式选择变为可信。
 
+### 离线点表诊断（2026-11-06）
+
+`diagnose_points {device_id}` 是只读结构检查，不连接/轮询设备、不查询历史或改变采样周期。报告 errors/warnings、位置和相关点位 ID；先区分确定错误与可能有意的重复/覆盖定义，不因警告自动扩组/删点或改配置。ok 仅表示本轮结构规则没有错误，不表示联机或 PASS/FAIL。默认被多字覆盖的 int16 占位行是兼容行为；quantity 元数据不决定字宽。同址不同从站不作物理冲突，但无来源语义导入仍可能警告。
+
+不运行服务时可直接对用户指定 JSON 备份执行 `npm run diagnose:points -- "备份.json"`；只读，不导入或恢复配置，不打开配置/历史数据库。详细范围见仓库 docs/develop/05-离线点表诊断.md。
+
 ## 3. 配置和控制
 
 - 先检查设备 `mode`：`master` 主动读取外部设备，`slave` 在本机监听外部主站。`create_device` / `update_device` 支持 mode 和 transport；省略 mode 创建主站。切换角色会释放旧连接或监听，不能只把远端 IP 原样用于本地监听。
