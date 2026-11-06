@@ -15,6 +15,7 @@
     "preview:picker": "tsx scripts/preview-register-picker.ts",
     "preview:settings": "tsx scripts/preview-register-picker.ts --settings",
     "preview:comparison": "tsx scripts/preview-register-picker.ts --comparison",
+    "preview:diagnostics": "tsx scripts/preview-register-picker.ts --diagnostics",
     "diagnose:points": "tsx scripts/diagnose-points.ts",
     "test:edition": "npm run build:web && tsx scripts/offline-test-app.ts",
     "typecheck:web": "tsc -p tsconfig.web.json",

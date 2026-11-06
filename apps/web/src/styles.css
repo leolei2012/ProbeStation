@@ -909,3 +909,17 @@ table.reg th, .btn { white-space: nowrap; }
 .history-comparison .history-table-scroll { max-height: 320px; }
 .history-comparison-table td > small { display: block; margin-top: 4px; font-size: 10px; color: var(--text-3); white-space: nowrap; }
 .history-comparison-marker { pointer-events: none; }
+
+.device-view > .tab-bar { overflow-x: auto; }
+.point-diagnostic-summary { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.point-diagnostics .toolbar { align-items: center; }
+.point-diagnostic-search { flex: 1; min-width: 220px; }
+.point-diagnostic-search input { width: 100%; box-sizing: border-box; }
+.point-diagnostic-issues { padding-left: 24px; }
+.point-diagnostic-issues > li { margin: 14px 0; padding: 12px; border: 1px solid var(--border-2); border-radius: 8px; overflow-wrap: anywhere; }
+.point-diagnostic-issues p { white-space: pre-wrap; margin: 8px 0; }
+.point-diagnostic-related { margin-top: 10px; }
+.point-diagnostic-related summary { cursor: pointer; }
+.point-diagnostic-related li { margin: 8px 0; }
+.point-diagnostic-related li > small { display: block; color: var(--text-3); }
+.point-diagnostic-related input { max-width: 100%; box-sizing: border-box; }

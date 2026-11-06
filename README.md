@@ -56,6 +56,8 @@
 
 新代码还提供只读 `GET /api/monitor_objects/:id/point-diagnostics`、MCP/内置助手 `diagnose_points`，仅读当前配置、不触碰硬件；本轮未部署或重启现有实例。报告不是设备在线/采样质量或 PASS/FAIL 结论，规则与限制见 [点表诊断说明](docs/develop/05-离线点表诊断.md)。
 
+设备页新增“点表检查”：按错误/警告及关键词筛选结构问题，展开关联点位按来源或精确ID定位，分页查看并下载完整诊断JSON。失败/超时可重试，不自动修复配置；界面配置变化会使旧面板失效。`npm run preview:diagnostics` 可生成纯模拟手测页，流程与未验收范围见[检查页说明](docs/develop/23-点表检查与诊断报告.md)。运行实例未更新。
+
 ## MBP 多窗口导入
 
 新导入按原始 Data/Window 索引保留点位归属，名称或地址相同也不会全部挂到首组；事务失败回滚，已有配置不覆盖。只影响后续导入，旧错配配置不自动迁移。MBP默认从站1、旧INI地址换算及原始16位类型约定仍保留并有提示，范围见 [导入说明](docs/develop/06-MBP多窗口归组修复.md)。本轮未更新运行中的服务。
@@ -124,7 +126,7 @@ TypeScript · Cordis 4（插件运行时）· schemastery（配置校验）· js
 ## 冒烟测试
 
 ```bash
-npm run check          # 前端及作用域服务类型检查 + 构建 + 48 组无硬件回归测试
+npm run check          # 前端及作用域服务类型检查 + 构建 + 49 组无硬件回归测试
 npm run typecheck:web  # 单独检查前端及其引用模块的类型
 npm run typecheck:services # 配置、历史存储和新增接口的类型检查
 npm test               # 纯函数、模拟提供商和临时数据库测试白名单

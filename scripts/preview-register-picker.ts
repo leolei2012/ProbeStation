@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url'
 
 // Static manual preview only. No app/config/store imports, sockets or database paths.
 const args = process.argv.slice(2)
-if (args.length && (args.length !== 1 || !['--settings', '--comparison'].includes(args[0]))) throw new Error('只支持无参数、--settings 或 --comparison；不会读取配置或数据库路径。')
-const kind = args[0] === '--comparison' ? 'history-comparison' : args.length ? 'point-settings' : 'register-picker'
-const title = kind === 'history-comparison' ? '历史两点对比' : kind === 'point-settings' ? '点位设置' : '选点'
+if (args.length && (args.length !== 1 || !['--settings', '--comparison', '--diagnostics'].includes(args[0]))) throw new Error('只支持无参数、--settings、--comparison 或 --diagnostics；不会读取配置或数据库路径。')
+const kind = args[0] === '--diagnostics' ? 'point-diagnostics' : args[0] === '--comparison' ? 'history-comparison' : args.length ? 'point-settings' : 'register-picker'
+const title = kind === 'point-diagnostics' ? '点表检查' : kind === 'history-comparison' ? '历史两点对比' : kind === 'point-settings' ? '点位设置' : '选点'
 const root = fileURLToPath(new URL('../', import.meta.url)), output = resolve(root, `output/playwright/${kind}-preview.html`)
 const marker = `data-probestation-preview="${kind}"`
 try {
