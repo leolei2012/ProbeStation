@@ -8,7 +8,7 @@ export const inject = ['config', 'modbus', 'store']
 
 export interface RegisterGroup { id: number; functionCode: number; startAddress: number; quantity: number; slaveId?: number }
 export interface Device { id: number; host: string; port: number; groups: RegisterGroup[] }
-type ReadWord = { address: number; rawValue: number; timestamp: string; batchId: string }
+type ReadWord = { address: number; rawValue: number; timestamp: string; batchId: string; slaveId: number }
 
 export interface Config { pollIntervalMs: number; connectRetryMs: number; watchdogTimeoutMs: number; autoResetFailThreshold: number; autoResetCooldownMs: number }
 export const Config: z<Config> = z.object({
@@ -367,7 +367,7 @@ class PollingEngine {
       const part = await single(chunk.start, chunk.quantity)
       if (part.length !== chunk.quantity) throw new Error('Incomplete Modbus response')
       const timestamp = new Date().toISOString(), batchId = randomUUID()
-      out.push(...part.map((rawValue, index) => ({ address: chunk.start + index, rawValue: Number(rawValue), timestamp, batchId })))
+      out.push(...part.map((rawValue, index) => ({ address: chunk.start + index, rawValue: Number(rawValue), timestamp, batchId, slaveId })))
     }
     return out
   }

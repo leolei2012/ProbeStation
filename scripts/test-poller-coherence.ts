@@ -64,7 +64,7 @@ for (const fc of [3, 4]) for (const type of ['uint32', 'uint32-LE', 'uint64', 'u
   const context: any = {
     on: (name: string, fn: any) => { if (name === 'poller/result') handler = fn },
     provide: (name: string, service: any) => { if (name === 'poller') once = service },
-    config: { listRules: () => [{ id: 1, registerId: overlapRegister.id, operator: '>', threshold: 65535 }], listRegistersByObject: () => [overlapRegister], log: () => {} },
+    config: { listRules: () => [{ id: 1, registerId: overlapRegister.id, operator: '>', threshold: 65535 }], listRegistersByObject: () => [overlapRegister], getGroup: (id: number) => ({ ...group, id, slaveId: 1 }), log: () => {} },
     store: { write: () => {}, flush: async () => {} },
     modbus: { createDriver: () => ({ connect: async () => {}, disconnect: async () => { disconnects++ }, readHoldingRegisters: read, readInputRegisters: read }) },
     emit: (name: string, event: any) => {

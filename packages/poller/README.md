@@ -37,7 +37,8 @@ interface Poller {
   连接**持久复用**（`Map<objectId, driver>`），失败时丢弃 driver 下次重连；
   用 config 的 register id（`startAddress → id` 映射，缺失时回退到地址）。
 - 每次轮询结果：`ctx.emit('poller/result', { objectId, points })` + `ctx.store.write(points)`。
-- 每个协议响应内的字共享时间戳与独立 UUID `batchId`。FC03/FC04 超过 125 字时，拆读边界避开已配置的有效多字点位，避免把不同响应的字拼成一个数值。此身份目前保留在实时事件和热缓存，历史冷库存储尚未扩展。
+- 每个协议响应内的字共享时间戳与独立 UUID `batchId`。FC03/FC04 超过 125 字时，拆读边界避开已配置的有效多字点位，避免把不同响应的字拼成一个数值。batchId 已保留到事件、热缓存和冷库，但本身不能证明从站来源。
+- `pollOnce` 和轮询事件中的每个字新增 `slaveId`，记录传给该次 read 方法的目标从站号（沿用原有 group.slaveId ?? 1），不增加读请求、不改通讯参数。它不是对物理设备身份的额外认证。本阶段仅事件携带此字段；store 的热缓存和冷库尚不保存 slaveId，前端/历史/助手来源隔离待后续改造，不能因新增事件字段声称全链路已修复。
 - **按组捕获故障**：连接失败对该设备所有到期组标错，单组读取异常只标该组；错误消息已归一化
   （`Timeout` / `Illegal Data Address` / `connect ECONNREFUSED ...`）。
 - 故障/恢复事件：`poller/group-error`（`{ objectId, groupId, error }`，值变化才发）与
