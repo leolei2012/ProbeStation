@@ -1,3 +1,4 @@
+import { LatestConfigRead, readDeviceGroups, groupsForSelection } from './config-read'
 import { PointBookImportResult, type PointBookResult } from './PointBookImportResult'
 import { InvalidPointBookReportError, pointBookReportKind, uploadPointBook as sendPointBook, type PointBookReport } from './pointbook-result'
 import { PointLabel, buildPointLabels, type PointLabelData } from './PointLabel'
@@ -410,7 +411,8 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState<'general' | 'ai'>('general')
   const [aiConfigRevision, setAiConfigRevision] = useState(0)
   const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 768 || localStorage.getItem('ps-collapsed') === '1')
-  const [groups, setGroups] = useState<DeviceGroup[]>([])
+  const [groupSnapshot, setGroupSnapshot] = useState<{ objectId: number; groups: DeviceGroup[] } | null>(null)
+  const groups = useMemo(() => groupsForSelection(groupSnapshot, selectedId), [groupSnapshot, selectedId])
   const [fallbackStatus, setFallbackStatus] = useState<Record<number, boolean>>({})
   const [latest, setLatest] = useState<Record<string, LatestValue>>({})
   const [groupErrors, setGroupErrors] = useState<Record<number, string>>({})
@@ -423,7 +425,14 @@ export default function App() {
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const operation = useOperation(t)
-  const [loadError, setLoadError] = useState(false)
+  const [deviceLoadError, setDeviceLoadError] = useState(false)
+  const [groupLoadError, setGroupLoadError] = useState(false)
+  const loadError = deviceLoadError || groupLoadError
+  const deviceRead = useRef<LatestConfigRead>()
+  const groupRead = useRef<LatestConfigRead>()
+  if (!deviceRead.current) deviceRead.current = new LatestConfigRead()
+  if (!groupRead.current) groupRead.current = new LatestConfigRead()
+  useEffect(() => () => { deviceRead.current?.cancel(); groupRead.current?.cancel() }, [])
   const selectedIdRef = useRef<number | null>(selectedId)
   useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
 
@@ -442,27 +451,29 @@ export default function App() {
   useEffect(() => { localStorage.setItem('ps-collapsed', collapsed ? '1' : '0') }, [collapsed])
 
   const refreshDevices = useCallback(() => {
-    api.get('/api/monitor_objects').then((objs: any[]) => {
-      setDevices(objs)
-      setLoadError(false)
+    void deviceRead.current!.run(async signal => {
+      const objs: Device[] = await request('/api/monitor_objects', { signal })
+      if (!Array.isArray(objs)) throw new Error('Invalid devices response')
       const map: Record<number, boolean> = {}
-      for (const o of objs) if (o && typeof o.id === 'number') map[o.id] = o.connected === true
-      setDeviceConnected(map)
-    }).catch(() => setLoadError(true))
+      for (const object of objs) {
+        if (!object || !Number.isSafeInteger(object.id) || object.id < 1) throw new Error('Invalid device identity')
+        map[object.id] = object.connected === true
+      }
+      return { objs, map }
+    }, ({ objs, map }) => { setDevices(objs); setDeviceConnected(map); setDeviceLoadError(false) }, () => setDeviceLoadError(true))
   }, [])
   const refreshRegisters = useCallback((id: number) => {
-    api.get('/api/monitor_objects/' + id + '/groups').then(async (gs: Array<{ id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number }>) => {
-      const out: DeviceGroup[] = []
-      for (const g of gs) {
-        const regs: Register[] = await api.get('/api/groups/' + g.id + '/registers')
-        out.push({ id: g.id, name: g.name, slaveId: g.slaveId, functionCode: g.functionCode, startAddress: g.startAddress, quantity: g.quantity, isActive: g.isActive, registers: regs })
-      }
-      if (selectedIdRef.current === id) { setGroups(out); setLoadError(false) }
-    }).catch(() => { if (selectedIdRef.current === id) setLoadError(true) })
+    void groupRead.current!.run(signal => readDeviceGroups<Register>(id, signal, (url, requestSignal) => request(url, { signal: requestSignal })),
+      out => { setGroupSnapshot({ objectId: id, groups: out }); setGroupLoadError(false) },
+      () => setGroupLoadError(true), () => selectedIdRef.current === id)
   }, [])
 
   useEffect(() => { refreshDevices() }, [refreshDevices])
-  useEffect(() => { setGroups([]); if (selectedId != null) refreshRegisters(selectedId) }, [selectedId, refreshRegisters])
+  useEffect(() => {
+    setGroupSnapshot(null); setGroupLoadError(false)
+    if (selectedId != null) refreshRegisters(selectedId)
+    return () => groupRead.current?.cancel()
+  }, [selectedId, refreshRegisters])
   useEffect(() => {
     const HEARTBEAT_MS = 10_000
     const STALE_MS = 30_000
