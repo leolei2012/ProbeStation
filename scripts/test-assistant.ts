@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import Fastify from 'fastify'
-import { registerAssistant } from '../packages/api/src/assistant.ts'
+import { registerAssistant, assistantTools } from '../packages/api/src/assistant.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'probestation-ai-test-'))
 const device: any = { id: 1, name: '台架', pollIntervalMs: 1000, timeoutMs: 3000 }
@@ -14,6 +14,7 @@ let historyBatchMode: 'legacy' | 'verified' | 'mixed' = 'legacy'
 let historySlaveId: number | null = 1
 let snapshotMode: 'verified' | 'legacy' | 'unknown' | 'other' = 'verified'
 let ambiguousAddress = false
+const historyRequests: Array<number | undefined> = []
 const cfg = {
   getObject: (id: number) => id === 1 ? device : id === 3 ? { id: 3, name: '其他设备' } : undefined,
   listObjects: () => [device, { id: 3, name: '其他设备' }],
@@ -24,7 +25,7 @@ const cfg = {
 }
 const store = {
   getLatestByObjectAll: () => Object.fromEntries([0, 1].map(address => ['holding-register:' + address, { rawValue: address ? 2 : 1, timestamp: '2026-10-06 10:00:00', slaveId: snapshotMode === 'unknown' ? null : snapshotMode === 'other' ? 2 : 1, quality: 'good', batchId: snapshotMode === 'legacy' ? null : 'snapshot' }])),
-  queryWithOffset: async (_id: number, address: number) => Array.from({ length: historyCount }, (_, i) => ({ ts: '2026-10-06 10:00:00', timestampMs: 1791242400000 + i, rawValue: address === 0 ? 1 : 2, slaveId: historySlaveId, quality: 'good', batchId: historyBatchMode === 'legacy' ? null : `response-${i}-${historyBatchMode === 'mixed' ? address : 'same'}` })),
+  queryWithOffset: async (_id: number, address: number, _start: string, _end: string, _area: string, _limit: number, _offset: number, slaveId?: number) => { historyRequests.push(slaveId); return Array.from({ length: historyCount }, (_, i) => ({ ts: '2026-10-06 10:00:00', timestampMs: 1791242400000 + i, rawValue: address === 0 ? historySlaveId === 2 ? 2 : 1 : 2, slaveId: historySlaveId, quality: 'good', batchId: historyBatchMode === 'legacy' ? null : `response-${i}-${historyBatchMode === 'mixed' ? address : 'same'}` })) },
   statsByObject: async () => ({ totalRows: 2 }),
 }
 let responses: any[] = []
@@ -112,6 +113,29 @@ try {
   ambiguousAddress = true
   s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))
   assert.ok(s.entries.at(-2).content.includes('地址不唯一'))
+  const selectionError = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
+  assert.equal(selectionError.code, 'REGISTER_AMBIGUOUS'); assert.deepEqual(selectionError.candidates.map((p: any) => [p.register_id, p.slave_id]), [[10, 1], [11, 2]])
+  const selectedHistoryArgs = { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }
+  historySlaveId = 2
+  for (const selector of [{ slave_id: 2 }, { register_id: 11 }, { slave_id: 2, register_id: 11 }]) {
+    const before = historyRequests.length
+    s = await turn(id, call('query_history', { ...selectedHistoryArgs, ...selector }))
+    const selected = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
+    assert.equal(selected.register.id, 11); assert.equal(selected.register.slaveId, 2); assert.equal(selected.points[0].value, 131074)
+    assert.ok(historyRequests.slice(before).every(source => source === 2)); assert.equal(s.sources.at(-1).registerId, 11)
+  }
+  const beforeInvalid = historyRequests.length, beforeSources = s.sources.length
+  for (const selector of [{ slave_id: 1, register_id: 11 }, { register_id: 999 }, { slave_id: '2' }, { register_id: null }, { slave_id: 256 }]) {
+    s = await turn(id, call('query_history', { ...selectedHistoryArgs, ...selector }))
+    assert.ok(JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n')).error)
+  }
+  assert.equal(historyRequests.length, beforeInvalid); assert.equal(s.sources.length, beforeSources)
+  historySlaveId = null
+  s = await turn(id, call('query_history', { ...selectedHistoryArgs, slave_id: 2 }))
+  const unknownSource = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
+  assert.equal(unknownSource.count, 0); assert.equal(unknownSource.points[0].value, null); assert.equal(unknownSource.points[0].slaveId, null)
+  const querySchema = assistantTools.find(t => t.function.name === 'query_history')!.function.parameters
+  assert.equal(querySchema.properties.slave_id.maximum, 255); assert.ok(!querySchema.required.includes('register_id'))
   ambiguousAddress = false; historySlaveId = 1
   historyBatchMode = 'mixed'
   s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))

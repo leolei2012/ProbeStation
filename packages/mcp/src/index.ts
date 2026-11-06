@@ -1,3 +1,4 @@
+import { selectSourceRegister } from '../../core/src/register-selection.ts'
 import { sourceSample, withRegisterSources } from '../../core/src/sample-source.ts'
 import { decodeHistoricalSample, decodeLatestSample } from '../../core/src/history-integrity.ts'
 import type { Context } from 'cordis'
@@ -51,10 +52,8 @@ export function apply(ctx: Context, config: Config): void {
     cfg.listRegistersByObject(deviceId).find((r: any) => r.startAddress === address && areaForFunction(r.functionCode) === area)
 
   const sourceRegisters = (id: number) => withRegisterSources<any>(cfg.listRegistersByObject(id), cfg.listGroups(id), cfg.getObject(id))
-  const findSourceRegister = (id: number, area: ModbusArea, address: number) => {
-    const matches = sourceRegisters(id).filter(r => r.startAddress === address && areaForFunction(r.functionCode) === area)
-    return matches.length === 1 ? matches[0] : undefined
-  }
+  const findSourceRegister = (id: number, area: ModbusArea, address: number, slaveId?: number, registerId?: number) =>
+    selectSourceRegister(sourceRegisters(id), { area, address, slaveId, registerId })
 
   // 每个会话一个独立 McpServer：Protocol 只能连一个 transport，多会话/多连接必须各自实例。
   function registerTools(server: McpServer): void {
@@ -236,11 +235,12 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('read_register', {
-      title: 'Read register', description: '按 Modbus 地址读某设备单个寄存器的实时值（address 即寄存器起始地址，无需数据库 id）',
-      inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number() },
+      title: 'Read register', description: '按设备/area/协议地址读取缓存，不主动请求硬件。可选 slave_id 或 register_id 精确选点；两者同时给出必须一致。省略时仅唯一匹配可读，歧义返回 candidates；同从站重复定义需 register_id。',
+      inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number(), slave_id: zz.number().int().min(0).max(255).optional(), register_id: zz.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional() },
     }, async (args) => {
-      const reg = findSourceRegister(args.device_id, args.area, args.address)
-      if (!reg) return { content: [{ type: 'text', text: 'register missing or source ambiguous at address ' + args.address }], isError: true }
+      const selection = findSourceRegister(args.device_id, args.area, args.address, args.slave_id, args.register_id)
+      if ('error' in selection) return { content: [{ type: 'text', text: JSON.stringify(selection) }], isError: true }
+      const reg = selection.register
       const latest = store.getLatestByObject(args.device_id, args.area, reg.slaveId)
       const assessment = decodeLatestSample(reg, Array.from({ length: registerWidth(reg.dataType) }, (_, i) => ({ ...latest[reg.startAddress + i], address: reg.startAddress + i })))
       const decoded = assessment.automaticEligible ? assessment.value : null
@@ -302,11 +302,12 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('query_history', {
-      title: 'Query history', description: '查某寄存器的时间范围历史时序（按 area+address 定位）。返回每条含原始 16 位字 raw_value 与语义值 value（×factor+offset 或枚举 label）；limit 可选（默认 2000，上限 200000），分页用 offset 前移',
-      inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number(), start: zz.string(), end: zz.string(), limit: zz.number().optional(), offset: zz.number().optional() },
+      title: 'Query history', description: '按设备/area/协议地址查原始历史，可选 slave_id/register_id 精确选点，冲突不回退，歧义返回 candidates。返回原始16位字及仅已验证的单字语义 value；多字仍不自动合并。limit 默认2000/上限200000，offset 分页，NULL来源不补齐。',
+      inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number(), slave_id: zz.number().int().min(0).max(255).optional(), register_id: zz.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(), start: zz.string(), end: zz.string(), limit: zz.number().optional(), offset: zz.number().optional() },
     }, async (args) => {
-      const reg = findSourceRegister(args.device_id, args.area, args.address)
-      if (!reg) return { content: [{ type: 'text', text: 'register missing or source ambiguous at address ' + args.address }], isError: true }
+      const selection = findSourceRegister(args.device_id, args.area, args.address, args.slave_id, args.register_id)
+      if ('error' in selection) return { content: [{ type: 'text', text: JSON.stringify(selection) }], isError: true }
+      const reg = selection.register
       const limit = args.limit != null ? Math.max(1, Math.min(200000, Math.trunc(args.limit))) : 2000
       const offset = args.offset != null ? Math.max(0, Math.trunc(args.offset)) : 0
       // 单地址精确查询（走 (object_id, ts) 索引 + area/address 过滤），并支持 offset 分页，超大范围也能翻页取全。
@@ -327,7 +328,7 @@ export function apply(ctx: Context, config: Config): void {
         }
         return { ts: p.ts, raw_value: p.rawValue, value, unit, label, quality: p.quality, batch_id: p.batchId ?? null, slave_id: p.slaveId ?? null, verification: assessment.verification, automatic_eligible: assessment.automaticEligible, compatibility_value: assessment.verification === 'unverified' ? String(assessment.value) : null, data_type: reg.dataType ?? 'int16', register_width: width, factor: sem.factor, offset: sem.offset }
       })
-      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, alias: reg.alias, area: args.area, address: reg.startAddress, register_width: width, count: points.length, offset, warning: 'Unverified compatibility values are view-only; never automatic PASS/FAIL evidence. Multiword values are unavailable in this raw-word endpoint.', points: out }) }] }
+      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, slave_id: reg.slaveId ?? null, group_id: reg.groupId ?? null, alias: reg.alias, area: args.area, address: reg.startAddress, register_width: width, count: points.length, offset, warning: 'Unverified compatibility values are view-only; never automatic PASS/FAIL evidence. Multiword values are unavailable in this raw-word endpoint.', points: out }) }] }
     })
 
     server.registerTool('write_register', {

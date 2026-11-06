@@ -31,10 +31,10 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `set_poll_interval` | `device_id, poll_interval_ms` | 仅主站，设扫描间隔（毫秒，≥1 整数） |
 | `set_data_retention` | `retention_seconds, device_id?` | 设历史保留（秒，0=永久；缺省 device_id 设全局，否则设该设备覆盖） |
 | `get_data_retention` | `device_id?` | 查当前生效保留时长（设备覆盖优先于全局） |
-| `read_register` | `device_id, area, address` | 按数据区和协议地址读取缓存快照，不主动请求新值 |
+| `read_register` | `device_id, area, address, slave_id?, register_id?` | 按数据区和协议地址读取缓存快照，不主动请求新值 |
 | `write_register` | `device_id, address, value, area?, method?` | 工程值逆变换编码；主站写真实设备 holding/coil，从站四区本地内存均可设置 |
 | `get_device_snapshot` | `device_id` | 读某设备全部寄存器快照（含别名/地址/类型/时间戳/质量） |
-| `query_history` | `device_id, area, address, start, end, limit?, offset?` | 查单地址历史时序 |
+| `query_history` | `device_id, area, address, start, end, slave_id?, register_id?, limit?, offset?` | 查单地址历史时序 |
 | `export_history` | `device_id, start, end, format?, register_ids?, tz_offset_min?` | CSV/XLSX，返回文件 base64；中国展示时区 +480 分钟 |
 | `delete_history` | `device_id, start, end, dry_run?` | 默认预览行数，false 删除指定设备和时间范围；实时缓存和配置保留 |
 | `list_alarm_rules` | `device_id?` | 查询点位告警 |
@@ -83,7 +83,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 
 ## 多从站只读边界（2026-11-06）
 
-`read_register` / `query_history` 仍按设备+area+address 定位；若当前有多个匹配点位会返回缺失/来源歧义错误，不再选择第一项。`get_device_snapshot` 按每个点位当前目标从站取缓存，返回 slave_id、verification、automatic_eligible。缓存多字还需同一有效采样时间、同批和质量有效才能给语义值。query_history 按目标来源读取并保留 NULL 原始来源；旧兼容值不能自动评估，歧义为未知，多字原始历史仍不进行合并解码。只读 handler 通过 mock 注册器测试，未启动真实 MCP 传输或模型。
+`read_register` / `query_history` 按设备+area+address 定位，新增可选 slave_id/register_id；只接受唯一且一致的匹配，未指明而存在歧义时返回候选，不选择第一项。`get_device_snapshot` 按每个点位当前目标从站取缓存，返回 slave_id、verification、automatic_eligible。缓存多字还需同一有效采样时间、同批和质量有效才能给语义值。query_history 按目标来源读取并保留 NULL 原始来源；旧兼容值不能自动评估，歧义为未知，多字原始历史仍不进行合并解码。只读 handler 通过 mock 注册器测试，未启动真实 MCP 传输或模型。
 
 录制/触发录制的来源选择随后已补齐，见下文。写入等其他地址型工具仍未统一提供显式从站选择，不能据此宣称全部 MCP 工具支持多从站重叠地址。没有调用或测试实机写入。
 
@@ -97,3 +97,9 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 - 同设备同间隔录制可并行，最后一个停止才恢复最初间隔；不同间隔或期间已修改当前间隔时拒绝叠加。停止时若当前周期已经改成别的值则保留该值。最近 50 段上限只淘汰已结束记录，50 段全部活动时拒绝新会话。毫秒参数为整数且不超过 Node 定时器上限 2147483647；触发等待仍有原有 10 分钟上限。
 
 回归 `test-recorder`、`test-recorder-source`、`test-mcp-source` 使用 mock 事件/配置/时钟/工具注册器，不监听端口、不连接设备或修改真实配置。详细兼容契约和示例见 [录制隔离说明](../../docs/develop/03-录制从站隔离.md)。
+
+## 只读精确选点（2026-11-06）
+
+read_register/query_history 可选 `slave_id`（0–255 整数）或 `register_id`（从 list_registers/candidates 发现的正安全整数）。两者同时给出必须与当前点位所属设备、area、address 和配置目标从站一致。只有一个匹配时沿用旧调用方式；同从站同地址存在多个语义定义时需要 register_id。不匹配不降级到其他来源，非法输入/无匹配/歧义在读缓存或历史前返回 isError=true，text 为 JSON：error、code（REGISTER_SELECTOR_INVALID/REGISTER_NOT_FOUND/REGISTER_AMBIGUOUS）、candidates（仅当前设备该地址的 register_id/group_id/slave_id/alias/data_type）。
+
+选择只决定当前点位与期望来源，不赋值给旧 NULL 历史，也不解除质量/完整批次要求；指定来源仍不能把旧未归属数据变成已验证值。query_history 返回所选 register_id/slave_id/group_id，逐行 slave_id 仍是原始来源。MCP 多字原始历史继续不自动合并。本轮不增加 write_register 的来源参数，不执行写入或任何设备操作。示例与兼容边界见 [只读选点说明](../../docs/develop/04-只读点位选择.md)。

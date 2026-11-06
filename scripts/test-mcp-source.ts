@@ -16,14 +16,15 @@ const regs = groups.map(g => ({ id: g.id, groupId: g.id, startAddress: 0, functi
 let latest: Record<string, any> = {}
 let rows: any[] = []
 let queriedSource: number | undefined
+let queryCalls = 0, cacheReads = 0
 const cfg = { getObject: () => recordingDevice, listGroups: () => groups, listRegistersByObject: () => ambiguous ? regs : [regs[0]], updateObject: (_id: number, fields: any) => { rateChanges.push(fields.pollIntervalMs); Object.assign(recordingDevice, fields) }, log: () => {} }
 const store = {
   getLatestByObjectAll: () => latest,
-  getLatestByObject: (_id: number, area: string, slaveId?: number) => Object.fromEntries([0, 1].flatMap(address => {
+  getLatestByObject: (_id: number, area: string, slaveId?: number) => { cacheReads++; return Object.fromEntries([0, 1].flatMap(address => {
     const p = latest[sourceKey('', area, address, slaveId ?? null)]
     return p ? [[address, p]] : []
-  })),
-  queryWithOffset: async (_id: number, _addr: number, _start: string, _end: string, _area: string, _limit: number, _offset: number, slaveId?: number) => { queriedSource = slaveId; return rows },
+  })) },
+  queryWithOffset: async (_id: number, _addr: number, _start: string, _end: string, _area: string, _limit: number, _offset: number, slaveId?: number) => { queryCalls++; queriedSource = slaveId; return rows.filter(p => slaveId === undefined || p.slaveId == null || p.slaveId === slaveId) },
 }
 const originalCreate = http.createServer, originalRegister = McpServer.prototype.registerTool
 try {
@@ -41,6 +42,36 @@ for (const id of [1, 2]) for (const address of [0, 1]) latest[sourceKey('', 'hol
 let out = body(await run('get_device_snapshot'))
 assert.deepEqual(out.map((p: any) => [p.slave_id, p.value, p.automatic_eligible]), [[1, 5, true], [2, 10, true]])
 for (const tool of ['read_register', 'query_history']) assert.equal((await run(tool)).isError, true, 'address-only tools must refuse ambiguous configured sources')
+const ambiguity = body(await run('read_register'))
+assert.equal(ambiguity.code, 'REGISTER_AMBIGUOUS'); assert.deepEqual(ambiguity.candidates.map((p: any) => [p.register_id, p.slave_id]), [[1, 1], [2, 2]])
+const explicitSourceRead = await run('read_register', { ...args, slave_id: 2 })
+assert.equal(explicitSourceRead.isError, undefined, 'an explicit source should make an otherwise ambiguous read usable')
+assert.equal(body(explicitSourceRead).register_id, 2); assert.equal(body(explicitSourceRead).value, 10)
+assert.equal(body(await run('read_register', { ...args, register_id: 2 })).value, 10)
+const semanticDuplicate = { ...regs[0], id: 99, factor: 2 }
+regs.push(semanticDuplicate)
+assert.equal((await run('read_register', { ...args, slave_id: 1 })).isError, true, 'same-source semantic definitions remain ambiguous')
+assert.equal(body(await run('read_register', { ...args, slave_id: 1, register_id: 99 })).value, 10, 'point selection uses the selected semantic definition')
+regs.pop()
+regs[1].dataType = 'uint16'
+rows = [{ ts: args.start, rawValue: 5, quality: 'good', batchId: 'same', slaveId: 1 }, { ts: args.start, rawValue: 10, quality: 'good', batchId: 'same', slaveId: 2 }, { ts: args.start, rawValue: 7, quality: 'good', batchId: 'legacy', slaveId: null }]
+for (const selector of [{ slave_id: 2 }, { register_id: 2 }, { slave_id: 2, register_id: 2 }]) {
+  const history = body(await run('query_history', { ...args, ...selector }))
+  assert.equal(queriedSource, 2); assert.equal(history.slave_id, 2); assert.equal(history.register_id, 2)
+  assert.deepEqual(history.points.map((p: any) => [p.slave_id, p.value, p.automatic_eligible]), [[2, 10, true], [null, null, false]])
+}
+regs[1].dataType = 'uint32'; rows = []
+for (const tool of ['read_register', 'query_history']) {
+  const before = [cacheReads, queryCalls]
+  for (const selector of [{ slave_id: 3 }, { register_id: 999 }, { slave_id: 1, register_id: 2 }, { slave_id: null }, { register_id: '2' }, { address: 1, register_id: 2 }]) {
+    const result = await run(tool, { ...args, ...selector }); assert.equal(result.isError, true)
+    assert.ok(body(result).code.startsWith('REGISTER_'))
+  }
+  assert.deepEqual([cacheReads, queryCalls], before, 'invalid/conflicting selectors do not query cache/history or fall back')
+  const schema = schemas.get(tool)
+  assert.ok(schema.slave_id.safeParse(2).success); assert.ok(schema.register_id.safeParse(2).success)
+  for (const invalid of [0, -1, 1.5, '2', null, Number.MAX_SAFE_INTEGER + 1]) assert.equal(schema.register_id.safeParse(invalid).success, false)
+}
 ambiguous = false
 out = body(await run('read_register')); assert.equal(out.value, 5); assert.equal(out.slave_id, 1)
 latest[sourceKey('', 'holding-register', 1, 1)].timestamp = args.end

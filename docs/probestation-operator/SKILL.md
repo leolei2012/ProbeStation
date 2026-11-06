@@ -56,13 +56,13 @@ npm run start
 | `holding-register` | 3 | 保持寄存器 |
 | `input-register` | 4 | 输入寄存器 |
 
-`read_register`、`query_history` 都要求 area，旧包 README 中省略 area 或使用 register_id 的示例不适用于当前实现。以下是 MCP 工具参数示意，ID 和地址必须替换为发现结果：
+`read_register`、`query_history` 都要求 device_id/area/address；新增可选 slave_id 或 register_id 用于消除同址歧义，register_id 不能代替必需字段，双条件必须一致。旧示例若只传 register_id 仍不适用。以下是 MCP 工具参数示意，ID 和地址必须替换为发现结果：
 
 ```json
 {"device_id": 1, "area": "holding-register", "address": 0}
 ```
 
-`read_register` 读取采集缓存，并不主动发一次新的 Modbus 读取。报告值时同时报告 timestamp、quality、连接/暂停状态；null 或旧时间不能当作当前有效读数。可结合 `get_device_health`、`get_raw_frames` 诊断。多从站若在同设备、同 area 使用重复地址，当前按地址定位可能有歧义，不能将返回的第一个匹配项视为已唯一定位。
+`read_register` 读取采集缓存，并不主动发一次新的 Modbus 读取。报告值时同时报告 timestamp、quality、连接/暂停状态；null 或旧时间不能当作当前有效读数。可结合 `get_device_health`、`get_raw_frames` 诊断。多从站同设备/area 重复地址时，未精确选择会返回结构化 candidates；按用户已明确的来源传 slave_id，或从候选/list_registers 发现后传 register_id。同从站重复语义定义也需 register_id。不得为了查询成功任选第一个候选；所选 ID、从站、设备、area/address 必须一致，旧 NULL 来源不会因显式选择变为可信。
 
 ## 3. 配置和控制
 

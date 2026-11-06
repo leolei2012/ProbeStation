@@ -73,3 +73,9 @@ export const inject = ['config', 'store', 'poller']
 - `/latest` 未按 objectId 过滤。
 - 写寄存器默认 `multiple`（FC16，适配固件只开 FC03+FC16）。
 - 无鉴权（决策 #14）。
+
+## 内置助手历史选点（2026-11-06）
+
+内置 query_history 工具支持可选 slave_id/register_id，与 MCP 共用纯函数选择契约：设备/area/address 必须匹配，两个可选条件同时提供必须一致。list_points 返回的 id/slaveId 可用于选择；歧义返回结构化 candidates，帮助用户明确来源，不猜测第一项。同从站重复语义定义可用 register_id 精确选择。选择错误不查历史、不生成分析来源链接；成功查询沿用所选点位的 dtype 和分组来源，原有会话设备权限保持有效。旧 NULL 身份仍按共享历史规则人工兼容/未知，不能自动计入统计。
+
+工具 schema 和候选/范围/NULL/错误路径由 fakeFetch 模型网关测试，没有真实模型调用或生产配置/数据库操作。见 [只读选点说明](../../docs/develop/04-只读点位选择.md)。
