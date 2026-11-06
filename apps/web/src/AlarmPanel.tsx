@@ -1,11 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { ALARM_OPERATORS, alarmMatches, type AlarmRule } from '../../../packages/core/src/alarm.ts'
-import { registerWidth } from '../../../packages/core/src/codec.ts'
 import { type Sample } from './observation'
-import { readAlarmValue } from './alarm-value'
+import { readPointAlarmValue } from './alarm-value'
 
 type Register = { id: number; alias: string | null; startAddress: number; dataType: string; functionCode: number }
-type Group = { id: number; name: string; isActive: number; registers: Register[] }
+type Group = { id: number; name: string; isActive: number; slaveId?: number; registers: Register[] }
 const symbols: Record<string, string> = { '>': '>', '>=': '≥', '==': '=', '<=': '≤', '<': '<', '!=': '≠' }
 async function request(path: string, method = 'GET', body?: unknown, signal?: AbortSignal) {
   const res = await fetch(path, { method, signal, headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
@@ -36,7 +35,7 @@ export function useAlarmRules(deviceId: number) {
 }
 
 export function AlarmPanel({ t, device, groups, latest, groupErrors, now, threshold, point, onClose }: {
-  t: (key: string) => string; device: { id: number; isActive: number }; groups: Group[]
+  t: (key: string) => string; device: { id: number; isActive: number; mode?: string; slaveId?: number }; groups: Group[]
   latest: Record<string, Sample>; groupErrors: Record<number, string>; now: number; threshold: number; point?: Register; onClose?: () => void
 }) {
   const { rules, setRules, error, setError, lock, sequence } = useAlarmRules(device.id)
@@ -54,9 +53,7 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
   const evaluated = localRules.map(rule => {
     const group = groups.find(g => g.registers.some(r => r.id === rule.registerId))!
     const reg = group.registers.find(r => r.id === rule.registerId)!
-    const area = reg.functionCode === 1 ? 'coil' : reg.functionCode === 2 ? 'discrete-input' : reg.functionCode === 4 ? 'input-register' : 'holding-register'
-    const words = Array.from({ length: registerWidth(reg.dataType) }, (_, i) => latest[device.id + ':' + area + ':' + (reg.startAddress + i)])
-    const value = readAlarmValue(reg.dataType, words, now, threshold, !device.isActive || !group.isActive, !!groupErrors[group.id])
+    const value = readPointAlarmValue(reg, latest, device, group, now, threshold, !!groupErrors[group.id])
     const known = value !== null && (typeof value === 'bigint' || Number.isFinite(value))
     return { rule, reg, known, value, active: known && alarmMatches(value, rule.operator, rule.threshold) }
   })

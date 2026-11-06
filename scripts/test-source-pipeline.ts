@@ -9,6 +9,7 @@ import { decodeHistoricalSample, decodeLatestSample } from '../packages/core/src
 import { historyExportReadRanges, HistoryExportLimitError } from '../packages/core/src/history-export-policy.ts'
 import { decodeHistorySeries } from '../apps/web/src/history-curve.ts'
 import { sampleCurve } from '../apps/web/src/live-curve.ts'
+import { readPointAlarmValue } from '../apps/web/src/alarm-value.ts'
 import { assistantHistoryPoints } from '../packages/api/src/history-assessment.ts'
 import { registerCurve } from '../packages/api/src/curve.ts'
 import { registerHistoryExport } from '../packages/api/src/history-export.ts'
@@ -36,6 +37,8 @@ try {
   assert.equal(hot['1:holding-register:0'], undefined)
   assert.equal(sourceSample(hot, 1, 'holding-register', 1, 1)?.rawValue, 5)
   assert.equal(sourceSample(hot, 1, 'holding-register', 1, 2)?.rawValue, 100)
+  const alarmValue = (source: number, snapshot = store.getLatest(), now = base) => readPointAlarmValue(definitions[source - 1], snapshot, { id: 1, isActive: 1, mode: 'master' }, { ...groups[source - 1], isActive: 1 }, now, 5000, false)
+  assert.equal(alarmValue(1, hot), 5); assert.equal(alarmValue(2, hot), 100, 'actual hot snapshot survives JSON serialization and remains evaluable by the top alarm panel without unscoped keys')
   assert.equal(sourceSample({ [sourceKey(1, 'holding-register', 0, 1)]: { slaveId: 2 } }, 1, 'holding-register', 0, 1), undefined)
   const cacheWords = [0, 1].map(address => ({ ...sourceSample<any>(hot, 1, 'holding-register', address, 1), address }))
   assert.equal(decodeLatestSample(regs()[0], cacheWords).automaticEligible, true)
@@ -55,6 +58,8 @@ try {
   write(null, 1000, [0, 50], 'old-batch-without-source') // Not attributable even though batch is complete.
   write(1, 2000, [1], 'cross-source'); write(2, 2000, [65535], 'cross-source', 1)
   write(1, 3000, [1], 'A'); write(1, 3000, [0], 'B', 1)
+  assert.equal(alarmValue(1, store.getLatest(), base + 3000), null, 'mixed target batch cannot produce a displayed alarm state')
+  assert.equal(alarmValue(2, store.getLatest(), base + 3000), null, 'partial foreign update cannot fill an older target response')
   write(1, 4000, [1, 0], 'recovered'); write(2, 4000, [0, 101], 'recovered-2')
   write(2, 5000, [0, 102], 'foreign-only')
   await store.flush()
