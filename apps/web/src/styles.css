@@ -901,3 +901,11 @@ table.reg th, .btn { white-space: nowrap; }
 .pointbook-result p { margin: 8px 0; }
 .pointbook-result-file, .pointbook-result-list li { overflow-wrap: anywhere; white-space: pre-wrap; }
 .pointbook-result-list { max-height: 240px; overflow: auto; padding-left: 24px; }
+
+.history-comparison { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border-2); border-radius: 8px; }
+.history-comparison > summary { cursor: pointer; font-weight: 600; }
+.history-comparison-times { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 10px 0; font-variant-numeric: tabular-nums; }
+.history-comparison-table td { vertical-align: top; }
+.history-comparison .history-table-scroll { max-height: 320px; }
+.history-comparison-table td > small { display: block; margin-top: 4px; font-size: 10px; color: var(--text-3); white-space: nowrap; }
+.history-comparison-marker { pointer-events: none; }

@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url'
 
 // Static manual preview only. No app/config/store imports, sockets or database paths.
 const args = process.argv.slice(2)
-if (args.length && (args.length !== 1 || args[0] !== '--settings')) throw new Error('只支持无参数或 --settings；不会读取配置或数据库路径。')
-const kind = args.length ? 'point-settings' : 'register-picker'
+if (args.length && (args.length !== 1 || !['--settings', '--comparison'].includes(args[0]))) throw new Error('只支持无参数、--settings 或 --comparison；不会读取配置或数据库路径。')
+const kind = args[0] === '--comparison' ? 'history-comparison' : args.length ? 'point-settings' : 'register-picker'
+const title = kind === 'history-comparison' ? '历史两点对比' : kind === 'point-settings' ? '点位设置' : '选点'
 const root = fileURLToPath(new URL('../', import.meta.url)), output = resolve(root, `output/playwright/${kind}-preview.html`)
 const marker = `data-probestation-preview="${kind}"`
 try {
@@ -21,7 +22,7 @@ if (!jsFile || !cssFile) throw new Error('预览缺少完整JS/CSS输出，未�
 const js = jsFile.text.replace(/<\/script/gi, '<\\/script')
 const css = cssFile.text.replace(/<\/style/gi, '<\\/style')
 const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'"
-const html = `<!doctype html><html lang="zh-CN" ${marker}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${policy}"><title>ProbeStation 纯 mock ${kind === 'point-settings' ? '点位设置' : '选点'}验收</title><style>${css}</style></head><body><div id="root"></div><script>${js}</script></body></html>`
+const html = `<!doctype html><html lang="zh-CN" ${marker}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${policy}"><title>ProbeStation 纯 mock ${title}验收</title><style>${css}</style></head><body><div id="root"></div><script>${js}</script></body></html>`
 await mkdir(resolve(root, 'output/playwright'), { recursive: true }); await writeFile(output, html, 'utf8')
 console.log('已生成纯静态mock预览，请用浏览器手动打开：' + output)
 console.log('未启动服务，不读写数据库，不连接设备；所有资源内联，页面禁止网络连接。')

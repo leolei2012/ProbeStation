@@ -1,3 +1,5 @@
+import { HistoryComparison } from './HistoryComparison'
+import { captureHistoryAnchor, historyComparisonContext, updateHistoryComparison, type HistoryComparisonState } from './history-comparison'
 import { HistoryNavigation } from './history-navigation'
 import { LatestConfigRead, readDeviceGroups, groupsForSelection } from './config-read'
 import { PointBookImportResult, type PointBookResult } from './PointBookImportResult'
@@ -56,6 +58,7 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    histCompareTitle: 'A/B 两点对比', histCompareHint: '先在图中移动指针或点击选择时刻，再设置 A、B。逐点取最近的显示采样，不插值；请核对每点实际采样时间。', histCompareSetA: '当前时刻设为 A', histCompareSetB: '当前时刻设为 B', histCompareClear: '清空对比', histCompareCursorDelta: '游标时间差 B − A', histCompareA: 'A 最近显示采样', histCompareB: 'B 最近显示采样', histCompareDifference: '数值差 B − A', histCompareSampleDelta: '实际采样时间差', histCompareNoSample: '无可用显示采样', histCompareEmpty: '设置 A/B 后在这里比较；可先设置任意一端。', histCompareLimit: '基于显示采样快照，放大可获取更细数据；断线/无效处显示未知，不跨缺口取值。未验证端点仅供查看，不作自动 PASS/FAIL。缩放或刷新不会改写已设点；更改点位、图例、配置、数值模式或完整时间范围会清空。相对量程仅影响绘图。',
     histNavigationWaiting: '正在等待点表加载以定位点位 #{id}；加载失败时可使用顶部重试。', histNavigationMissing: '当前已加载点表中未找到点位 #{id}，请刷新配置后再次点击引用，或重新选择点位。', histNavigationInvalid: '历史跳转参数无效，请手动选择时间与点位。',
     pointBookReport: '点表导入结果', pointBookFile: '文件', pointBookCompleted: '导入已完成', pointBookRejected: '导入未完成', pointBookUncertain: '导入结果待核实', pointBookCounts: '{g} 个分组 · {r} 个点位', pointBookWarnings: '需要核对的提示', pointBookErrors: '错误详情', pointBookUncertainHint: '请求或返回异常，配置可能已更新。请核对当前配置后再决定是否重新导入。', pointBookInvalidReport: '服务端返回的导入结果格式无效。',
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
@@ -126,6 +129,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    histCompareTitle: 'A/B sample comparison', histCompareHint: 'Move or tap in the plot, then set A and B. Use nearest displayed samples without interpolation; check each actual sample time.', histCompareSetA: 'Set A at cursor', histCompareSetB: 'Set B at cursor', histCompareClear: 'Clear comparison', histCompareCursorDelta: 'Cursor elapsed B − A', histCompareA: 'A nearest displayed sample', histCompareB: 'B nearest displayed sample', histCompareDifference: 'Value B − A', histCompareSampleDelta: 'Actual sample elapsed', histCompareNoSample: 'No usable displayed sample', histCompareEmpty: 'Set either endpoint to begin comparing.', histCompareLimit: 'Frozen displayed-sample snapshots; zoom for detail. Gaps and invalid data stay unknown. Unverified endpoints are view-only, never automatic PASS/FAIL evidence. Zoom/refresh keeps snapshots; changes to points, legend, configuration, value mode or full range clear them. Relative scaling affects the plot only.',
     histNavigationWaiting: 'Waiting for point definitions to locate #{id}. Use the retry control above if loading fails.', histNavigationMissing: 'Point #{id} was not found in the loaded definitions. Refresh configuration and reopen the reference, or select a point.', histNavigationInvalid: 'Invalid history navigation parameters. Select the time range and points manually.',
     pointBookReport: 'Point table import result', pointBookFile: 'File', pointBookCompleted: 'Import completed', pointBookRejected: 'Import not completed', pointBookUncertain: 'Import outcome unconfirmed', pointBookCounts: '{g} groups · {r} points', pointBookWarnings: 'Items to review', pointBookErrors: 'Error details', pointBookUncertainHint: 'The request or response failed; configuration may have changed. Check the current configuration before deciding to import again.', pointBookInvalidReport: 'The server returned an invalid import report.',
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
@@ -1529,6 +1533,11 @@ function ChartBody({ pointLabels, valueMode, t, registers, selected, pts, source
   const observer = useRef<ResizeObserver | null>(null)
   const clipId = useId()
   const series = useMemo(() => (sourceSeries ?? decodeHistorySeries(registers, pts, selected)).filter(s => selected.has(s.id)).map(s => { const r = registers.find(r => r.id === s.id)!; return { ...s, samples: s.samples.map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) } }), [registers, pts, sourceSeries, selected, valueMode])
+  const comparisonContext = useMemo(() => historyComparisonContext(registers.filter(r => selected.has(r.id)), range, valueMode, hidden), [registers, selected, range.start, range.end, valueMode, hidden])
+  const [comparison, setComparison] = useState<HistoryComparisonState>(() => ({ context: comparisonContext, a: null, b: null }))
+  const [comparisonOpen, setComparisonOpen] = useState(false)
+  const activeComparison = comparison.context === comparisonContext ? comparison : { context: comparisonContext, a: null, b: null }
+  useEffect(() => { setComparison(previous => updateHistoryComparison(previous, { type: 'context', context: comparisonContext })) }, [comparisonContext])
   const mixedUnits = valueMode === 'physical' && new Set(registers.filter(r => selected.has(r.id)).map(r => r.unit?.trim() || '')).size > 1
   const reading = (value: number, reg?: Register) => displayNumber(value, valueMode === 'physical' ? reg : undefined) + (valueMode === 'physical' && reg?.unit ? ' ' + reg.unit : '')
   useEffect(() => { setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [valueMode])
@@ -1598,8 +1607,9 @@ function ChartBody({ pointLabels, valueMode, t, registers, selected, pts, source
   if (status === 'idle') return <div className="hist-empty" role="status">{t('histCancelled')}</div>
   if (status === 'loading') return <div className="hist-empty" role="status">{t('histLoading')}</div>
   if (status === 'error') return <div className="hist-empty warn" role="alert">{t('histError')}: {error}</div>
-  if (!pts.length && !series.some(s => s.samples.length)) return <div className="hist-empty">{t('histEmpty')}</div>
-  if (!series.length) return <div className="hist-empty">{t('histNoNumeric')}</div>
+  const hasSamples = pts.length > 0 || series.some(s => s.samples.length)
+  if (!hasSamples && !view && !activeComparison.a && !activeComparison.b) return <div className="hist-empty">{t('histEmpty')}</div>
+  if (!series.length && hasSamples) return <div className="hist-empty">{t('histNoNumeric')}</div>
   return <div className="chart-wrap history-chart">
     <div className="toolbar history-chart-tools">
       <button className="btn" onClick={() => focusRange((start + end) / 2, span / 2)} disabled={span <= 1000}>{t('histZoomIn')}</button>
@@ -1617,6 +1627,10 @@ function ChartBody({ pointLabels, valueMode, t, registers, selected, pts, source
     <p className="chart-hint">悬停查看读数 · 横向拖动放大时间，纵向拖动放大 Y 轴，斜向框选同时放大两轴 · 双击恢复全范围</p>
     <div className="history-chart-range">{formatLocalTs(new Date(start).toISOString())} — {formatLocalTs(new Date(end).toISOString())}</div>
     <ChartReadout t={t} time={hover} rows={readoutRows} />
+    <HistoryComparison open={comparisonOpen} onOpenChange={setComparisonOpen} state={activeComparison} canCapture={hover !== null && visibleSeries.some(s => !hidden.has(s.id))} t={t} pointLabels={pointLabels} formatTime={chartCursorLabel}
+      formatValue={(id, value) => reading(value, registers.find(r => r.id === id))}
+      onCapture={slot => { if (hover !== null) setComparison(previous => updateHistoryComparison(previous, { type: 'capture', context: comparisonContext, slot, anchor: captureHistoryAnchor(hover, visibleSeries.filter(s => !hidden.has(s.id))) })) }}
+      onClear={() => setComparison(previous => updateHistoryComparison(previous, { type: 'clear', context: comparisonContext }))} />
     <div className="history-chart-plot" ref={setPlot}>
       <svg width="100%" height="100%" role="img" aria-label={t('tabCurve')} style={{ touchAction: 'none' }}
         onPointerDown={e => { if (e.button !== 0) return; if (e.pointerType === 'touch') { setHover(pointerTime(e)); e.currentTarget.setPointerCapture(e.pointerId); return }; const time = pointerTime(e), value = pointerValue(e); dragRef.current = { start: time, end: time, fromY: value, toY: value }; setDrag(dragRef.current); setHover(null); e.currentTarget.setPointerCapture(e.pointerId) }}
@@ -1641,6 +1655,10 @@ function ChartBody({ pointLabels, valueMode, t, registers, selected, pts, source
         {yTicks(yMin, yMax, 5).map(value => <g key={value}><line x1={L} x2={size.w - R} y1={y(value)} y2={y(value)} stroke="var(--border-1)" /><text x={L - 8} y={y(value) + 4} textAnchor="end" fontSize={11} fill="var(--text-3)">{tickNum(value)}{relative ? '%' : ''}</text></g>)}
         {timeTicks(start, end, Math.max(2, Math.floor(pw / 110))).map(time => <text key={time} x={x(time)} y={size.h - B + 20} textAnchor="middle" fontSize={11} fill="var(--text-3)">{tickTime(time, span)}</text>)}
         <g clipPath={`url(#${clipId})`}>
+          {([['A', activeComparison.a], ['B', activeComparison.b]] as const).map(([label, anchor], index) => anchor && anchor.time >= start && anchor.time <= end && <g key={label} className="history-comparison-marker" data-comparison-anchor={label}>
+            <line x1={x(anchor.time)} x2={x(anchor.time)} y1={T} y2={size.h - B} stroke={index ? '#a78bfa' : '#22d3ee'} strokeDasharray="6 4" />
+            <text x={x(anchor.time) + 4} y={T + 12 + index * 15} fill={index ? '#a78bfa' : '#22d3ee'} fontSize={12}>{label}</text>
+          </g>)}
           {visibleSeries.filter(s => !hidden.has(s.id)).map(s => <g key={s.id}><path data-history-series={s.id} d={pathFor(s)} stroke={s.color} fill="none" strokeWidth={1.8} />{s.samples.filter(p => p[1] !== null).length <= 1 && s.samples.filter((p): p is [number, number] => p[1] !== null).map(p => <circle key={p[0]} cx={x(p[0])} cy={y(displayValue(p[1], s))} r={3} fill={s.color} />)}</g>)}
           {hover !== null && !drag && <>
             <line x1={x(hover)} x2={x(hover)} y1={T} y2={size.h - B} stroke="var(--text-3)" strokeDasharray="4 4" />
@@ -1650,7 +1668,7 @@ function ChartBody({ pointLabels, valueMode, t, registers, selected, pts, source
         </g>
         {hover !== null && !drag && <ChartCursorTime time={hover} x={x(hover)} width={size.w} y={size.h - 24} />}
       </svg>
-      {!anyVisible && <div className="live-curve-empty">{t('histNoVisible')}</div>}
+      {!anyVisible && <div className="live-curve-empty">{t(hasSamples ? 'histNoVisible' : 'histEmpty')}</div>}
     </div>
     <div className="history-legend-head"><span>{t('histLegendHint')}</span><span>{t('histStatsHint')}</span></div>
     <div className="history-legend">
