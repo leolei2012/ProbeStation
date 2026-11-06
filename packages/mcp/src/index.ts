@@ -432,28 +432,6 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(r) }] }
     })
 
-    server.registerTool('update_register', {
-      title: 'Update register', description: '更改寄存器（别名/类型/单位/缩放/枚举）',
-      inputSchema: { register_id: zz.number(), alias: zz.string().optional(), data_type: zz.string().optional(), unit: zz.string().optional(), factor: zz.number().optional(), offset: zz.number().optional(), enum: zz.record(zz.string()).optional() },
-    }, async (args) => {
-      const r = cfg.getRegister(args.register_id)
-      if (!r) return { content: [{ type: 'text', text: 'register not found' }], isError: true }
-      const fields: Record<string, unknown> = {}
-      if (args.alias !== undefined) fields.alias = args.alias
-      if (args.data_type !== undefined) {
-        const grp = cfg.getGroup(r.groupId)
-        if (grp && r.startAddress + registerWidth(args.data_type) > grp.startAddress + grp.quantity) return { content: [{ type: 'text', text: 'dataType spans beyond group poll range' }], isError: true }
-        fields.dataType = args.data_type
-      }
-      if (args.unit !== undefined) fields.unit = args.unit
-      if (args.factor !== undefined) fields.factor = args.factor
-      if (args.offset !== undefined) fields.offset = args.offset
-      if (args.enum !== undefined) fields.enumJson = JSON.stringify(args.enum)
-      const updated = cfg.updateRegister(args.register_id, fields)
-      cfg.log('INFO', 'mcp', 'update register ' + args.register_id)
-      return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
-    })
-
     server.registerTool('delete_register', {
       title: 'Delete register', description: '删除寄存器',
       inputSchema: { register_id: zz.number() },

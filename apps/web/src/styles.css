@@ -513,6 +513,8 @@ table.reg th, .btn { white-space: nowrap; }
 .write-context span, .write-context small { font-size: 12px; color: var(--text-2); }
 .inline-edit { min-width: 100px; }
 .inline-edit .operation-feedback { margin: 5px 0 0; padding: 6px; }
+.alias-edit-feedback { display: block; margin-top: 4px; max-width: 320px; white-space: normal; overflow-wrap: anywhere; color: var(--text-2); font-size: 11px; line-height: 1.4; }
+.alias-editor .btn { margin-top: 4px; max-width: 100%; white-space: normal; }
 @media (max-width: 768px) { .point-search { width: 100%; } .observation-toolbar .seg { width: 100%; } .observation-toolbar .seg button { flex: 1; padding: 8px; } }
 
 /* Device order controls remain available on touch screens and keyboards. */

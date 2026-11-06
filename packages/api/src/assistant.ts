@@ -1,3 +1,4 @@
+import { captureAssistantEdit, applyAssistantEdit, type AssistantEditGuard } from './assistant-config-edit.ts'
 import { diagnoseDevicePoints } from '../../core/src/point-diagnostics.ts'
 import { selectSourceRegister } from '../../core/src/register-selection.ts'
 import { decodeLatestSample } from '../../core/src/history-integrity.ts'
@@ -17,7 +18,7 @@ type Services = { cfg: any; store: any; poller: any }
 type Settings = { provider: string; baseUrl: string; model: string; apiKey: string; reasoningProtocol: 'default' | 'reasoning_effort'; contextWindow?: number | null }
 type RunConfig = Settings & { mode: 'read' | 'agent'; effort: string }
 const efforts = ['default', 'off', 'max', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']
-type Proposal = { id: string; target: 'device' | 'group' | 'register'; targetId: number; deviceId: number; label: string; field: string; before: unknown; after: unknown; expires: number; state: string }
+type Proposal = { id: string; target: 'device' | 'group' | 'register'; targetId: number; deviceId: number; label: string; field: string; before: unknown; after: unknown; expires: number; state: string; guard?: AssistantEditGuard; undoGuard?: AssistantEditGuard; warnings?: string[] }
 type Source = { deviceId: number; label: string; view: 'live' | 'history' | 'diagnostics'; registerId?: number; start?: string; end?: string; entryIndex: number }
 type Entry = { role: string; content: string }
 type Turn = { entryIndex: number; startedAt: number; endedAt?: number; state: 'running' | 'completed' | 'stopped' | 'failed' }
@@ -62,12 +63,13 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
   const sessions = new Map<string, Session>()
   const sessionDir = join(dataDir, 'ai-sessions')
   const persist = (s: Session) => {
-    if (!sessions.has(s.id)) return
+    if (!sessions.has(s.id)) return false
     mkdirSync(sessionDir, { recursive: true })
     const file = join(sessionDir, s.id + '.json')
     const { controller, partial, activity, ...saved } = s
     try { writeFileSync(file + '.tmp', json(saved), { mode: 0o600 }); renameSync(file + '.tmp', file) }
-    catch { s.error = '聊天记录保存失败，请检查磁盘空间及目录权限' }
+    catch { s.error = '聊天记录保存失败，请检查磁盘空间及目录权限'; return false }
+    return true
   }
   const device = (id: number, s: Session) => {
     integer(id)
@@ -110,9 +112,12 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
       else if (a.field === 'isActive') value = integer(value, 0, 1)
       else if (['factor', 'offset'].includes(a.field)) { if (typeof value !== 'number' || !Number.isFinite(value) || (a.field === 'factor' && value === 0)) fail('无效的语义系数') }
       else value = integer(value)
-      const p: Proposal = { id: randomUUID(), target: a.target, targetId: r.id, deviceId, label: [d.name, a.target === 'register' ? cfg.getGroup(r.groupId)?.name : null, a.target === 'device' ? null : r.alias || r.name || '#' + r.id].filter(Boolean).join(' / '), field: a.field, before: r[a.field], after: value, expires: Number.MAX_SAFE_INTEGER, state: 'pending' }
+      const reviewed = captureAssistantEdit(cfg, a.target, r.id)
+      if (reviewed.deviceId !== deviceId) fail('配置来源已变化，请重新发起修改', 409)
+      const reviewedRow = reviewed.row as any
+      const p: Proposal = { id: randomUUID(), target: a.target, targetId: reviewedRow.id, deviceId, label: [a.target === 'device' ? reviewedRow.name : d.name, a.target === 'register' ? cfg.getGroup(reviewedRow.groupId)?.name : null, a.target === 'device' ? null : reviewedRow.alias || reviewedRow.name || '#' + reviewedRow.id].filter(Boolean).join(' / '), field: a.field, before: reviewedRow[a.field], guard: reviewed.guard, after: value, expires: Number.MAX_SAFE_INTEGER, state: 'pending' }
       s.proposals.push(p)
-      return { ...p, message: '仅提议，未修改。必须由用户点击确认，不可声称已执行。' }
+      return { ...publicProposal(p), message: '仅提议，未修改。必须由用户点击确认，不可声称已执行。' }
     }
     const d = device(a.device_id, s)
     const offset = a.offset === undefined ? 0 : integer(a.offset, 0, Number.MAX_SAFE_INTEGER)
@@ -145,7 +150,8 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
     }
     fail('不支持的工具')
   }
-  const view = (s: Session) => ({ sources: s.sources ?? [], activity: s.activity, partial: s.partial, id: s.id, deviceId: s.deviceId, entries: s.entries, proposals: s.proposals, turns: s.turns, running: s.running, error: s.error, compacting: !!s.compacting })
+  const publicProposal = ({ guard, undoGuard, ...publicFields }: Proposal) => publicFields
+  const view = (s: Session) => ({ sources: s.sources ?? [], activity: s.activity, partial: s.partial, id: s.id, deviceId: s.deviceId, entries: s.entries, proposals: s.proposals.map(publicProposal), turns: s.turns, running: s.running, error: s.error, compacting: !!s.compacting })
   const get = (id: string) => {
     if (!/^[a-f0-9-]{36}$/.test(id)) fail('会话不存在', 404)
     let s = sessions.get(id)
@@ -475,17 +481,18 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
       const current = record(p.target, p.targetId)
       if (!current || (p.target !== 'device' && current.objectId !== p.deviceId) || json(current[p.field]) !== json(p.before)) { p.state = 'conflict'; fail('配置已变化，请重新发起修改', 409) }
       // Consume before executing: repeating the confirmation cannot apply the same change twice.
-      p.state = 'applying'; persist(s)
+      p.state = 'applying'; if (!persist(s)) { p.state = 'pending'; fail('提案执行状态未保存，本次未修改配置。请检查磁盘后重新确认。', 500) }
       try {
-        const fields = { [p.field]: p.after }
-        if (p.target === 'device') cfg.updateObject(p.targetId, fields)
-        else if (p.target === 'group') cfg.updateGroup(p.targetId, fields)
-        else cfg.updateRegister(p.targetId, fields)
-        if (json(record(p.target, p.targetId)?.[p.field]) !== json(p.after)) throw new Error('读回不一致')
-        p.state = 'applied'; cfg.log('INFO', 'assistant', `confirmed ${p.target} ${p.targetId} ${p.field}: ${json(p.before)} -> ${json(p.after)}`)
-      } catch { p.state = 'failed'; persist(s); fail('配置执行失败，请检查当前配置后重试', 500) }
+        const result = applyAssistantEdit(cfg, p.target, p.targetId, p.deviceId, p.field, p.after, p.guard)
+        p.undoGuard = result.guard; p.warnings = [...result.warnings]; p.state = 'applied'
+      } catch (error: any) {
+        p.state = error?.statusCode === 409 || error?.statusCode === 404 ? 'conflict' : 'failed'; persist(s)
+        fail(p.state === 'conflict' ? '提案条件缺失或配置已变化，本次未保存；请重新发起修改。' : '保存结果待核实，请核对配置，勿重复执行提案。', p.state === 'conflict' ? 409 : 500)
+      }
+      try { cfg.log('INFO', 'assistant', `confirmed ${p.target} ${p.targetId} ${p.field}: ${json(p.before)} -> ${json(p.after)}`) }
+      catch { p.warnings!.push('配置已保存，但操作日志写入失败；勿重复确认。') }
     }
-    const content = `配置修改${p.state === 'applied' ? '已执行并读回确认' : '已拒绝'}：${p.label} ${p.field} ${json(p.before)} → ${json(p.after)}`
+    const content = `配置修改${p.state === 'applied' ? '已执行并读回确认' : '已拒绝'}：${p.label} ${p.field} ${json(p.before)} → ${json(p.after)}${p.warnings?.length ? '；' + p.warnings.join('；') : ''}`
     s.entries.push({ role: 'result', content }); s.messages.push({ role: 'user', content: '应用确认结果：' + content })
     persist(s); return view(s)
   })
@@ -497,18 +504,18 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
     device(p.deviceId, s)
     const current = record(p.target, p.targetId)
     if (!current || (p.target !== 'device' && current.objectId !== p.deviceId) || json(current[p.field]) !== json(p.after)) fail('配置后来已被修改，不能覆盖当前值。请重新检查配置。', 409)
-    p.state = 'undoing'; persist(s)
+    p.state = 'undoing'; if (!persist(s)) { p.state = 'applied'; fail('撤销状态未保存，本次未修改配置。请检查磁盘后重试。', 500) }
     try {
-      const fields = { [p.field]: p.before }
-      if (p.target === 'device') cfg.updateObject(p.targetId, fields)
-      else if (p.target === 'group') cfg.updateGroup(p.targetId, fields)
-      else cfg.updateRegister(p.targetId, fields)
-      if (json(record(p.target, p.targetId)?.[p.field]) !== json(p.before)) throw new Error('读回不一致')
-      p.state = 'undone'
-      const content = `已撤销并读回确认：${p.label} ${p.field} ${json(p.after)} → ${json(p.before)}`
-      cfg.log('INFO', 'assistant', content)
-      s.entries.push({ role: 'result', content }); s.messages.push({ role: 'user', content: '应用确认结果：' + content })
-    } catch { p.state = 'failed'; persist(s); fail('撤销失败，请检查当前配置', 500) }
+      const result = applyAssistantEdit(cfg, p.target, p.targetId, p.deviceId, p.field, p.before, p.undoGuard, true)
+      p.warnings = [...result.warnings]; p.state = 'undone'
+    } catch (error: any) {
+      p.state = error?.statusCode === 409 || error?.statusCode === 404 ? 'conflict' : 'failed'; persist(s)
+      fail(p.state === 'conflict' ? '撤销条件缺失或配置已变化，本次未保存；请重新检查配置。' : '撤销结果待核实，请核对配置，勿重复执行。', p.state === 'conflict' ? 409 : 500)
+    }
+    const content = `已撤销并读回确认：${p.label} ${p.field} ${json(p.after)} → ${json(p.before)}`
+    try { cfg.log('INFO', 'assistant', content) } catch { p.warnings!.push('撤销已保存，但操作日志写入失败；勿重复执行。') }
+    const resultContent = content + (p.warnings?.length ? '；' + p.warnings.join('；') : '')
+    s.entries.push({ role: 'result', content: resultContent }); s.messages.push({ role: 'user', content: '应用确认结果：' + resultContent })
     persist(s); return view(s)
   })
   app.addHook('onClose', async () => { for (const c of inquiries) c.abort(); for (const s of sessions.values()) { s.controller?.abort(); persist(s) } })

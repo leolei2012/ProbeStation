@@ -25,8 +25,20 @@ const guarded = (write: boolean, run: (args: any) => Promise<ReturnType<typeof t
 }
 
 /** Production MCP metadata editors, independently testable without listeners or real runtime services. */
-export function registerConfigEditTools(server: ConfigEditRegistrar, cfg: Pick<ConfigStore, 'getObject' | 'updateObjectSettings' | 'getGroupSettings' | 'updateGroupSettings' | 'log'>, runtime: { reconnect: (id: number) => Promise<unknown>; syncSlaves: () => Promise<unknown> }) {
+export function registerConfigEditTools(server: ConfigEditRegistrar, cfg: Pick<ConfigStore, 'getObject' | 'updateObjectSettings' | 'getGroupSettings' | 'updateGroupSettings' | 'getRegisterSettings' | 'updateRegisterSettings' | 'log'>, runtime: { reconnect: (id: number) => Promise<unknown>; syncSlaves: () => Promise<unknown> }) {
   const log = (message: string, warnings: string[]) => { try { cfg.log('INFO', 'mcp', message) } catch { warnings.push('配置已保存，但操作日志写入失败；勿重复保存。') } }
+  server.registerTool('get_register_edit_snapshot', { title: 'Read register edit snapshot', description: '只读一致的点位及分组/设备来源快照，不访问硬件。update_register须携带核对过的原expected；不得给旧草稿自动换新条件。', annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { register_id: id } }, guarded(false, async args => text({ register_id: args.register_id, expected: cfg.getRegisterSettings(args.register_id) })))
+  server.registerTool('update_register', {
+    title: 'Update register', description: '有条件更改别名/类型/单位/缩放/枚举。先get_register_edit_snapshot并核对，提交原expected；缺条件或来源/同字段冲突拒绝。保留原字段返回并附configuration_saved/warnings，不写硬件。', annotations: { destructiveHint: true },
+    inputSchema: { register_id: id, alias: z.string().optional(), data_type: z.string().optional(), unit: z.string().optional(), factor: z.number().optional(), offset: z.number().optional(), enum: z.record(z.string()).optional(), expected: z.record(z.unknown()).optional().describe('执行更新时必需的原expected；缺失仅返回迁移错误。') },
+  }, guarded(true, async args => {
+    if (args.expected === undefined) required('get_register_edit_snapshot')
+    const changes = fields(args, { alias: 'alias', data_type: 'dataType', unit: 'unit', factor: 'factor', offset: 'offset' })
+    if (args.enum !== undefined) changes.enumJson = JSON.stringify(args.enum)
+    const result = cfg.updateRegisterSettings(args.register_id, { expected: args.expected, changes }), warnings = [...result.warnings]
+    log('guarded update register ' + args.register_id, warnings)
+    return text({ ...result.point, configuration_saved: true, warnings })
+  }))
   server.registerTool('get_device_edit_snapshot', { title: 'Read device edit snapshot', description: '只读设备编辑快照，不连接设备。返回expected；update_device须原样携带，不能在过期草稿上临时替换成新快照。', annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { device_id: id } }, guarded(false, async args => {
     const device = cfg.getObject(args.device_id)
     if (!device) throw Object.assign(new Error('设备不存在'), { statusCode: 404 })

@@ -1,3 +1,4 @@
+import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest } from '../packages/core/src/device-settings-edit.ts'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,7 +7,7 @@ import Fastify from 'fastify'
 import { registerAssistant, assistantTools } from '../packages/api/src/assistant.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'probestation-ai-test-'))
-const device: any = { id: 1, mode: 'master', name: '台架', pollIntervalMs: 1000, timeoutMs: 3000 }
+const device: any = { id: 1, mode: 'master', name: '台架', pollIntervalMs: 1000, timeoutMs: 3000, transport: 'tcp', ip: 'mock.invalid', port: 502, serialPath: null, baudRate: 9600, parity: 'even', stopBits: 1, dataBits: 8, flowControl: 'none', slaveId: 1 }
 const reg = { id: 10, objectId: 1, groupId: 2, alias: '计数', dataType: 'uint32', functionCode: 3, startAddress: 0, factor: 1, offset: 0 }
 const logs: string[] = []
 let historyCount = 1
@@ -20,7 +21,12 @@ const cfg = {
   listObjects: () => [device, { id: 3, name: '其他设备' }],
   listRegistersByObject: () => ambiguousAddress ? [reg, { ...reg, id: 11, groupId: 3 }] : [reg], listGroups: () => [{ id: 2, objectId: 1, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 2 }, ...(ambiguousAddress ? [{ id: 3, objectId: 1, slaveId: 2, functionCode: 3, startAddress: 0, quantity: 2 }] : [])],
   getRegister: (id: number) => id === 10 ? reg : undefined, getGroup: () => ({ id: 2, objectId: 1, isActive: 1 }),
-  updateObject: (_id: number, fields: any) => Object.assign(device, fields),
+  updateObject: () => { throw new Error('assistant must not use legacy write') },
+  updateObjectSettings: (id: number, request: unknown) => {
+    const { expected, changes } = parseDeviceEditRequest(request)
+    if (id !== device.id || !deviceEditMatches(captureDeviceEditBaseline(device), expected)) throw Object.assign(new Error('conflict'), { statusCode: 409 })
+    Object.assign(device, changes); return { device: { ...device }, warnings: [] }
+  },
   log: (...args: any[]) => logs.push(args.join(' ')),
 }
 const store = {

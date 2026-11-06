@@ -6,8 +6,8 @@ const deviceShape = { id: 'id', mode: 'text', slaveId: 'number', transport: 'tex
 type ShapeValue<T> = T extends 'id' | 'number' ? number : T extends 'number?' ? number | null : T extends 'text?' ? string | null : string
 type Snapshot<S> = { readonly [K in keyof S]: ShapeValue<S[K]> }
 export interface PointEditBaseline { readonly point: Snapshot<typeof pointShape>; readonly group: Snapshot<typeof groupShape>; readonly device: Snapshot<typeof deviceShape> }
-export type PointEditChanges = Partial<Pick<PointEditBaseline['point'], 'dataType' | 'unit' | 'factor' | 'offset' | 'enumJson' | 'decimalPlaces'>>
-const editable = ['dataType', 'unit', 'factor', 'offset', 'enumJson', 'decimalPlaces'] as const
+export type PointEditChanges = Partial<Pick<PointEditBaseline['point'], 'alias' | 'dataType' | 'unit' | 'factor' | 'offset' | 'enumJson' | 'decimalPlaces'>>
+const editable = ['alias', 'dataType', 'unit', 'factor', 'offset', 'enumJson', 'decimalPlaces'] as const
 const identity = ['id', 'objectId', 'groupId', 'alias', 'functionCode', 'startAddress', 'dataType'] as const
 const invalid = (): never => { throw Object.assign(new Error('点位设置保存参数无效，请刷新配置后重新编辑。'), { statusCode: 400 }) }
 function object(value: unknown): Record<string, unknown> {

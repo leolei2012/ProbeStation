@@ -10,6 +10,8 @@ import { apply } from '../packages/mcp/src/index.ts'
 const handlers = new Map<string, (args: any) => Promise<any>>(), schemas = new Map<string, any>(), configs = new Map<string, any>(), registrations = new Map<string, number>()
 let events = 0, failNotify = false, failLog = false, failReconnect = false, failSync = false, reconnects = 0, syncs = 0, listens = 0, legacyCalls = 0, conditionalGroupWrites = 0
 const cfg = new ConfigStore({ dbPath: ':memory:' }, () => { events++; if (failNotify) throw new Error('synthetic notify failure') })
+const rawRegister = cfg.updateRegister.bind(cfg)
+cfg.updateRegister = (() => { legacyCalls++; throw new Error('legacy point update must not be used') }) as any
 const rawGroup = cfg.updateGroup.bind(cfg), rawDevice = cfg.updateObject.bind(cfg), log = cfg.log.bind(cfg), guardedGroup = cfg.updateGroupSettings.bind(cfg)
 cfg.updateObject = (() => { legacyCalls++; throw new Error('legacy device update must not be used') }) as any
 cfg.updateGroup = (() => { legacyCalls++; throw new Error('legacy group update must not be used') }) as any
@@ -31,12 +33,13 @@ cfg.createRule(last.id, '>', 5, 'synthetic alarm')
 const graph = () => JSON.stringify(cfg.exportBackup()).replace(/"createdAt":"[^"]+"/, '"createdAt":"fixed"')
 try {
   assert.equal(listens, 1, 'only the intercepted listen method was called')
-  for (const name of ['update_device', 'update_group', 'get_device_edit_snapshot', 'get_group_edit_snapshot', 'preview_group_update']) assert.equal(registrations.get(name), 1, 'production registry must use exactly one protected handler: ' + name)
-  for (const name of ['get_device_edit_snapshot', 'get_group_edit_snapshot', 'preview_group_update']) { assert.equal(configs.get(name).annotations.readOnlyHint, true); assert.equal(configs.get(name).annotations.destructiveHint, false) }
+  for (const name of ['update_register', 'get_register_edit_snapshot', 'update_device', 'update_group', 'get_device_edit_snapshot', 'get_group_edit_snapshot', 'preview_group_update']) assert.equal(registrations.get(name), 1, 'production registry must use exactly one protected handler: ' + name)
+  for (const name of ['get_register_edit_snapshot', 'get_device_edit_snapshot', 'get_group_edit_snapshot', 'preview_group_update']) { assert.equal(configs.get(name).annotations.readOnlyHint, true); assert.equal(configs.get(name).annotations.destructiveHint, false) }
   const unchanged = graph(), initialEvents = events, initialLogs = cfg.listLogs().length
   for (const [tool, args, next] of [
     ['update_group', { group_id: group.id, quantity: 1 }, 'get_group_edit_snapshot'],
     ['preview_group_update', { group_id: group.id, quantity: 1 }, 'get_group_edit_snapshot'],
+    ['update_register', { register_id: first.id, alias: 'missing condition' }, 'get_register_edit_snapshot'],
     ['update_device', { device_id: device.id, ip: 'old-client.mock.invalid' }, 'get_device_edit_snapshot'],
   ] as const) {
     const result = await run(tool, args)
@@ -44,6 +47,28 @@ try {
     assert.equal(graph(), unchanged); assert.equal(events, initialEvents); assert.equal(cfg.listLogs().length, initialLogs)
   }
   assert.equal(conditionalGroupWrites, 0); assert.equal(reconnects, 0); assert.equal(syncs, 0)
+
+  const registerSnapshot = body(await run('get_register_edit_snapshot', { register_id: first.id }))
+  rawRegister(first.id, { alias: 'concurrent alias' })
+  let registerResult = await run('update_register', { register_id: first.id, expected: registerSnapshot.expected, alias: 'stale' })
+  assert.equal(registerResult.isError, true); assert.equal(body(registerResult).status, 409); assert.equal(cfg.getRegister(first.id)!.alias, 'concurrent alias')
+  let pointExpected = body(await run('get_register_edit_snapshot', { register_id: first.id })).expected
+  rawGroup(group.id, { slaveId: 2 })
+  assert.equal(body(await run('update_register', { register_id: first.id, expected: pointExpected, factor: 2 })).status, 409)
+  pointExpected = body(await run('get_register_edit_snapshot', { register_id: first.id })).expected
+  rawRegister(first.id, { enumJson: '{"1":"concurrent"}' })
+  registerResult = await run('update_register', { register_id: first.id, expected: pointExpected, alias: 'guarded alias', unit: 'V', factor: 0, offset: -1 })
+  assert.equal(registerResult.isError, undefined); assert.equal(body(registerResult).alias, 'guarded alias'); assert.equal(body(registerResult).factor, 0); assert.equal(body(registerResult).configuration_saved, true)
+  assert.equal(cfg.getRegister(first.id)!.enumJson, '{"1":"concurrent"}')
+  pointExpected = body(await run('get_register_edit_snapshot', { register_id: first.id })).expected
+  rawRegister(first.id, { enumJson: '{"2":"new enum"}' })
+  assert.equal(body(await run('update_register', { register_id: first.id, expected: pointExpected, enum: { 3: 'stale enum' } })).status, 409)
+  pointExpected = body(await run('get_register_edit_snapshot', { register_id: first.id })).expected
+  failNotify = true; failLog = true
+  registerResult = await run('update_register', { register_id: first.id, expected: pointExpected, enum: { 3: 'new mapping' }, data_type: 'uint16' })
+  assert.equal(body(registerResult).configuration_saved, true); assert.equal(body(registerResult).warnings.length, 2)
+  failNotify = false; failLog = false
+  assert.equal(reconnects, 0); assert.equal(syncs, 0)
 
   let snapshot = body(await run('get_group_edit_snapshot', { group_id: group.id })), before = graph(), count = events
   const preview = body(await run('preview_group_update', { group_id: group.id, expected_revision: snapshot.revision, quantity: 1 }))
@@ -133,6 +158,9 @@ try {
     assert.equal(protocolSaved.isError, undefined); assert.equal(body(protocolSaved).configuration_saved, true)
     const protocolDevice = body(await client.callTool({ name: 'get_device_edit_snapshot', arguments: { device_id: device.id } }))
     assert.equal(body(await client.callTool({ name: 'update_device', arguments: { device_id: device.id, expected: protocolDevice.expected, name: 'protocol verified device' } })).configuration_saved, true)
+    const protocolPoint = body(await client.callTool({ name: 'get_register_edit_snapshot', arguments: { register_id: first.id } }))
+    assert.equal(body(await client.callTool({ name: 'update_register', arguments: { register_id: first.id, expected: protocolPoint.expected, alias: 'protocol point' } })).alias, 'protocol point')
+    assert.equal((await client.callTool({ name: 'update_register', arguments: { register_id: first.id, expected: protocolPoint.expected, factor: 'bad' } })).isError, true)
     const invalidSchema = await client.callTool({ name: 'update_group', arguments: { group_id: group.id, expected_revision: 'bad', confirmed_delete_register_ids: ['wrong type'] } })
     assert.equal(invalidSchema.isError, true)
   } finally { await client.close(); await liveServer.close() }

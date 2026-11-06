@@ -55,7 +55,8 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `preview_group_update` | `group_id, expected_revision`、原可选变更字段 | 只读核对原版本并给出完整增删计划 |
 | `update_group` | `group_id, expected_revision`、原变更字段、确认删除ID数组 | 条件更新；删除须传confirmed_delete_register_ids/confirmed_delete_rule_ids |
 | `create_register` | `group_id, alias?, function_code?, start_address, data_type?` | 新增寄存器 |
-| `update_register` | `register_id, alias?, data_type?, unit?, factor?, offset?, enum?` | 更改点位语义配置 |
+| `get_register_edit_snapshot` | `register_id` | 只读一致点位/分组/设备来源快照，返回expected |
+| `update_register` | `register_id, expected, alias?, data_type?, unit?, factor?, offset?, enum?` | 带原expected条件更新；缺条件428、冲突409，保留根记录并附configuration_saved/warnings |
 | `delete_register` | `register_id` | 删除寄存器 |
 | `delete_group` | `group_id` | 删除分组 |
 
@@ -129,4 +130,4 @@ export_points_xlsx会分配合法唯一页签，B1保留原组名，告警G可�
 - 预览拒绝过期版本，不自动返回新条件；保存时服务端在同一事务内再核对。冲突409需重新审阅，不自动重试；不退回旧REST。
 - 成功结果保留原记录字段，增加configuration_saved=true及warnings；组另附revision和实际增删ID。连接应用/通知/日志失败是已保存警告，不能当作配置未保存重试。设备MCP原master重连、随后从站同步的顺序保留，本轮没有变更硬件策略。
 
-新读工具只读配置，不枚举、连接或探测仪器。条件是并发保护，不是鉴权/授权或持久幂等键。旧REST、update_register、窄状态命令、助手/录制等剩余调用不因此获得保护，详见[清单及边界](../../docs/develop/37-旧调用方梳理与MCP条件更新.md)。先查运行实例tools/list，不能假设本地代码已部署。
+新读工具只读配置，不枚举、连接或探测仪器。条件是并发保护，不是鉴权/授权或持久幂等键。点位`update_register`现须先`get_register_edit_snapshot`并原样携带expected；助手确认/撤销也已使用原条件。旧REST、窄状态命令、录制等剩余调用不因此获得保护，详见[最新调用方及边界](../../docs/develop/38-点位调用与助手提案条件保护.md)。先查运行实例tools/list，不能假设本地代码已部署。

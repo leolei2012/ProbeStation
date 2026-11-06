@@ -82,7 +82,7 @@ try {
   assert.equal(cfg.getRegister(otherPoint.id)!.unit, 'other source change')
 
   const good = capture(); before = snapshot(); count = events
-  for (const bad of [null, {}, [], { alias: 'not editable' }, { groupId: 999 }, { factor: '2' }, { factor: null }, { factor: NaN }, { offset: Infinity }, { decimalPlaces: -1 }, { decimalPlaces: 9 }, { decimalPlaces: 1.5 }, { enumJson: {} }, { unit: false }, { dataType: 'unknown-type' }]) {
+  for (const bad of [null, {}, [], { alias: 123 }, { groupId: 999 }, { factor: '2' }, { factor: null }, { factor: NaN }, { offset: Infinity }, { decimalPlaces: -1 }, { decimalPlaces: 9 }, { decimalPlaces: 1.5 }, { enumJson: {} }, { unit: false }, { dataType: 'unknown-type' }]) {
     // Direct store call also exercises NaN/Infinity, which JSON cannot represent.
     assert.throws(() => cfg.updateRegisterSettings(point.id, { expected: good, changes: bad }), error => (error as any).statusCode === 400)
     assert.equal(snapshot(), before); assert.equal(events, count)
@@ -179,6 +179,15 @@ try {
   assert.equal(blocked, 1); assert.equal(b.getRegister(p.id)!.unit, 'guarded commit')
   b.updateRegister(p.id, { unit: 'later normal writer' })
   assert.throws(() => a!.updateRegisterSettings(p.id, { expected, changes: { unit: 'stale' } }), error => (error as any).statusCode === 409)
+  const readGroup = a.getGroup.bind(a)
+  let interleaved = false
+  a.getGroup = id => { if (!interleaved) { interleaved = true; assert.throws(() => b!.updateGroup(id, { slaveId: 9 }), /locked|busy/i) }; return readGroup(id) }
+  const coherent = a.getRegisterSettings(p.id)
+  a.getGroup = readGroup
+  assert.equal(coherent.group.slaveId, 1, 'one read transaction prevents a second connection from committing an inconsistent source')
+  b.updateGroup(g.id, { slaveId: 9 })
+  assert.equal(a.getRegisterSettings(p.id).group.slaveId, 9)
+  assert.throws(() => a!.updateRegisterSettings(p.id, { expected: coherent, changes: { alias: 'stale source read' } }), error => (error as any).statusCode === 409)
 } finally {
   if (a) (a as any).db.close(); if (b) (b as any).db.close()
   assert.equal(dirname(resolve(scratch)), scratchParent); assert.ok(basename(scratch).startsWith('probe-point-edit-')); rmSync(scratch, { recursive: true, force: true })

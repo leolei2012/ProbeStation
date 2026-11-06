@@ -2,7 +2,16 @@ import type { FastifyInstance } from 'fastify'
 import type { ConfigStore } from '../../config/src/index.ts'
 
 /** No hardware/service hooks. Existing unguarded CRUD remains compatible for older callers. */
-export function registerPointSettings(app: FastifyInstance, cfg: Pick<ConfigStore, 'updateRegisterSettings'>) {
+export function registerPointSettings(app: FastifyInstance, cfg: Pick<ConfigStore, 'getRegisterSettings' | 'updateRegisterSettings'>) {
+  app.get('/api/registers/:id/settings', async (request, reply) => {
+    const raw = (request.params as { id: string }).id
+    if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) return reply.code(400).send({ error: '点位编号无效。' })
+    try { return { expected: cfg.getRegisterSettings(Number(raw)) } }
+    catch (error: any) {
+      const known = [400, 404, 409].includes(error?.statusCode)
+      return reply.code(known ? error.statusCode : 500).send({ error: known ? error.message : '点位快照读取失败，请核对后重读。' })
+    }
+  })
   app.put('/api/registers/:id/settings', async (request, reply) => {
     const raw = (request.params as { id: string }).id
     if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) return reply.code(400).send({ error: '点位编号无效。' })

@@ -10,6 +10,7 @@ import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest, t
 import { saveGuardedDeviceSettings } from '../../apps/web/src/device-settings-save'
 import type { SerialPortList } from '../../apps/web/src/serial-ports'
 import { GroupModal } from '../../apps/web/src/GroupModal'
+import { AliasCell } from '../../apps/web/src/AliasCell'
 import { captureGroupEditGraph, groupDeletionAcknowledged, parseGroupEditChanges, planGroupResize, type GroupEditGraph } from '../../packages/core/src/group-settings-edit'
 
 const group = { id: 1, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 4, mode: 'read' }
@@ -70,6 +71,28 @@ function GroupPreview({ show, setShow, disabled }: { show: boolean; setShow: (va
       }} />}
   </section>
 }
+function AliasPreview() {
+  const [point, setPoint] = useState(() => ({ id: 101, objectId: 1, groupId: 1, alias: '模拟别名' as string | null, functionCode: 3, startAddress: 0, dataType: 'uint16', unit: null, factor: 1, offset: 0, enumJson: null, decimalPlaces: null }))
+  const [source, setSource] = useState(group), [conflict, setConflict] = useState(false), [fail, setFail] = useState(false), [readFail, setReadFail] = useState(false)
+  return <section><h2>行内别名（纯模拟）</h2><p>输入后失焦/回车保存。输入期间用鼠标点击“模拟后台别名刷新”，草稿应保留并提示冲突；记录草稿后显式载入当前配置。可检查清空、失败及360px布局。</p>
+    <label><input type="checkbox" checked={conflict} onChange={e => setConflict(e.target.checked)} />保存前模拟来源变化</label>
+    <label><input type="checkbox" checked={fail} onChange={e => setFail(e.target.checked)} />下次保存响应失败（结果待核实）</label>
+    <label><input type="checkbox" checked={readFail} onChange={e => setReadFail(e.target.checked)} />重新载入失败</label>
+    <button className="btn" onMouseDown={e => e.preventDefault()} onClick={() => setPoint(current => ({ ...current, alias: '后台别名 ' + Date.now() }))}>模拟后台别名刷新</button>
+    <div style={{ maxWidth: 320 }}><AliasCell point={point} group={source} device={device} placeholder="模拟点位别名" onRefresh={() => {}}
+      get={async () => { if (readFail) throw new Error('模拟读取失败'); return { expected: capturePointEditBaseline(point, source, device) } }}
+      put={async (_url, body) => {
+        if (fail) { setFail(false); throw new Error('模拟未知保存结果') }
+        const currentSource = conflict ? { ...source, slaveId: source.slaveId + 1 } : source
+        if (conflict) { setSource(currentSource); setConflict(false) }
+        const request = parsePointEditRequest(body)
+        if (!pointEditMatches(capturePointEditBaseline(point, currentSource, device), request.expected, request.changes)) throw new Error('HTTP 409 模拟配置来源已变化，本次未保存。')
+        if (Object.keys(request.changes).join() !== 'alias') throw new Error('别名模拟只接受alias')
+        const saved = { ...point, alias: request.changes.alias ?? null }; setPoint(saved)
+        return { point: saved, warnings: [] }
+      }} /></div><pre>{JSON.stringify({ point, source }, null, 2)}</pre>
+  </section>
+}
 function Preview() {
   const [settings, setSettings] = useState<PointSettings>({ dataType: 'uint32', unit: '旧单位', factor: 0, offset: 12.5, enumJson: null, decimalPlaces: 1 })
   const [show, setShow] = useState(false), [failOnce, setFailOnce] = useState(false)
@@ -83,6 +106,7 @@ function Preview() {
   return <main style={{ padding: 24 }}>
     <h1>纯 mock 点位设置流程</h1>
     <p>无服务、数据库或设备；保存只更新此页面内存。关闭页面即丢弃模拟配置。</p>
+    <AliasPreview />
     <GroupPreview show={showGroup} setShow={setShowGroup} disabled={show || showDevice || showGroup} />
     <h2>设备编辑并发保护（纯模拟）</h2>
     <p>可切到RTU查看模拟端口；注入固定清单，不枚举或打开系统端口。正常保存、冲突保留草稿和已保存但运行状态警告均只发生在页面内存。</p>

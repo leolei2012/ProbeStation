@@ -1,8 +1,7 @@
-import { capturePointEditBaseline, parsePointEditRequest, type PointEditBaseline } from '../../../packages/core/src/point-settings-edit'
-import type { PointSettingsUpdate } from './point-settings'
+import { capturePointEditBaseline, parsePointEditRequest, type PointEditBaseline, type PointEditChanges } from '../../../packages/core/src/point-settings-edit'
 
 /** One write, no automatic retry or fallback to an older unguarded endpoint. */
-export async function saveGuardedPointSettings(expected: PointEditBaseline, changes: PointSettingsUpdate, put: (url: string, body: unknown) => Promise<unknown>): Promise<readonly string[]> {
+export async function saveGuardedPointSettings(expected: PointEditBaseline, changes: PointEditChanges, put: (url: string, body: unknown) => Promise<unknown>): Promise<readonly string[]> {
   // The enum is not a precondition when omitted from changes. Do not resend a potentially huge opaque source.
   const wireExpected = Object.hasOwn(changes, 'enumJson') ? expected : { ...expected, point: { ...expected.point, enumJson: null } }
   const request = parsePointEditRequest({ expected: wireExpected, changes })

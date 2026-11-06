@@ -446,7 +446,24 @@ export class ConfigStore {
     this.notify('register', id)
     return this.getRegister(id)
   }
-  /** Point-settings UI only. The lock covers compare, range validation, update and readback. */
+  /** Read the point and its source in one SQLite snapshot, without runtime/hardware access. */
+  getRegisterSettings(id: number) {
+    if (!Number.isSafeInteger(id) || id < 1) throw Object.assign(new Error('点位编号无效。'), { statusCode: 400 })
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请稍后重读。'), { statusCode: 409 })
+    this.db.exec('BEGIN')
+    try {
+      const point = this.getRegister(id)
+      if (!point) throw Object.assign(new Error('点位不存在。'), { statusCode: 404 })
+      const group = this.getGroup(point.groupId), device = this.getObject(point.objectId)
+      if (!group || !device || group.objectId !== point.objectId) throw Object.assign(new Error('点位来源不一致，请核对配置。'), { statusCode: 409 })
+      const expected = capturePointEditBaseline(point, group, device)
+      this.db.exec('COMMIT'); return expected
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '点位快照读取结束失败，请核对数据库状态。') }
+      throw error
+    }
+  }
+  /** The lock covers compare, range validation, update and readback for every guarded caller. */
   updateRegisterSettings(id: number, request: unknown): { point: RegisterRecord; warnings: string[] } {
     const { expected, changes } = parsePointEditRequest(request)
     if (!Number.isSafeInteger(id) || id < 1 || expected.point.id !== id) throw Object.assign(new Error('点位编号与保存快照不一致。'), { statusCode: 400 })
@@ -465,7 +482,7 @@ export class ConfigStore {
       if (changes.dataType !== undefined && current.startAddress + registerWidth(changes.dataType) > group.startAddress + group.quantity) throw Object.assign(new Error('dataType spans beyond the group poll range'), { statusCode: 400 })
       this.update('registers', id, changes, REGISTER_MAP)
       point = this.getRegister(id)!
-      if (!point) throw new Error('保存后无法读取点位，事务已中止。')
+      if (!point || Object.entries({ ...current, ...changes }).some(([key, value]) => (point as any)[key] !== value)) throw new Error('点位保存后读回不一致，事务已中止。')
       this.db.exec('COMMIT')
     } catch (error) {
       try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '点位设置回滚失败，结果不确定，请核对配置，勿自动重试。') }

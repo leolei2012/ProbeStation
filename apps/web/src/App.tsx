@@ -1,3 +1,4 @@
+import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
 import { HistoryReadNotice } from './HistoryReadNotice'
@@ -1003,7 +1004,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
                 return (
                   <tr key={r.id} data-register-id={r.id}>
                     {shownColumns.address && <td className="kv" data-label={t('colAddr')}>{r.startAddress}</td>}
-                    <td className="rt-description-cell">{configuring ? <AliasCell t={t} reg={r} onRefresh={onRefresh} /> : <span className="rt-name" title={`${r.alias || '—'} · #${r.id} · FC${g.functionCode} · ${r.startAddress}`}>{r.alias || '—'}</span>}</td>
+                    <td className="rt-description-cell">{configuring ? <AliasCell point={r} group={g} device={device} placeholder={t('colAlias')} put={(url, body, signal) => request(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })} get={(url, signal) => request(url, { signal })} onRefresh={onRefresh} /> : <span className="rt-name" title={`${r.alias || '—'} · #${r.id} · FC${g.functionCode} · ${r.startAddress}`}>{r.alias || '—'}</span>}</td>
                     {shownColumns.type && <td data-label={t('colType')}><span className="point-type">{r.dataType}</span></td>}
                     {showValue && <td data-label={t('colValue')} className={'value rt-numeric-cell rt-stacked-cell' + (state.stale ? ' stale-value' : '') + (alarmActive ? ' alarm-value' : '')}>
                       <div className="rt-value-stack">
@@ -1107,21 +1108,6 @@ function WriteModal({ t, reg, deviceName, currentValue, local, onClose, onSaved 
         </div>
       </div>
     </div>
-  )
-}
-
-function AliasCell({ t, reg, onRefresh }: { t: T; reg: Register; onRefresh: () => void }) {
-  const [val, setVal] = useState(reg.alias ?? '')
-  const operation = useOperation(t)
-  useEffect(() => { setVal(reg.alias ?? '') }, [reg.alias])
-  const commit = async () => {
-    if (val === (reg.alias ?? '')) return
-    await operation.run(async () => { await api.put('/api/registers/' + reg.id, { alias: val || null }); onRefresh() })
-  }
-  return (
-    <div className="inline-edit"><input className="cell-input" disabled={operation.busy} value={val} placeholder={t('colAlias')}
-      onChange={(e) => setVal(e.target.value)} onBlur={commit}
-      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} /></div>
   )
 }
 
