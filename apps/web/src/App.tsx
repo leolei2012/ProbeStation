@@ -13,7 +13,8 @@ import { physicalValue, displayNumber, curveValue, type ValueMode } from './phys
 import { PointSettingsEditor } from './PointSettingsEditor'
 import { ConfigBackupSettings } from './ConfigBackupSettings'
 import { HistoryQualitySummary } from './HistoryQualitySummary'
-import { HistoryQueryTimeoutError, runHistoryQuery } from './history-query'
+import { HistoryQueryTimeoutError } from './history-query'
+import { historyQueryPlan, startHistoryQuery, type HistoryQueryPlan, type HistoryQueryTask } from './history-query-task'
 import { HistoryExportModal } from './HistoryExportModal'
 import { captureHistoryExport, fetchHistoryExport, saveHistoryExport, type HistoryExportRequest } from './history-export'
 import { VirtualTableBody } from './VirtualTableBody'
@@ -1166,11 +1167,11 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   const [preset, setPreset] = useState<number | null>(60)
   const [page, setPage] = useState(0)
   const [refresh, setRefresh] = useState(0)
-  const [data, setData] = useState<{ points: HistoryPoint[]; series?: HistorySeries[]; sourceSamples?: number; displayedSamples?: number; downsampled?: boolean; total: number; start: string; end: string; mode: string } | null>(null)
+  const [data, setData] = useState<{ points: HistoryPoint[]; series?: HistorySeries[]; sourceSamples?: number; displayedSamples?: number; downsampled?: boolean; total: number; plan: HistoryQueryPlan } | null>(null)
   const [curveRange, setCurveRange] = useState<{ start: number; end: number } | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
-  const queryController = useRef<AbortController | null>(null)
+  const queryTask = useRef<HistoryQueryTask | null>(null)
   const [exportRequest, setExportRequest] = useState<HistoryExportRequest | null>(null)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
   useEffect(() => {
@@ -1184,25 +1185,24 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   const valid = Number.isFinite(startMs) && Number.isFinite(endMs) && startMs < endMs
   const { start: queryStart, end: queryEnd } = historyQueryRange(mode === 'chart' && curveRange ? curveRange : { start: startMs, end: endMs })
   const selectionKey = [...selected].sort((a, b) => a - b).join(',')
+  const plan = useMemo(() => valid ? historyQueryPlan({ objectId: device.id, start: queryStart, end: queryEnd, mode, page, registerIds: selectionKey ? selectionKey.split(',').map(Number) : [] }) : null, [device.id, queryStart, queryEnd, valid, mode, page, selectionKey])
   useEffect(() => {
-    if (!valid) return
-    const controller = new AbortController()
-    queryController.current = controller
-    setStatus('loading'); setError(null)
-    const timer = setTimeout(async () => {
-      try {
-        const start = new Date(queryStart).toISOString(), end = new Date(queryEnd).toISOString()
-        const path = mode === 'chart' ? 'series' : 'page'
-        const response = await runHistoryQuery(signal => request(`/api/data/object/${path}?object_id=${device.id}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&page=${page}&page_size=200&max_points=1200&register_ids=${encodeURIComponent(selectionKey)}`, { signal }), controller.signal)
-        if (controller.signal.aborted) return
-        const points: HistoryPoint[] = response.points ?? []
-        setData({ ...response, points, series: response.series?.map((s: any) => ({ ...s, gapMs: s.gapMs ?? Infinity })), total: response.total ?? points.length, start, end, mode }); setStatus('done')
-      } catch (e) {
-        if (!controller.signal.aborted) { setError(e instanceof HistoryQueryTimeoutError ? 'timeout' : e instanceof Error ? e.message : String(e)); setStatus('error') }
+    const task = startHistoryQuery(plan, async (url, signal) => {
+      const response = await request(url, { signal }), points: HistoryPoint[] = response.points ?? []
+      return { ...response, points, series: response.series?.map((s: any) => ({ ...s, gapMs: s.gapMs ?? Infinity })), total: response.total ?? points.length }
+    }, event => {
+      if (event.status === 'done') {
+        setData({ ...event.data, plan: event.plan }); setStatus('done')
+      } else if (event.status === 'error') {
+        setError(event.error instanceof HistoryQueryTimeoutError ? 'timeout' : event.error instanceof Error ? event.error.message : String(event.error)); setStatus('error')
+      } else {
+        setStatus(event.status); setError(null)
+        if (event.status === 'idle') setData(null)
       }
-    }, 250)
-    return () => { clearTimeout(timer); controller.abort(); if (queryController.current === controller) queryController.current = null }
-  }, [device.id, queryStart, queryEnd, valid, mode, page, refresh, selectionKey])
+    })
+    queryTask.current = task
+    return () => { task.dispose(); if (queryTask.current === task) queryTask.current = null }
+  }, [plan, refresh])
   useEffect(() => { setCurveRange(null) }, [startMs, endMs])
   const changeRange = (start: string, end: string) => { setRange({ start, end }); setCurveRange(null); setPage(0) }
   const applyPreset = (minutes: number) => {
@@ -1217,7 +1217,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     if (!exportRange) return
     setExportRequest(captureHistoryExport(device.id, exportRange, selectedRegisters.map(r => r.id), localTzOffsetMin(), scope))
   }
-  const currentStatus = data && (data.mode !== mode || Date.parse(data.start) !== queryStart || Date.parse(data.end) !== queryEnd) && status === 'done' ? 'loading' : status
+  const currentStatus = !plan ? 'idle' : data && data.plan.url !== plan.url && status === 'done' ? 'loading' : status
   const errorText = error === 'timeout' ? t('histTimeout') : error
   return <div className="history-view">
     <div className="toolbar">
@@ -1236,8 +1236,8 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     <div className="toolbar history-range">
       <label className="hist-label">{t('histStart')}<input className="hist-input" type="datetime-local" step="1" value={range.start} onChange={e => { setPreset(null); changeRange(e.target.value, range.end) }} /></label>
       <label className="hist-label">{t('histEnd')}<input className="hist-input" type="datetime-local" step="1" value={range.end} onChange={e => { setPreset(null); changeRange(range.start, e.target.value) }} /></label>
-      <button className="btn primary" disabled={!valid || currentStatus === 'loading'} onClick={() => setRefresh(v => v + 1)}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
-      {currentStatus === 'loading' && <button className="btn" onClick={() => { queryController.current?.abort(); setStatus('idle'); setError(null) }}>{t('histCancel')}</button>}
+      <button className="btn primary" disabled={!plan || currentStatus === 'loading'} onClick={() => setRefresh(v => v + 1)}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
+      {currentStatus === 'loading' && <button className="btn" onClick={() => queryTask.current?.cancel()}>{t('histCancel')}</button>}
     </div>
     {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
     {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} pointLabels={pointLabels} t={t} />}
@@ -1253,15 +1253,14 @@ function HistoryTableBody({ pointLabels, t, rows, selectedRegisters, status, err
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const currentPage = Math.min(Math.max(0, page), totalPages - 1)
   const shown = rows
+  if (!selectedRegisters.length) return <div className="hist-empty">{t('histNoRegs')}</div>
 
   return (
     <>
       {status === 'idle' && <div className="hist-empty" role="status">{t('histCancelled')}</div>}
       {status === 'done' && rows.length === 0 && <div className="hist-empty">{t('histEmpty')}</div>}
       {status === 'error' && <div className="hist-empty warn">{t('histError')} {error}</div>}
-      {status === 'done' && rows.length > 0 && (selectedRegisters.length === 0 ? (
-        <div className="hist-empty">{t('histNoRegs')}</div>
-      ) : (
+      {status === 'done' && rows.length > 0 && (
         <>
           <div className="history-table-scroll" tabIndex={0} aria-label={t('histTable')}><table className="reg hist-table">
             <thead><tr><th>{t('colTime')}</th>{selectedRegisters.map(r => <th key={r.id}><PointLabel label={pointLabels.get(r.id)!} /></th>)}</tr></thead>
@@ -1280,7 +1279,7 @@ function HistoryTableBody({ pointLabels, t, rows, selectedRegisters, status, err
             <button className="btn" onClick={() => onPageChange(totalPages - 1)} disabled={currentPage >= totalPages - 1}>{t('histLast')}</button>
           </div>
         </>
-      ))}
+      )}
     </>
   )
 }
@@ -1553,10 +1552,10 @@ function ChartBody({ pointLabels, valueMode, t, registers, selected, pts, source
     const valid = point != null && (hover === null || Math.abs(point[0] - hover) <= s.gapMs / 2) && point[1] !== null
     return { id: s.id, label: pointLabels.get(s.id)!, color: s.color, value: (valid ? reading(point![1]!, reg) : '—') + ' [' + historyVerificationLabel[point ? s.verification?.find(v => v[0] === point[0])?.[1] ?? 'unverified' : 'unknown'] + ']', time: valid ? point![0] : null, point: valid ? point as [number, number] : null }
   })
+  if (selected.size === 0) return <div className="hist-empty">{t('histNoRegs')}</div>
   if (status === 'idle') return <div className="hist-empty" role="status">{t('histCancelled')}</div>
   if (status === 'loading') return <div className="hist-empty" role="status">{t('histLoading')}</div>
   if (status === 'error') return <div className="hist-empty warn" role="alert">{t('histError')}: {error}</div>
-  if (selected.size === 0) return <div className="hist-empty">{t('histNoRegs')}</div>
   if (!pts.length && !series.some(s => s.samples.length)) return <div className="hist-empty">{t('histEmpty')}</div>
   if (!series.length) return <div className="hist-empty">{t('histNoNumeric')}</div>
   return <div className="chart-wrap history-chart">
