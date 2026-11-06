@@ -1,5 +1,7 @@
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
+import { HistoryReadNotice } from './HistoryReadNotice'
+import { historyReadContextKey, reduceHistoryRead, historyReadView, type HistoryReadState } from './history-read-context'
 import { HistoryQueryMemoryPanel } from './HistoryQueryMemory'
 import { HistoryQueryMemory, QueryMemoryError, queryMemoryContext } from './history-query-memory'
 import { historyTimeRange, resolveHistoryTimeRange, editHistoryTime, changeHistoryInputZone, historyPresetRange } from './history-time-range'
@@ -26,7 +28,7 @@ import { PointSettingsEditor } from './PointSettingsEditor'
 import { ConfigBackupSettings } from './ConfigBackupSettings'
 import { HistoryQualitySummary } from './HistoryQualitySummary'
 import { HistoryQueryTimeoutError } from './history-query'
-import { historyQueryPlan, startHistoryQuery, type HistoryQueryPlan, type HistoryQueryTask } from './history-query-task'
+import { historyQueryPlan, startHistoryQuery, type HistoryQueryTask } from './history-query-task'
 import { HistoryExportModal } from './HistoryExportModal'
 import { captureHistoryExport, fetchHistoryExport, saveHistoryExport, type HistoryExportRequest } from './history-export'
 import { VirtualTableBody } from './VirtualTableBody'
@@ -1204,6 +1206,7 @@ function deriveHistoryRows(pts: HistoryPoint[], registers: Register[], selectedR
   })
 }
 
+interface HistoryPayload { points: HistoryPoint[]; series?: HistorySeries[]; sourceSamples?: number; displayedSamples?: number; downsampled?: boolean; total: number }
 function HistoryView({ memory, configurationReady, target, t, device, groups, registers }: { memory: HistoryQueryMemory; configurationReady: boolean; target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
   const [mode, setMode] = useState<'table' | 'chart'>('table')
   const [valueMode, setValueMode] = useValueMode('ps-history-value-mode-' + device.id)
@@ -1211,10 +1214,8 @@ function HistoryView({ memory, configurationReady, target, t, device, groups, re
   const [preset, setPreset] = useState<number | null>(60)
   const [page, setPage] = useState(0)
   const [refresh, setRefresh] = useState(0)
-  const [data, setData] = useState<{ points: HistoryPoint[]; series?: HistorySeries[]; sourceSamples?: number; displayedSamples?: number; downsampled?: boolean; total: number; plan: HistoryQueryPlan } | null>(null)
+  const [readState, setReadState] = useState<HistoryReadState<HistoryPayload> | null>(null)
   const [curveRange, setCurveRange] = useState<{ start: number; end: number } | null>(null)
-  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('loading')
-  const [error, setError] = useState<string | null>(null)
   const queryTask = useRef<HistoryQueryTask | null>(null)
   const [exportRequest, setExportRequest] = useState<HistoryExportRequest | null>(null)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
@@ -1243,26 +1244,20 @@ function HistoryView({ memory, configurationReady, target, t, device, groups, re
   const pointLabels = useMemo(() => buildPointLabels(registers, groups, t, device.mode === 'slave' ? device.slaveId : undefined), [registers, groups, t, device.mode, device.slaveId])
   const { start: startMs, end: endMs, valid } = useMemo(() => resolveHistoryTimeRange(range), [range])
   const memoryContext = useMemo(() => queryMemoryContext(device, registers), [registers, device.id, device.mode, device.transport, device.ip, device.port, device.serialPath, device.slaveId, device.baudRate, device.parity, device.stopBits, device.dataBits, device.flowControl])
+  const contextKey = useMemo(() => historyReadContextKey(device, groups, registers), [groups, registers, device.id, device.mode, device.slaveId])
+  useEffect(() => { setPage(0); if (!configurationReady || contextKey === null) setCurveRange(null) }, [contextKey, configurationReady])
   const { start: queryStart, end: queryEnd } = historyQueryRange(mode === 'chart' && curveRange ? curveRange : { start: startMs, end: endMs })
   const selectionKey = [...selected].sort((a, b) => a - b).join(',')
-  const plan = useMemo(() => valid ? historyQueryPlan({ objectId: device.id, start: queryStart, end: queryEnd, mode, page, registerIds: selectionKey ? selectionKey.split(',').map(Number) : [] }) : null, [device.id, queryStart, queryEnd, valid, mode, page, selectionKey])
+  const plan = useMemo(() => valid && configurationReady && contextKey !== null ? historyQueryPlan({ objectId: device.id, start: queryStart, end: queryEnd, mode, page, registerIds: selectionKey ? selectionKey.split(',').map(Number) : [], contextKey, revision: refresh }) : null, [device.id, queryStart, queryEnd, valid, configurationReady, contextKey, mode, page, selectionKey, refresh])
+  const { data, status: currentStatus, error, contextChanged } = historyReadView(plan, readState)
   useEffect(() => {
-    const task = startHistoryQuery(plan, async (url, signal) => {
+    const task = startHistoryQuery<HistoryPayload>(plan, async (url, signal) => {
       const response = await request(url, { signal }), points: HistoryPoint[] = response.points ?? []
       return { ...response, points, series: response.series?.map((s: any) => ({ ...s, gapMs: s.gapMs ?? Infinity })), total: response.total ?? points.length }
-    }, event => {
-      if (event.status === 'done') {
-        setData({ ...event.data, plan: event.plan }); setStatus('done')
-      } else if (event.status === 'error') {
-        setError(event.error instanceof HistoryQueryTimeoutError ? 'timeout' : event.error instanceof Error ? event.error.message : String(event.error)); setStatus('error')
-      } else {
-        setStatus(event.status); setError(null)
-        if (event.status === 'idle') setData(null)
-      }
-    })
+    }, event => setReadState(previous => reduceHistoryRead(previous, plan, event)))
     queryTask.current = task
     return () => { task.dispose(); if (queryTask.current === task) queryTask.current = null }
-  }, [plan, refresh])
+  }, [plan])
   useEffect(() => { setCurveRange(null) }, [startMs, endMs])
   const applyPreset = (minutes: number) => {
     const now = Date.now()
@@ -1271,23 +1266,23 @@ function HistoryView({ memory, configurationReady, target, t, device, groups, re
   }
   const rows = useMemo(() => deriveHistoryRows(data?.points ?? [], registers, selectedRegisters, valueMode), [data, registers, selected, valueMode])
   const beginExport = (scope: HistoryExportRequest['scope']) => {
-    if (!valid || !selectedRegisters.length) return
+    if (!configurationReady || contextKey === null || !valid || !selectedRegisters.length) return
     const exportRange = scope === 'viewport' ? (mode === 'chart' ? curveRange : null) : { start: startMs, end: endMs }
     if (!exportRange) return
     setExportRequest(captureHistoryExport(device.id, exportRange, selectedRegisters.map(r => r.id), localTzOffsetMin(), scope))
   }
-  const currentStatus = !plan ? 'idle' : data && data.plan.url !== plan.url && status === 'done' ? 'loading' : status
-  const errorText = error === 'timeout' ? t('histTimeout') : error
+  const errorText = error instanceof HistoryQueryTimeoutError ? t('histTimeout') : error instanceof Error ? error.message : error == null ? null : String(error)
   return <div className="history-view">
     <div className="toolbar">
       <div className="seg"><button className={mode === 'table' ? 'selected' : ''} onClick={() => { setMode('table'); setPage(0) }}>{t('histTable')}</button><button className={mode === 'chart' ? 'selected' : ''} onClick={() => { setMode('chart'); setPage(0) }}>{t('tabCurve')}</button></div>
       <ValueModeControl t={t} value={valueMode} onChange={setValueMode} />
       <RegisterSelectButton t={t} groups={groups} deviceSlaveId={device.mode === 'slave' ? device.slaveId : undefined} selected={selected} onApply={ids => { cancelNavigation(); setSelected(ids) }} />
       <div style={{ flex: 1 }} />
-      <button className="btn" disabled={!valid || selected.size === 0 || currentStatus === 'loading'} onClick={() => beginExport('full')}>{t('histExportFull')}</button>
-      {mode === 'chart' && <button className="btn" disabled={!valid || selected.size === 0 || !curveRange || currentStatus !== 'done'} onClick={() => beginExport('viewport')}>{t('histExportViewport')}</button>}
+      <button className="btn" disabled={!configurationReady || contextKey === null || !valid || selected.size === 0 || currentStatus === 'loading'} onClick={() => beginExport('full')}>{t('histExportFull')}</button>
+      {mode === 'chart' && <button className="btn" disabled={!configurationReady || contextKey === null || !valid || selected.size === 0 || !curveRange || currentStatus !== 'done'} onClick={() => beginExport('viewport')}>{t('histExportViewport')}</button>}
     </div>
     <p className="chart-hint" role="note">{t('histIntegrityHint')}</p>
+    <HistoryReadNotice reason={!configurationReady ? 'waiting' : contextKey === null ? 'invalid' : contextChanged ? 'changed' : null} english={t('cancel') === 'Cancel'} />
     {navigationNotice && <p className={'chart-hint' + (navigationNotice.kind !== 'waiting' ? ' warn' : '')} role={navigationNotice.kind === 'waiting' ? 'status' : 'alert'}>{t(navigationNotice.kind === 'waiting' ? 'histNavigationWaiting' : navigationNotice.kind === 'missing' ? 'histNavigationMissing' : 'histNavigationInvalid').replace('{id}', String(navigationNotice.id ?? ''))}</p>}
     {valueMode === 'physical' && <p className="chart-hint">{t('physicalHistoryHint')}</p>}
     <div className="hist-quick history-presets">
@@ -1311,7 +1306,7 @@ function HistoryView({ memory, configurationReady, target, t, device, groups, re
       })} />
     {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
     {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} pointLabels={pointLabels} t={t} />}
-    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody key={navigationRevision} pointLabels={pointLabels} sourceSeries={data?.series} onViewportChange={view => { cancelNavigation(); setCurveRange(view) }} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>
+    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : !configurationReady || contextKey === null ? null : mode === 'chart' ? <ChartBody queryContextKey={contextKey} key={navigationRevision} pointLabels={pointLabels} sourceSeries={data?.series} onViewportChange={view => { cancelNavigation(); setCurveRange(view) }} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
       <HistoryTableBody pointLabels={pointLabels} t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={errorText} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
     </>}
@@ -1542,9 +1537,10 @@ function ChartReadout({ t, time, rows }: { t: T; time: number | null; rows: { id
   </div>
 }
 
-function ChartBody({ pointLabels, valueMode, t, registers, selected, pts, sourceSeries, status, error, range, onViewportChange }: {
+function ChartBody({ queryContextKey, pointLabels, valueMode, t, registers, selected, pts, sourceSeries, status, error, range, onViewportChange }: {
   valueMode: ValueMode; t: T; registers: Register[]; selected: Set<number>; pts: HistoryPoint[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null
   pointLabels: Map<number, PointLabelData>; sourceSeries?: HistorySeries[]; range: { start: number; end: number }; onViewportChange: (view: { start: number; end: number } | null) => void
+  queryContextKey: string
 }) {
   const [view, setView] = useState<{ start: number; end: number } | null>(null)
   const [yView, setYView] = useState<{ min: number; max: number } | null>(null)
@@ -1557,14 +1553,14 @@ function ChartBody({ pointLabels, valueMode, t, registers, selected, pts, source
   const observer = useRef<ResizeObserver | null>(null)
   const clipId = useId()
   const series = useMemo(() => (sourceSeries ?? decodeHistorySeries(registers, pts, selected)).filter(s => selected.has(s.id)).map(s => { const r = registers.find(r => r.id === s.id)!; return { ...s, samples: s.samples.map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) } }), [registers, pts, sourceSeries, selected, valueMode])
-  const comparisonContext = useMemo(() => historyComparisonContext(registers.filter(r => selected.has(r.id)), range, valueMode, hidden), [registers, selected, range.start, range.end, valueMode, hidden])
+  const comparisonContext = useMemo(() => JSON.stringify([queryContextKey, historyComparisonContext(registers.filter(r => selected.has(r.id)), range, valueMode, hidden)]), [queryContextKey, registers, selected, range.start, range.end, valueMode, hidden])
   const [comparison, setComparison] = useState<HistoryComparisonState>(() => ({ context: comparisonContext, a: null, b: null }))
   const [comparisonOpen, setComparisonOpen] = useState(false)
   const activeComparison = comparison.context === comparisonContext ? comparison : { context: comparisonContext, a: null, b: null }
   useEffect(() => { setComparison(previous => updateHistoryComparison(previous, { type: 'context', context: comparisonContext })) }, [comparisonContext])
   const mixedUnits = valueMode === 'physical' && new Set(registers.filter(r => selected.has(r.id)).map(r => r.unit?.trim() || '')).size > 1
   const reading = (value: number, reg?: Register) => displayNumber(value, valueMode === 'physical' ? reg : undefined) + (valueMode === 'physical' && reg?.unit ? ' ' + reg.unit : '')
-  useEffect(() => { setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [valueMode])
+  useEffect(() => { setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [valueMode, queryContextKey])
   useEffect(() => { setView(null); setYView(null); setHover(null); setDrag(null); dragRef.current = null }, [range.start, range.end])
   const setPlot = useCallback((el: HTMLDivElement | null) => {
     observer.current?.disconnect()
