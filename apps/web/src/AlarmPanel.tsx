@@ -1,7 +1,10 @@
 import React, { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ALARM_OPERATORS, alarmMatches } from '../../../packages/core/src/alarm.ts'
 import { type Sample } from './observation'
-import { readPointAlarmValue } from './alarm-value'
+import { readPointAlarmObservation } from './alarm-value'
+import { alarmHistoryState } from './alarm-history'
+import { AlarmHistoryAction } from './AlarmHistoryAction'
+import type { DataTarget } from './DeviceIssues'
 import { AlarmRulesReader, readAlarmRules } from './alarm-rule-read'
 import { AlarmRuleReadStatus, alarmRuleSummaryKey } from './AlarmRuleReadStatus'
 
@@ -33,9 +36,10 @@ export function useAlarmRules(deviceId: number) {
     retry: () => { if (!lock.current) void reader.refresh(true) } }
 }
 
-export function AlarmPanel({ t, device, groups, latest, groupErrors, now, threshold, point, onClose }: {
+export function AlarmPanel({ t, device, groups, latest, groupErrors, now, threshold, point, onClose, configurationReady = false, onHistory }: {
   t: (key: string) => string; device: { id: number; isActive: number; mode?: string; slaveId?: number }; groups: Group[]
   latest: Record<string, Sample>; groupErrors: Record<number, string>; now: number; threshold: number; point?: Register; onClose?: () => void
+  configurationReady?: boolean; onHistory?: (target: Readonly<DataTarget>) => void
 }) {
   const { rules, setRules, error, setError, lock, ready, reading, state: readState, invalidate, retry } = useAlarmRules(device.id)
   const [open, setOpen] = useState(!!point)
@@ -52,9 +56,9 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
   const evaluated = localRules.map(rule => {
     const group = groups.find(g => g.registers.some(r => r.id === rule.registerId))!
     const reg = group.registers.find(r => r.id === rule.registerId)!
-    const value = readPointAlarmValue(reg, latest, device, group, now, threshold, !!groupErrors[group.id])
+    const observation = readPointAlarmObservation(reg, latest, device, group, now, threshold, !!groupErrors[group.id]), value = observation?.value ?? null
     const known = value !== null && (typeof value === 'bigint' || Number.isFinite(value))
-    return { rule, reg, known, value, active: known && alarmMatches(value, rule.operator, rule.threshold) }
+    return { rule, reg, observation, known, value, active: known && alarmMatches(value, rule.operator, rule.threshold) }
   })
   const active = evaluated.filter(e => e.active), unknown = evaluated.filter(e => !e.known)
   const reset = () => { setEditId(null); setRegisterId(point ? String(point.id) : ''); setOperator('>'); setLimit(''); setMessage(''); setDeleting(null) }
@@ -74,7 +78,9 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
     {!point && <>
       <div className="alarm-summary"><span className={ready && !reading && active.length ? 'alarm-count active' : 'alarm-count'}>{t('alarmLabel')} · {t(alarmRuleSummaryKey(readState, active.length, localRules.length, unknown.length)).replace('{n}', String(active.length))}</span></div>
       <AlarmRuleReadStatus state={readState} onRetry={retry} disabled={busy} english={t('cancel') === 'Cancel'} />
-      {active.length > 0 && <div className="alarm-active-list" role="alert">{(!ready || reading) && <p>{t('alarmRetainedRules')}</p>}{active.map(({ rule, reg, value }) => <div key={rule.id}><strong>{reg.alias || '#' + reg.startAddress}</strong><span>{rule.message || t('alarmTriggered')}</span><small>{t('colRawValue')}: {String(value)} · {symbols[rule.operator]} {rule.threshold}</small></div>)}</div>}
+      {active.length > 0 && <div className="alarm-active-list" role="alert">{(!ready || reading) && <p>{t('alarmRetainedRules')}</p>}{active.map(({ rule, reg, observation, value }) => <div key={rule.id}><strong>{reg.alias || '#' + reg.startAddress}</strong><span>{rule.message || t('alarmTriggered')}</span><small>{t('colRawValue')}: {String(value)} · {symbols[rule.operator]} {rule.threshold}</small>
+        {onHistory && <AlarmHistoryAction state={alarmHistoryState(observation, rule, reg, device.id, configurationReady, ready && !reading, now, threshold)} resolve={() => alarmHistoryState(observation, rule, reg, device.id, configurationReady, ready && !reading, Date.now(), threshold)} onOpen={onHistory} english={t('cancel') === 'Cancel'} />}
+      </div>)}{onHistory && <p className="alarm-history-hint">{t('alarmHistoryHint')}</p>}</div>}
       {ready && !reading && unknown.length > 0 && <p className="alarm-hint">{t('alarmUnknown').replace('{n}', String(unknown.length))}</p>}
       {error && <p className="write-msg error" role="alert">{t('alarmLoadError')}: {error}</p>}
     </>}

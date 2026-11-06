@@ -75,6 +75,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     histCancel: '取消查询', histCancelled: '查询已取消，可点击“查询”重新加载。', histTimeout: '查询超过 30 秒，请缩小时间范围后重试。',
     histCoverage: '当前视窗完整区间：{source} 个采样，显示 {shown} 个读数', histSampled: '峰谷保留降采样，放大自动加载细节', histOriginal: '原始采样',
     alarmDelete: '删除', alarmClose: '关闭',
+    alarmHistoryHint: '定位的是当前命中条件的采样，不是告警首次发生时间。按当前点表查询原始值，采样可能尚未落库或已被清理；历史质量标记仍需核对。',
     alarmRulesReading: '正在读取规则', alarmRulesUnverified: '规则待核实', alarmRetainedRules: '以下按上次读取规则计算，供核对；不代表当前完整告警状态。', alarmWriteVerify: '保存/删除结果需核实。请先重新读取规则并核对，避免重复操作；重新读取不会重复保存或删除。',
     alarmLabel: '告警', alarmRules: '告警规则', alarmActive: '{n} 项触发', alarmNormal: '未触发', alarmWaiting: '等待有效数据', alarmNone: '未设置规则', alarmTriggered: '条件触发', alarmUnknown: '{n} 项规则暂无有效数据，设备暂停、通信异常或数据过期时不判断告警。', alarmLoadError: '告警规则加载失败', alarmHelp: '按点位类型解码后的原始值比较，不应用系数、偏移或显示舍入。条件命中时持续提示，恢复后自动消除；同一次持续告警只记录一条日志。', alarmInvalid: '请选择点位，并填写有效的原始值阈值。', alarmAdd: '新增规则', alarmEdit: '编辑规则', alarmPoint: '告警点位', alarmChoose: '选择点位', alarmOperator: '比较条件', alarmThreshold: '原始值阈值', alarmMessage: '告警提示（可选）', alarmMessageHint: '例如：温度过高，请检查散热', alarmCancelEdit: '取消编辑', alarmConfirmDelete: '删除这条告警规则？',
     displayValueMode: '数值显示模式', pointDecimals: '物理值小数位数', pointDecimalsAuto: '自动', displayColumns: '显示列', displayColumnsHint: '原始值与物理值共用一列，至少保留一种数值。设置保存在当前浏览器。', displayColumnsConfigHint: '配置模式保留点位设置列，类型在点位设置中修改。原始值在上、物理值在下。', displayColumnsCompact: '精简显示', displayColumnsAll: '显示全部', livePhysicalHint: '按原始解码值 × 系数 + 偏移绘制，不因小数位数设置舍入曲线；悬停读数显示工程单位。', mixedUnitsHint: '当前曲线包含不同工程单位，数值共用纵轴。建议分开选择点位；历史曲线也可使用相对量程比较趋势。', exportRaw: '导出原始值', physicalHistoryHint: '历史物理值按当前点位系数、偏移计算；不是采样时的配置快照。',
@@ -148,6 +149,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     histCancel: 'Cancel query', histCancelled: 'Query cancelled. Click Query to reload.', histTimeout: 'Query exceeded 30 seconds. Narrow the time range and retry.',
     histCoverage: 'Full visible range: {source} samples, {shown} displayed', histSampled: 'Extrema preserved; zoom reloads detail', histOriginal: 'Original samples',
     alarmDelete: 'Delete', alarmClose: 'Close',
+    alarmHistoryHint: 'Navigates to the current matching sample, not the first alarm occurrence. Queries raw values with current point definitions; the sample may not be persisted or retained. Check historical quality labels.',
     alarmRulesReading: 'Reading rules', alarmRulesUnverified: 'Rules unverified', alarmRetainedRules: 'Calculated with the last rule list for review; not the complete current alarm status.', alarmWriteVerify: 'Save/delete outcome needs verification. Read the rules again and check before repeating the operation; rereading never saves or deletes.',
     alarmLabel: 'Alarms', alarmRules: 'Alarm rules', alarmActive: '{n} triggered', alarmNormal: 'Not triggered', alarmWaiting: 'Waiting for valid data', alarmNone: 'No rules configured', alarmTriggered: 'Condition triggered', alarmUnknown: '{n} rules lack valid data. Paused devices, communication faults and stale samples are not evaluated.', alarmLoadError: 'Failed to load alarm rules', alarmHelp: 'Compare decoded raw values without scaling, offsets or display rounding. Show alarms while conditions match and clear when they recover. Log once per continuous alarm.', alarmInvalid: 'Select a point and enter a finite raw threshold.', alarmAdd: 'Add rule', alarmEdit: 'Edit rule', alarmPoint: 'Point', alarmChoose: 'Select a point', alarmOperator: 'Comparison', alarmThreshold: 'Raw threshold', alarmMessage: 'Alarm message (optional)', alarmMessageHint: 'Example: Temperature too high', alarmCancelEdit: 'Cancel editing', alarmConfirmDelete: 'Delete this alarm rule?',
     displayValueMode: 'Value display mode', pointDecimals: 'Physical value decimal places', pointDecimalsAuto: 'Automatic', displayColumns: 'Columns', displayColumnsHint: 'Raw and physical values share one column. Keep at least one value type. Saved in this browser.', displayColumnsConfigHint: 'Point settings remain visible while configuring; edit the type in point settings. Raw values above physical values.', displayColumnsCompact: 'Compact view', displayColumnsAll: 'Show all', livePhysicalHint: 'Plot raw value × factor + offset at full precision. Display precision affects text only; readings include engineering units.', mixedUnitsHint: 'These series use different engineering units on a shared axis. Select them separately, or compare trends using relative ranges in history.', exportRaw: 'Export raw values', physicalHistoryHint: 'Historical physical values use the current point factor and offset, not the configuration at sampling time.',
@@ -724,7 +726,7 @@ export default function App() {
         {view === 'database'
           ? <DatabaseView t={t} devices={devices} />
           : (selected
-              ? <DeviceView configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+              ? <DeviceView onNavigate={navigateData} configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
               : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
       </main>
 
@@ -820,8 +822,9 @@ function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
   )
 }
 
-function DeviceView({ configurationReady, target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
+function DeviceView({ onNavigate, configurationReady, target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
   configurationReady: boolean; target: DataTarget | null; t: T; device: Device; connected: boolean; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
+  onNavigate: (target: DataTarget) => void
   realtime: { status: RealtimeStatus; attempt: number }
   fallbackOk?: boolean
   busy: boolean; onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => Promise<void>; onDelete: (id: number) => void; onRefresh: (id: number) => void
@@ -860,7 +863,7 @@ function DeviceView({ configurationReady, target, t, device, connected, groups, 
       </div>
       {device.mode === 'slave' && <DeviceSlaveStatus deviceId={device.id} />}
       <TabBar tabs={[{ id: 0, label: t('tabLive') }, { id: 1, label: t('liveCurve') }, { id: 2, label: t('tabHistory') }, ...(device.mode === 'slave' ? [] : [{ id: 3, label: t('tabRaw') }, { id: 4, label: t('tabFirmware') }]), { id: 5, label: t('pointCheckTab') }]} active={tab} onChange={setTab} />
-      <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
+      <AlarmPanel configurationReady={configurationReady} onHistory={onNavigate} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
       {tab === 2 && <HistoryView memory={queryMemory.current} configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
@@ -1226,6 +1229,7 @@ function HistoryView({ memory, configurationReady, target, t, device, groups, re
     if (action.invalid) { setNavigationNotice({ kind: 'invalid' }); setSelected(new Set()); return }
     if (action.range) {
       const nextRange = action.range
+      if (action.valueMode) setValueMode(action.valueMode)
       setRange(previous => historyTimeRange(nextRange.start, nextRange.end, previous.zone))
       setPreset(null); setPage(0); setMode('chart'); setCurveRange(null); setNavigationRevision(value => value + 1); setRefresh(value => value + 1); setNavigationNotice(null)
     }

@@ -19,6 +19,7 @@
     "preview:backup": "tsx scripts/preview-register-picker.ts --backup",
     "preview:live-filter": "tsx scripts/preview-register-picker.ts --live-filter",
     "preview:markdown": "tsx scripts/preview-register-picker.ts --markdown",
+    "preview:alarm-history": "tsx scripts/preview-register-picker.ts --alarm-history",
     "preview:alarm-rules": "tsx scripts/preview-register-picker.ts --alarm-rules",
     "preview:query-memory": "tsx scripts/preview-register-picker.ts --query-memory",
     "preview:time-range": "tsx scripts/preview-register-picker.ts --time-range",

@@ -954,3 +954,8 @@ table.reg th, .btn { white-space: nowrap; }
 .alarm-rule-read-status p { margin: 4px 0; }
 .alarm-rule-read-status small { display: block; margin-top: 6px; }
 .alarm-rule-refresh { min-height: 1.5em; margin: 4px 0; font-size: 12px; color: var(--text-3); }
+.alarm-active-list .alarm-history-action { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
+.alarm-history-action small, .alarm-history-hint { overflow-wrap: anywhere; }
+.alarm-history-action .btn { white-space: normal; }
+.alarm-history-hint { font-size: 12px; margin: 4px 0; }
+.alarm-active-list > div > strong { min-width: 0; overflow-wrap: anywhere; }

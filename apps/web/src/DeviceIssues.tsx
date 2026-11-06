@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { assistantRequest } from './assistant-client'
 
-export type DataTarget = { deviceId: number; view: 'live' | 'history' | 'diagnostics'; label: string; registerId?: number; start?: string; end?: string; token?: number }
+export type DataTarget = { deviceId: number; view: 'live' | 'history' | 'diagnostics'; label: string; registerId?: number; start?: string; end?: string; valueMode?: 'raw' | 'physical'; token?: number }
 export function DeviceIssues({ onNavigate }: { onNavigate: (target: DataTarget) => void }) {
   const [issues, setIssues] = useState<(DataTarget & { reason: string })[]>([])
   const [error, setError] = useState('')

@@ -13,11 +13,26 @@ export function readAlarmValue(dataType: string, words: Array<Sample | undefined
   return typeof value === 'number' && !Number.isFinite(value) ? null : value
 }
 
-/** Select the configured source before applying the existing alarm quality/batch checks. */
-export function readPointAlarmValue(reg: { dataType: string; functionCode: number; startAddress: number }, latest: Record<string, Sample>, device: { id: number; isActive: number; mode?: string; slaveId?: number }, group: { isActive: number; slaveId?: number }, now: number, threshold: number, fault: boolean): number | bigint | null {
+type AlarmPoint = { id?: number; dataType: string; functionCode: number; startAddress: number }
+type AlarmDevice = { id: number; isActive: number; mode?: string; slaveId?: number }
+type AlarmGroup = { isActive: number; slaveId?: number }
+export interface AlarmObservation {
+  readonly value: number | bigint; readonly objectId: number; readonly registerId: number | null; readonly functionCode: number; readonly address: number; readonly dataType: string
+  readonly slaveId: number; readonly width: number; readonly sampledAt: number | null; readonly batchId: string | null
+}
+/** Project the exact words used for the existing value evaluation, never a second cache lookup. */
+export function readPointAlarmObservation(reg: AlarmPoint, latest: Record<string, Sample>, device: AlarmDevice, group: AlarmGroup, now: number, threshold: number, fault: boolean): AlarmObservation | null {
   const slaveId = device.mode === 'slave' ? device.slaveId : group.slaveId
   if (!validSlaveId(slaveId)) return null
   const area = reg.functionCode === 1 ? 'coil' : reg.functionCode === 2 ? 'discrete-input' : reg.functionCode === 4 ? 'input-register' : 'holding-register'
   const words = Array.from({ length: registerWidth(reg.dataType) }, (_, i) => sourceSample(latest, device.id, area, reg.startAddress + i, slaveId))
-  return readAlarmValue(reg.dataType, words, now, threshold, !device.isActive || !group.isActive, fault)
+  const value = readAlarmValue(reg.dataType, words, now, threshold, !device.isActive || !group.isActive, fault)
+  if (value === null) return null
+  const times = words.map(word => sampleTime(word)!), batch = words[0]?.batchId
+  return Object.freeze({ value, objectId: device.id, registerId: reg.id ?? null, functionCode: reg.functionCode, address: reg.startAddress, dataType: reg.dataType, slaveId, width: words.length,
+    sampledAt: times.every(time => time === times[0]) ? times[0] : null, batchId: typeof batch === 'string' && batch.length > 0 && words.every(word => word?.batchId === batch) ? batch : null })
+}
+/** Select the configured source before applying the existing alarm quality/batch checks. */
+export function readPointAlarmValue(reg: AlarmPoint, latest: Record<string, Sample>, device: AlarmDevice, group: AlarmGroup, now: number, threshold: number, fault: boolean): number | bigint | null {
+  return readPointAlarmObservation(reg, latest, device, group, now, threshold, fault)?.value ?? null
 }
