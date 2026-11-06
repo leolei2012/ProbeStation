@@ -923,3 +923,7 @@ table.reg th, .btn { white-space: nowrap; }
 .point-diagnostic-related li { margin: 8px 0; }
 .point-diagnostic-related li > small { display: block; color: var(--text-3); }
 .point-diagnostic-related input { max-width: 100%; box-sizing: border-box; }
+
+.backup-file-name, .backup-outcome { overflow-wrap: anywhere; }
+.backup-outcome { margin: 12px 0; padding: 12px; border: 1px solid var(--border-2); border-radius: 8px; }
+.config-backup-settings .warn > small { display: block; }

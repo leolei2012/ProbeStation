@@ -450,8 +450,10 @@ export class ConfigStore {
       this.db.exec('COMMIT')
     } catch (e) { this.db.exec('ROLLBACK'); throw e }
     finally { this.restoring = false }
-    this.notify('backup')
-    return { deviceIds: [...devices.values()], devices: devices.size, groups: groups.size, registers: registers.size, rules: b.rules.length }
+    const warnings: string[] = []
+    try { this.notify('backup') }
+    catch { warnings.push('配置已恢复，但变更通知未完成。请刷新设备列表并核对新增的暂停设备，不要重复恢复。') }
+    return { deviceIds: [...devices.values()], devices: devices.size, groups: groups.size, registers: registers.size, rules: b.rules.length, warnings }
   }
 
   /** 元数据计数（供数据统计展示）。 */

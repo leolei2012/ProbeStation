@@ -169,3 +169,27 @@ try {
   }
   console.log('CONFIG BACKUP OK: preview, remapped IDs, paused devices, semantics/alarms, atomic rollback and origin guard')
 } finally { await app.close(); (cfg as any).db.close() }
+
+// A notification is outside the committed transaction and must not turn a completed restore into a retryable failure.
+{
+  const source = new ConfigStore({ dbPath: ':memory:' })
+  let notifications = 0
+  const target = new ConfigStore({ dbPath: ':memory:' }, scope => { if (scope === 'backup') { notifications++; throw new Error('private mock notification detail') } })
+  const api = Fastify(); registerConfigBackup(api, target)
+  try {
+    const device = source.createObject('Mock restore', '127.0.0.1', 1502, 'slave')
+    const group = source.createGroup(device.id, 'Mock points', 3, 0, 2)
+    source.createRegister(group.id, device.id, 'Mock wide value', 3, 0, 'uint32')
+    const existing = target.createObject('Existing mock', '127.0.0.1', 1503, 'slave')
+    const response = await api.inject({ method: 'POST', url: '/api/config/backup/restore', headers: { 'x-probestation-config': '1' }, payload: source.exportBackup() })
+    assert.equal(response.statusCode, 200, 'a committed restore remains successful when notification fails')
+    const result = response.json()
+    assert.equal(result.devices, 1); assert.equal(result.warnings.length, 1)
+    assert.ok(!response.body.includes('private mock'))
+    assert.equal(target.listObjects().length, 2); assert.equal(target.getObject(existing.id)!.isActive, 1)
+    assert.equal(target.getObject(result.deviceIds[0])!.isActive, 0)
+    assert.equal(target.listRegistersByObject(result.deviceIds[0]).length, 1)
+    assert.equal(notifications, 1, 'notification is not retried')
+    console.log('CONFIG BACKUP NOTIFICATION OK: committed restore returns success with a safe warning, paused new graph and existing configuration retained')
+  } finally { await api.close(); (source as any).db.close(); (target as any).db.close() }
+}
