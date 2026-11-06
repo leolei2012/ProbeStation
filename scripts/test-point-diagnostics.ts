@@ -92,7 +92,7 @@ try {
   applyImporter({ config: cfg, provide: (_name: string, service: any) => { importer = service } } as any)
   const importedDevice = cfg.createObject('mock import', 'mock.invalid', 502)
   importer.import(importedDevice.id, 'synthetic.mbp', Buffer.from('[Window1]\nFunction=03\nAddress=40001\nQuantity=1\nAlias=holding\n[Window2]\nFunction=04\nAddress=30001\nQuantity=1\nAlias=input\n'))
-  has({ devices: [cfg.getObject(importedDevice.id)], groups: cfg.listGroups(importedDevice.id), registers: cfg.listRegistersByObject(importedDevice.id) }, 'REGISTER_FUNCTION_MISMATCH', 'error')
+  assert.equal(diagnoseDevicePoints(cfg, importedDevice.id).summary.errors, 0, 'fixed importer keeps each synthetic window with its own group')
 } finally { (cfg as any).db.close() }
 
 // A read-only route, including failures; never start an HTTP server.

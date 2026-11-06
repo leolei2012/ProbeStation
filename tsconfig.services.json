@@ -3,6 +3,7 @@
   "include": [
     "packages/config/src",
     "packages/store/src",
+    "packages/importer/src",
     "packages/mcp/src/recorder.ts",
     "packages/api/src/curve.ts",
     "packages/api/src/point-diagnostics.ts",

@@ -66,3 +66,9 @@ update 接受 **camelCase**（`isActive`、`functionCode`、`startAddress`、`da
 
 - `isActive` 直接返回 SQLite 的 0/1，未转布尔。
 - 无外键约束（级联删除靠应用层）。
+
+## 文件点表原子追加（2026-11-06）
+
+appendImportedPoints(objectId, groups, registers) 用于importer文件窗口，不替代importPoints语义更新或JSON备份恢复。registers必须保留来源groupIndex（0-based）；先用共享规则检查完整图，再BEGIN IMMEDIATE追加组/点位，失败回滚，原有配置不动。不会调用updateGroup来补点或改变设备启用状态/编号，点位quantity仍遵循旧文件导入默认1。
+
+创建过程抑制逐行通知；提交后一次notify(import, objectId)。同步通知回调异常不回滚已提交数据，而返回warnings提示勿重复导入；数据库回滚本身失败则明确报结果不确定，不自动重试。成功返回groups/registers计数及warnings。空导入不写入/不通知，缺失目标和错误窗口引用在写入前失败。只验证了内存库和合成数据；没有模式迁移或访问真实库。

@@ -1,11 +1,13 @@
 import type { Context } from 'cordis'
-import { XMLParser } from 'fast-xml-parser'
+import type { ConfigStore } from '../../config/src/index.ts'
+import { XMLParser, XMLValidator } from 'fast-xml-parser'
+import { assertImportedPointGroup, type ImportedPointGroup, type ImportedPointDefinition } from '../../core/src/point-import.ts'
 
 export const name = 'importer'
 export const inject = ['config']
 
-export interface ParsedGroup { name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; mode: string }
-export interface ParsedRegister { alias: string; functionCode: number; startAddress: number; quantity: number; dataType: string }
+export interface ParsedGroup extends ImportedPointGroup {}
+export interface ParsedRegister extends ImportedPointDefinition { quantity: number }
 export interface ParsedResult { groups: ParsedGroup[]; registers: ParsedRegister[]; warnings: string[] }
 
 // 仅 16 位类型；MBP 的 int32/uint32/float32（码 2/3/4）按原始 16 位 int16 处理
@@ -13,6 +15,7 @@ const FORMAT_HINT: Record<string, string> = { '0': 'int16', '1': 'uint16', '2': 
 const FN_MAP: Record<string, number> = { '01': 1, '02': 2, '03': 3, '04': 4, '05': 5, '06': 6, '15': 15, '16': 16 }
 
 function parseMbpXml(text: string): ParsedResult {
+  if (XMLValidator.validate(text) !== true) throw Object.assign(new Error('XML parse error'), { statusCode: 400 })
   const parser = new XMLParser({ ignoreAttributes: false })
   let root: any
   try { root = parser.parse(text) } catch { throw new Error('XML parse error') }
@@ -25,6 +28,9 @@ function parseMbpXml(text: string): ParsedResult {
     const fn = Number(data.Function ?? 3)
     const start = Number(data.Address ?? 0)
     const qty = Number(data.Quantity ?? 1)
+    const group: ParsedGroup = { name: (fn === 3 && start === 0) ? 'Holding Registers' : 'FC' + fn + '_Addr' + start, slaveId: 1, functionCode: fn, startAddress: start, quantity: qty, mode: 'read' }
+    const groupIndex = groups.length
+    assertImportedPointGroup(group, groupIndex)
     const names: Record<number, string> = {}
     const cells = data.CellData?.Cell
     if (cells) for (const cell of (Array.isArray(cells) ? cells : [cells])) {
@@ -36,22 +42,23 @@ function parseMbpXml(text: string): ParsedResult {
     if (fs) (Array.isArray(fs) ? fs : [fs]).forEach((f: any, i: number) => { fmts[i] = Number(f['@_f'] ?? 0) })
     for (let idx = 0; idx < qty; idx++) {
       const addr = start + idx
-      registers.push({ alias: names[idx] ?? 'Addr' + addr, functionCode: fn, startAddress: addr, quantity: 1, dataType: FORMAT_HINT[String(fmts[idx] ?? 0)] ?? 'int16' })
+      registers.push({ groupIndex, alias: names[idx] ?? 'Addr' + addr, functionCode: fn, startAddress: addr, quantity: 1, dataType: FORMAT_HINT[String(fmts[idx] ?? 0)] ?? 'int16' })
     }
-    groups.push({ name: (fn === 3 && start === 0) ? 'Holding Registers' : 'FC' + fn + '_Addr' + start, slaveId: 1, functionCode: fn, startAddress: start, quantity: qty, mode: 'read' })
+    groups.push(group)
   }
   if (registers.length === 0) warnings.push('No register data found in .mbp file')
+  else warnings.push('MBP slave IDs retain the existing default 1; unverified source fields are not inferred.')
   return { groups, registers, warnings }
 }
 
-function parseIni(text: string): Record<string, Record<string, string>> {
-  const sections: Record<string, Record<string, string>> = {}
-  let cur: Record<string, string> | null = null
+function parseIni(text: string): Array<{ name: string; fields: Record<string, string> }> {
+  const sections: Array<{ name: string; fields: Record<string, string> }> = []
+  let cur: Record<string, string> | undefined
   for (const line of text.split(/\r?\n/)) {
     const t = line.trim()
     if (!t || t.startsWith(';') || t.startsWith('#')) continue
     const sm = t.match(/^\[(.+)\]$/)
-    if (sm) { cur = {}; sections[sm[1]] = cur; continue }
+    if (sm) { cur = {}; sections.push({ name: sm[1], fields: cur }); continue }
     const kv = t.match(/^([^=]+)=(.*)$/)
     if (kv && cur) cur[kv[1].trim()] = kv[2].trim()
   }
@@ -63,10 +70,13 @@ function parseMbpIni(text: string): ParsedResult {
   const registers: ParsedRegister[] = []
   const warnings: string[] = []
   const sections = parseIni(text)
-  for (const [name, cfg] of Object.entries(sections)) {
+  const names = new Set<string>()
+  for (const { name, fields: cfg } of sections) {
     if (!name.toLowerCase().startsWith('window')) continue
+    if (names.has(name)) warnings.push('Duplicate window section name preserved as a separate group: ' + name)
+    names.add(name)
     const fnStr = cfg['Function'] ?? '03'
-    const fn = FN_MAP[fnStr] ?? (Number.isFinite(Number(fnStr)) ? Number(fnStr) : 3)
+    const fn = FN_MAP[fnStr] ?? Number(fnStr)
     const addrStr = cfg['Address'] ?? '0'
     const a = Number(addrStr)
     const start = addrStr.startsWith('4') ? a - 40001 : addrStr.startsWith('3') ? a - 30001 : Math.max(0, a - 1)
@@ -74,17 +84,21 @@ function parseMbpIni(text: string): ParsedResult {
     const alias = cfg['Alias'] ?? 'Addr' + start
     const rawType = cfg['Data Type'] ?? 'int16'
     const dataType = ['int16', 'uint16', 'float16'].includes(rawType) ? rawType : 'int16'
-    groups.push({ name, slaveId: 1, functionCode: fn, startAddress: start, quantity: qty, mode: 'read' })
-    registers.push({ alias, functionCode: fn, startAddress: start, quantity: qty, dataType })
+    const group: ParsedGroup = { name, slaveId: 1, functionCode: fn, startAddress: start, quantity: qty, mode: 'read' }
+    const groupIndex = groups.length
+    assertImportedPointGroup(group, groupIndex)
+    groups.push(group)
+    registers.push({ groupIndex, alias, functionCode: fn, startAddress: start, quantity: qty, dataType })
   }
   if (registers.length === 0) warnings.push('No valid register windows found in .mbp file')
+  else warnings.push('MBP slave IDs retain the existing default 1; unverified source fields are not inferred.')
   return { groups, registers, warnings }
 }
 
 export function parseMbp(content: Buffer): ParsedResult {
   const text = content.toString('utf-8').replace(/^\uFEFF/, '')
   const t = text.trim()
-  if (t.startsWith('<?xml') || t.startsWith('<ModbusPoll>')) return parseMbpXml(text)
+  if (t.startsWith('<?xml') || /^<ModbusPoll(?:\s|>)/.test(t)) return parseMbpXml(text)
   return parseMbpIni(text)
 }
 
@@ -93,10 +107,11 @@ export function parseMbs(content: Buffer): ParsedResult {
   const funcCode = content.readUInt32LE(12)
   const quantity = content.readUInt32LE(16)
   const slaveId = content.readUInt32LE(20)
+  assertImportedPointGroup({ name: 'MBS header', slaveId, functionCode: funcCode, startAddress: 0, quantity, mode: 'read_write' }, 0)
   const names = extractUtf16Names(content)
   let valid = names.filter(isValidName).map(cleanName).filter(Boolean)
   if (valid.length === 0) valid = Array.from({ length: quantity }, (_, i) => 'Addr' + i)
-  const registers: ParsedRegister[] = valid.slice(0, quantity).map((alias, i) => ({ alias, functionCode: funcCode, startAddress: i, quantity: 1, dataType: 'int16' }))
+  const registers: ParsedRegister[] = valid.slice(0, quantity).map((alias, i) => ({ groupIndex: 0, alias, functionCode: funcCode, startAddress: i, quantity: 1, dataType: 'int16' }))
   const fcNames: Record<number, string> = { 1: 'Coils', 2: 'Discrete Inputs', 3: 'Holding Registers', 4: 'Input Registers' }
   return {
     groups: [{ name: (fcNames[funcCode] ?? 'FC' + funcCode) + '-0x0000', slaveId, functionCode: funcCode, startAddress: 0, quantity: registers.length, mode: 'read_write' }],
@@ -152,13 +167,12 @@ function isValidName(s: string): boolean {
 }
 
 export function apply(ctx: Context): void {
+  const cfg = (ctx as unknown as { config: ConfigStore }).config
   ctx.provide('importer', {
     import(objectId: number, filename: string, content: Buffer) {
       const parsed = filename.toLowerCase().endsWith('.mbs') ? parseMbs(content) : parseMbp(content)
-      const groups = parsed.groups.map(g => ctx.config.createGroup(objectId, g.name, g.functionCode, g.startAddress, g.quantity, g.mode))
-      const first = groups[0]
-      const registers = parsed.registers.map(r => ctx.config.createRegister(first.id, objectId, r.alias, r.functionCode, r.startAddress, r.dataType))
-      return { groups: groups.length, registers: registers.length, warnings: parsed.warnings }
+      const result = cfg.appendImportedPoints(objectId, parsed.groups, parsed.registers)
+      return { groups: result.groups, registers: result.registers, warnings: [...parsed.warnings, ...result.warnings] }
     },
   })
 }

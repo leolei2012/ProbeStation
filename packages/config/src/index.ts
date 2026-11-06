@@ -7,6 +7,7 @@ import { dirname } from 'node:path'
 import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
 import { parseConfigBackup, type ConfigBackup } from './backup.ts'
 import { parseRegisterQuantity } from './register-quantity.ts'
+import { assertImportedPointTable, type ImportedPointGroup, type ImportedPointDefinition } from '../../core/src/point-import.ts'
 
 export const name = 'config'
 
@@ -243,7 +244,29 @@ export class ConfigStore {
   listRegistersByObject(objectId: number): RegisterRecord[] { return this.db.prepare(REGISTER_SELECT + ' WHERE object_id = ? ORDER BY start_address').all(objectId) as unknown as RegisterRecord[] }
   getRegister(id: number): RegisterRecord | undefined { return this.db.prepare(REGISTER_SELECT + ' WHERE id = ?').get(id) as unknown as RegisterRecord | undefined }
 
-  /** 点表导入：按 (functionCode, address) 匹配已有寄存器并更新语义（alias/dataType/unit/factor/offset/enum）。 */
+  /** Add file windows atomically; no existing devices/groups/registers/rules are changed. */
+  appendImportedPoints(objectId: number, groups: readonly ImportedPointGroup[], registers: readonly ImportedPointDefinition[]) {
+    if (!Number.isSafeInteger(objectId) || objectId < 1 || !this.getObject(objectId)) throw Object.assign(new Error('导入目标设备不存在'), { statusCode: 404 })
+    assertImportedPointTable(groups, registers)
+    if (!groups.length && !registers.length) return { groups: 0, registers: 0, warnings: [] as string[] }
+    if (this.restoring) throw new Error('配置正在批量更新，不能嵌套导入')
+    this.db.exec('BEGIN IMMEDIATE')
+    this.restoring = true // Suppress partial graphs; also used by backup restore.
+    try {
+      const created = groups.map(g => this.createGroup(objectId, g.name, g.functionCode, g.startAddress, g.quantity, g.mode, g.slaveId))
+      for (const r of registers) this.createRegister(created[r.groupIndex].id, objectId, r.alias, r.functionCode, r.startAddress, r.dataType)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '点表导入回滚失败，结果不确定，请检查配置，勿自动重试') }
+      throw error
+    } finally { this.restoring = false }
+    const warnings: string[] = []
+    try { this.notify('import', objectId) }
+    catch { warnings.push('配置已提交，但变更通知失败，当前实例可能尚未刷新；请核对，勿重复导入。') }
+    return { groups: groups.length, registers: registers.length, warnings }
+  }
+
+  /** 点表语义导入：按 (functionCode, address) 匹配已有寄存器并更新语义。 */
   importPoints(objectId: number, points: Array<{ functionCode: number; address: number; alias?: string | null; dataType?: string; unit?: string | null; factor?: number; offset?: number; enumMap?: Record<string, string> | null }>): { updated: number; skipped: number; errors: string[] } {
     const regs = this.listRegistersByObject(objectId)
     let updated = 0
