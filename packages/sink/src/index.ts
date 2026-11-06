@@ -2,6 +2,7 @@ import type { Context } from 'cordis'
 import ExcelJS from 'exceljs'
 import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
 import { areaForFunction, formatRegisterValue, decodeHistoricalSample, historyVerificationLabel, type HistoryVerification } from '@probebench/core'
+import { HISTORY_EXPORT_RAW_LIMIT, HistoryExportLimitError } from '../../core/src/history-export-policy.ts'
 
 export const name = 'sink'
 export const inject = ['config', 'store']
@@ -63,7 +64,8 @@ export class Sink {
       const idSet = new Set(registerIds)
       registers = registers.filter((r: any) => idSet.has(r.id))
     }
-    const points = await this.ctx.store.queryObject(objectId, start, end)
+    const points = await this.ctx.store.queryObjectForExport(objectId, start, end)
+    if (points.length > HISTORY_EXPORT_RAW_LIMIT) throw new HistoryExportLimitError()
     const byTs = new Map<string, typeof points>()
     for (const p of points) { const ts = p.timestampMs != null ? new Date(p.timestampMs).toISOString() : p.ts; if (!byTs.has(ts)) byTs.set(ts, []); byTs.get(ts)!.push(p) }
     const tsOrder = [...byTs.keys()]

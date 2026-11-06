@@ -27,7 +27,7 @@ for (const format of ['csv', 'xlsx'] as const) {
   assert.equal(url.searchParams.get('tz'), '480')
   assert.equal(url.searchParams.has('max_points'), false, 'download uses raw history, not the display point limit')
 }
-const markup = renderToStaticMarkup(createElement(HistoryExportModal, { request: snapshot, t: key => ({ histExportSelected: '{n} selected' }[key] ?? key), onClose() {}, onPick() {} }))
+const markup = renderToStaticMarkup(createElement(HistoryExportModal, { request: snapshot, t: key => ({ histExportSelected: '{n} selected' }[key] ?? key), onClose() {}, async onPick() {} }))
 assert.match(markup, /role="dialog"/)
 assert.match(markup, /histExportViewport/)
 assert.match(markup, /08:00:00\.123/)
@@ -66,6 +66,10 @@ try {
   assert.equal((await app.inject(historyExportUrl('csv', empty))).body.split('\n').length, 1, 'empty ranges produce headers without stale rows')
   assert.equal((await app.inject({ url: historyExportUrl('csv', viewport), headers: { 'x-test-scenario': 'error' } })).statusCode, 503)
   assert.equal((await app.inject(historyExportUrl('csv', viewport))).statusCode, 200, 'download retry recovers')
+  const tooLarge = await app.inject({ url: historyExportUrl('csv', viewport), headers: { 'x-test-scenario': 'limit' } })
+  assert.equal(tooLarge.statusCode, 413)
+  assert.equal(tooLarge.json().code, 'HISTORY_EXPORT_LIMIT')
+  assert.equal(tooLarge.headers['content-disposition'], undefined)
   assert.equal((await app.inject('/api/test-info')).json().realDataOpened, false)
 } finally { await edition.app.close() }
 console.log('HISTORY EXPORT OK: exact viewport/full ranges, selection snapshot, milliseconds/timezones, CSV/XLSX raw rows, batch status, empty and failure/retry')

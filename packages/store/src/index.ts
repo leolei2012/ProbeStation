@@ -5,6 +5,7 @@ import { localTs, areaForFunction, registerWidth, type ModbusArea, type ModbusFu
 import { CurveSampler } from './curve-sampling.ts'
 import { ensurePollDataSchema } from './schema.ts'
 import { decodeHistoricalSample } from '../../core/src/history-integrity.ts'
+import { HISTORY_EXPORT_RAW_LIMIT } from '../../core/src/history-export-policy.ts'
 
 function rawTimestampMs(value: unknown): number {
   const text = String(value)
@@ -252,17 +253,26 @@ export class DuckDBStore {
   async queryObject(
     objectId: number, start: string, end: string, limit?: number,
   ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>> {
+    const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
+    return this.readObjectRows(objectId, start, end, limitClamped)
+  }
+
+  /** Export-only lookahead. Ordinary raw-query limits remain unchanged. */
+  async queryObjectForExport(objectId: number, start: string, end: string) {
+    return this.readObjectRows(objectId, start, end, HISTORY_EXPORT_RAW_LIMIT + 1)
+  }
+
+  private async readObjectRows(objectId: number, start: string, end: string, limit: number): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>> {
     await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
     const endUtc = this.normalizeToUtc(end)
-    const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
     const reader = await conn.runAndReadAll(
       `SELECT ts, area, address, raw_value, quality, batch_id FROM poll_data
        WHERE object_id = $objectId AND ts >= $start AND ts <= $end
        ORDER BY ts
        LIMIT $limit`,
-      { objectId, start: startUtc, end: endUtc, limit: limitClamped },
+      { objectId, start: startUtc, end: endUtc, limit },
     )
     const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
     return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))

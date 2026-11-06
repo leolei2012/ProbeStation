@@ -1,4 +1,5 @@
 import { historyQueryRange } from './history-curve'
+import { HistoryExportLimitError } from '../../../packages/core/src/history-export-policy'
 
 export interface HistoryExportRequest {
   readonly objectId: number
@@ -21,6 +22,30 @@ export function historyExportUrl(format: 'csv' | 'xlsx', request: HistoryExportR
   if (!['csv', 'xlsx'].includes(format)) throw new Error('Invalid export format')
   const params = new URLSearchParams({ object_id: String(request.objectId), start: request.start, end: request.end, register_ids: request.registerIds.join(','), tz: String(request.timezoneOffsetMin) })
   return `/api/export/${format}?${params}`
+}
+
+/** Fetch before downloading so structured errors remain visible in the export dialog. */
+export async function fetchHistoryExport(format: 'csv' | 'xlsx', request: HistoryExportRequest, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<Blob> {
+  signal.throwIfAborted()
+  const response = await fetcher(historyExportUrl(format, request), { signal, cache: 'no-store' })
+  signal.throwIfAborted()
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}))
+    if (response.status === 413 && detail?.code === 'HISTORY_EXPORT_LIMIT') throw new HistoryExportLimitError(detail.limit)
+    throw new Error(`HTTP ${response.status}${typeof detail?.error === 'string' ? ': ' + detail.error.slice(0, 200) : ''}`)
+  }
+  const expected = format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  if (!response.headers.get('content-type')?.includes(expected)) throw new Error('Unexpected export response type')
+  const blob = await response.blob()
+  signal.throwIfAborted()
+  return blob
+}
+
+export function saveHistoryExport(blob: Blob, format: 'csv' | 'xlsx', request: HistoryExportRequest) {
+  const url = URL.createObjectURL(blob), link = document.createElement('a')
+  link.href = url; link.download = `history-${request.scope}.${format}`
+  document.body.appendChild(link)
+  try { link.click() } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60_000) }
 }
 
 /** Show the same fixed offset used by the existing export endpoint, including milliseconds. */

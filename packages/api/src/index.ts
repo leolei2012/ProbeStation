@@ -13,6 +13,7 @@ import { registerAssistant } from './assistant.ts'
 import { registerCurve } from './curve.ts'
 import { registerConfigBackup } from './config-backup.ts'
 import { registerSerialPorts } from './serial-ports.ts'
+import { registerHistoryExport } from './history-export.ts'
 
 /** 把 exceljs 单元格转成字符串（处理公式/数字/文本）。 */
 function xlsxCellText(cell: any): string {
@@ -317,26 +318,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     // ── Export ─────────────────────────────────────────────
-    const parseIds = (v: unknown): number[] | undefined => {
-      if (v == null || v === '') return undefined
-      return String(v).split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0)
-    }
-    fastify.get('/api/export/csv', async (req: any, reply: any) => {
-      const q = req.query as any
-      const tz = Number(q.tz ?? 0)
-      const csv = await sink.exportCsv(Number(q.object_id), String(q.start), String(q.end), parseIds(q.register_ids), Number.isFinite(tz) ? tz : 0)
-      reply.header('Content-Type', 'text/csv')
-      reply.header('Content-Disposition', 'attachment; filename=export.csv')
-      return csv
-    })
-    fastify.get('/api/export/xlsx', async (req: any, reply: any) => {
-      const q = req.query as any
-      const tz = Number(q.tz ?? 0)
-      const buf = await sink.exportXlsx(Number(q.object_id), String(q.start), String(q.end), parseIds(q.register_ids), Number.isFinite(tz) ? tz : 0)
-      reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-      reply.header('Content-Disposition', 'attachment; filename=export.xlsx')
-      return buf
-    })
+    registerHistoryExport(fastify, sink)
 
     // ── Data ────────────────────────────────────────────────
     fastify.get('/api/monitor_objects/:id/latest', async (req: any) => store.getLatestByObjectAll(Number((req.params as any).id)))

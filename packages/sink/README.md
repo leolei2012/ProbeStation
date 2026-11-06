@@ -16,6 +16,10 @@ interface Sink {
 `registerIds` 可选：只导出指定寄存器子集（不传 = 导出该设备全部寄存器）。
 `tzOffsetMin` 可选（分钟，东为正，0=UTC）：把时间戳转成目标时区的本地字面时间。不传默认为 `0`（UTC）。
 
+历史导出最多接受 **200000 条设备原始采样行**（16 位字行，包含未选点位），不是 CSV/XLSX 的宽表行数。导出专用查询多取一条判断是否溢出：低于/恰好上限正常返回；超过时抛出 `HistoryExportLimitError`（code=`HISTORY_EXPORT_LIMIT`），不生成任何部分文件。CSV/XLSX 数据列和批次状态列不变。
+
+HTTP 接口将该错误返回为 **413 JSON**，含 `code`、`limit` 和说明，不带附件头。网页在导出弹窗显示超限原因，取消并缩小范围后可重试；直连 API 的调用者必须检查状态码，不能将错误体保存为 CSV/XLSX。未提供自动拆分、流式或显式部分导出。
+
 ## 点表 xlsx（分组=sheet）
 
 `exportPointSheet` 把一台设备的**点位定义**（不是历史采样）导成一个 xlsx：
@@ -46,11 +50,11 @@ timestamp (UTC+08:00),温度,转速
 
 ## 实现
 
-- 数据来自 `store.queryObject()`（一次查某设备全部寄存器的时序，按地址存原始 16 位字）。
+- 历史导出数据来自 `store.queryObjectForExport()`（最多读取 200001 条用于溢出判断）；普通 `queryObject()` 的 200000 条限制不变。
 - 用 `formatRawByAddr()` 把原始字解码成显示值（hex/bin 逐字、数值 `formatNumber`、多字合并）。
 - CSV 纯字符串拼接（含逗号/引号转义）。
 - XLSX 用 exceljs（`writeBuffer()`）。
 
 ## 当前限制（TODO）
 
-- 未做大数据分页/流式（一次性读全量）。
+- 未做大数据分页/流式；超过原始行上限会拒绝导出，请拆分时间范围。浏览器会在内存中接收已允许的文件，等待超过 30 秒时可取消/重试；不保证后台工作立即停止。

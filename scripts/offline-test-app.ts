@@ -12,10 +12,12 @@ import { DuckDBStore } from '../packages/store/src/index.ts'
 import { Sink } from '../packages/sink/src/index.ts'
 import { registerCurve } from '../packages/api/src/curve.ts'
 import { registerSerialPorts } from '../packages/api/src/serial-ports.ts'
+import { registerHistoryExport } from '../packages/api/src/history-export.ts'
 import { encodeRegister } from '../packages/core/src/codec.ts'
+import { HISTORY_EXPORT_RAW_LIMIT } from '../packages/core/src/history-export-policy.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const controls = `<style>#test-edition{padding:8px 12px;background:#fff3c4;color:#222;font:13px sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap}#root{height:calc(100vh - 64px)}</style><aside id="test-edition"><b>隔离测试版 · 只读合成数据</b><span>选择设备 → 历史。无设备通信/真实库/模型服务；串口清单为后端系统端口，仅枚举。</span><label>查询场景 <select id="test-scenario"><option value="normal">正常/身份样本</option><option value="invalid">全未知</option><option value="empty">空数据</option><option value="error">请求失败</option><option value="recovered">恢复</option></select></label><span>切换后点击历史“查询”；停止：终端 Ctrl+C。</span></aside><script>const control=document.getElementById('test-scenario');control.value=(document.cookie.match(/probeTestScenario=(\\w+)/)||[])[1]||'normal';control.onchange=()=>document.cookie='probeTestScenario='+control.value+'; SameSite=Strict; path=/';</script>`
+const controls = `<style>#test-edition{padding:8px 12px;background:#fff3c4;color:#222;font:13px sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap}#root{height:calc(100vh - 64px)}</style><aside id="test-edition"><b>隔离测试版 · 只读合成数据</b><span>选择设备 → 历史。无设备通信/真实库/模型服务；串口清单为后端系统端口，仅枚举。</span><label>查询场景 <select id="test-scenario"><option value="normal">正常/身份样本</option><option value="invalid">全未知</option><option value="empty">空数据</option><option value="error">请求失败</option><option value="limit">导出超限（模拟）</option><option value="slow">慢查询/导出（模拟）</option><option value="recovered">恢复</option></select></label><span>切换后点击历史“查询”；停止：终端 Ctrl+C。</span></aside><script>const control=document.getElementById('test-scenario');control.value=(document.cookie.match(/probeTestScenario=(\\w+)/)||[])[1]||'normal';control.onchange=()=>document.cookie='probeTestScenario='+control.value+'; SameSite=Strict; path=/';</script>`
 
 export async function createOfflineTestApp() {
   const staticDir = join(root, 'apps/web/dist')
@@ -50,6 +52,8 @@ export async function createOfflineTestApp() {
     reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'")
     if (!['GET', 'HEAD'].includes(req.method)) return reply.code(405).send({ error: '隔离测试版只读：设备通信、配置修改和模型调用均禁用' })
     if (req.url.startsWith('/api/data/object/') || req.url.startsWith('/api/export/')) {
+      if (scenario(req) === 'slow') await new Promise(resolve => setTimeout(resolve, 3000))
+      if (scenario(req) === 'limit' && req.url.startsWith('/api/export/')) return reply.code(413).send({ code: 'HISTORY_EXPORT_LIMIT', limit: HISTORY_EXPORT_RAW_LIMIT, error: '模拟导出超限：未生成文件，请缩小时间范围。' })
       if (scenario(req) === 'invalid') {
         const q = req.query as Record<string, string>
         q.start = new Date(now - 410000).toISOString(); q.end = new Date(now - 329000).toISOString()
@@ -93,12 +97,7 @@ export async function createOfflineTestApp() {
   registerCurve(app, cfg, store)
   // Only metadata enumeration is enabled; no serial port is ever opened by this route.
   registerSerialPorts(app)
-  for (const format of ['csv', 'xlsx'] as const) app.get('/api/export/' + format, async (req, reply) => {
-    const q = req.query as any, ids = q.register_ids?.split(',').map(Number)
-    reply.type(format === 'csv' ? 'text/csv; charset=utf-8' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    reply.header('Content-Disposition', `attachment; filename="offline-history.${format}"`)
-    return format === 'csv' ? sink.exportCsv(device.id, q.start, q.end, ids, Number(q.tz) || 0) : sink.exportXlsx(device.id, q.start, q.end, ids, Number(q.tz) || 0)
-  })
+  registerHistoryExport(app, sink)
   app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: '此能力未包含在只读隔离测试版中' }))
   app.addHook('onClose', async () => {
     await store.flush(); await (store as any).mutations
