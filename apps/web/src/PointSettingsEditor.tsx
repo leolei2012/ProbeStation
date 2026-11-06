@@ -5,9 +5,10 @@ import { createPointEnumDraft, updatePointEnumDraft } from './point-enum-draft'
 import { PointEnumEditor } from './PointEnumEditor'
 export type { PointSettings } from './point-settings'
 
-export function PointSettingsEditor({ name, address, settings, available, typeGroups, t, onClose, onSave }: {
+export function PointSettingsEditor({ name, address, settings, available, typeGroups, t, onClose, onSave, guarded = false }: {
   name: string; address: number; settings: PointSettings; available: number; typeGroups: { key: string; types: string[] }[]; t: (key: string) => string
   onClose: () => void; onSave: (value: PointSettingsUpdate) => Promise<void>
+  guarded?: boolean
 }) {
   const titleId = useId()
   const [dataType, setDataType] = useState(settings.dataType)
@@ -35,6 +36,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
     <form className="modal enum-editor point-settings-editor" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); void save() }}>
       <div className="modal-head"><h3 id={titleId}>{t('pointSettings')}</h3><button className="modal-close" type="button" aria-label={t('cancel')} disabled={busy} onClick={onClose}>×</button></div>
       <p className="enum-context">{name} · {t('colAddr')} {address}</p>
+      {guarded && <p className="enum-hint" role="note">{t('cancel') === 'Cancel' ? 'Saving checks the opening values and source. Conflicts are rejected and drafts kept; record your changes, close and refresh before editing again. There is no automatic overwrite.' : '保存时核对打开时的字段和来源；冲突会拒绝保存并保留草稿。请先记录修改，关闭并刷新配置后重新编辑，不会自动覆盖。'}</p>}
       <label>{t('colType')}<select autoFocus aria-label={t('colType')} value={dataType} disabled={busy} onChange={e => { setDataType(e.target.value); setError('') }}>
         {typeGroups.map(group => <optgroup key={group.key} label={t(group.key)}>{group.types.map(type => <option key={type} value={type} disabled={type !== settings.dataType && registerWidth(type) > available}>{type}</option>)}</optgroup>)}
       </select></label>

@@ -14,7 +14,7 @@ export class LatestConfigRead {
   }
 }
 
-export interface GroupMetadata { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number }
+export interface GroupMetadata { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number; mode?: string }
 /** Publish a complete graph only; stop subsequent group requests after cancellation. */
 export async function readDeviceGroups<R>(objectId: number, signal: AbortSignal, fetcher: (url: string, signal: AbortSignal) => Promise<unknown>): Promise<Array<GroupMetadata & { registers: R[] }>> {
   signal.throwIfAborted()
@@ -27,7 +27,7 @@ export async function readDeviceGroups<R>(objectId: number, signal: AbortSignal,
     const registers = await fetcher('/api/groups/' + group.id + '/registers', signal)
     signal.throwIfAborted()
     if (!Array.isArray(registers)) throw new Error('Invalid registers response')
-    out.push({ id: group.id, name: group.name, slaveId: group.slaveId, functionCode: group.functionCode, startAddress: group.startAddress, quantity: group.quantity, isActive: group.isActive, registers })
+    out.push({ id: group.id, name: group.name, slaveId: group.slaveId, functionCode: group.functionCode, startAddress: group.startAddress, quantity: group.quantity, isActive: group.isActive, ...(group.mode === undefined ? {} : { mode: group.mode }), registers })
   }
   return out
 }

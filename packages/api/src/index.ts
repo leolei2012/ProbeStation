@@ -16,6 +16,7 @@ import { registerSerialPorts } from './serial-ports.ts'
 import { registerHistoryExport } from './history-export.ts'
 import { registerPointDiagnostics } from './point-diagnostics.ts'
 import { registerPointsImport } from './points-import.ts'
+import { registerPointSettings } from './point-settings.ts'
 
 export const name = 'api'
 export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'ota']
@@ -70,6 +71,7 @@ export function apply(ctx: Context, config: Config): void {
     registerAssistant(fastify, { cfg, store, poller }, dataDir)
     registerCurve(fastify, cfg, store)
     registerPointDiagnostics(fastify, cfg)
+    registerPointSettings(fastify, cfg)
     registerConfigBackup(fastify, cfg)
     registerSlave(fastify, ctx.get('slave', false))
 

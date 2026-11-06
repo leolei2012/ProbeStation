@@ -9,6 +9,7 @@
     "packages/api/src/curve.ts",
     "packages/api/src/point-diagnostics.ts",
     "packages/api/src/points-import.ts",
+    "packages/api/src/point-settings.ts",
     "scripts/diagnose-points.ts",
     "scripts/preview-register-picker.ts",
     "scripts/fixtures/register-picker-preview.tsx",

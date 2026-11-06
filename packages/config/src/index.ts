@@ -13,6 +13,7 @@ import { selectSourceRegister } from '../../core/src/register-selection.ts'
 import { areaForFunction, type ModbusFunctionCode } from '../../core/src/protocol.ts'
 import { registerWidth } from '../../core/src/codec.ts'
 import { semanticPointFields, type SemanticPointUpdate } from '../../core/src/semantic-import.ts'
+import { capturePointEditBaseline, parsePointEditRequest, pointEditMatches } from '../../core/src/point-settings-edit.ts'
 
 export const name = 'config'
 
@@ -361,6 +362,35 @@ export class ConfigStore {
     this.update('registers', id, fields, REGISTER_MAP)
     this.notify('register', id)
     return this.getRegister(id)
+  }
+  /** Point-settings UI only. The lock covers compare, range validation, update and readback. */
+  updateRegisterSettings(id: number, request: unknown): { point: RegisterRecord; warnings: string[] } {
+    const { expected, changes } = parsePointEditRequest(request)
+    if (!Number.isSafeInteger(id) || id < 1 || expected.point.id !== id) throw Object.assign(new Error('点位编号与保存快照不一致。'), { statusCode: 400 })
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请稍后核对再保存。'), { statusCode: 409 })
+    const conflict = () => Object.assign(new Error('配置已变更，本次未保存。草稿已保留；请先记录所需修改，关闭窗口并刷新配置后重新编辑。'), { statusCode: 409 })
+    let point: RegisterRecord
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = this.getRegister(id)
+      if (!current) throw Object.assign(new Error('点位已不存在，本次未保存。请关闭窗口并刷新配置。'), { statusCode: 404 })
+      const group = this.getGroup(current.groupId), device = this.getObject(current.objectId)
+      if (!group || !device || group.objectId !== current.objectId) throw conflict()
+      let baseline
+      try { baseline = capturePointEditBaseline(current, group, device) } catch { throw conflict() }
+      if (!pointEditMatches(baseline, expected, changes)) throw conflict()
+      if (changes.dataType !== undefined && current.startAddress + registerWidth(changes.dataType) > group.startAddress + group.quantity) throw Object.assign(new Error('dataType spans beyond the group poll range'), { statusCode: 400 })
+      this.update('registers', id, changes, REGISTER_MAP)
+      point = this.getRegister(id)!
+      if (!point) throw new Error('保存后无法读取点位，事务已中止。')
+      this.db.exec('COMMIT')
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '点位设置回滚失败，结果不确定，请核对配置，勿自动重试。') }
+      throw error
+    }
+    const warnings: string[] = []
+    try { this.notify('register', id) } catch { warnings.push('配置已保存，但变更通知失败。请刷新核对，勿重复保存。') }
+    return { point, warnings }
   }
   deleteRegister(id: number): void {
     this.db.prepare('DELETE FROM alarm_rules WHERE register_id = ?').run(id)

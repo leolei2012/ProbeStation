@@ -80,3 +80,9 @@ importPoints(objectId, points)更新已有点位，支持functionCode/address和
 ## 全量XLSX事务边界
 
 applyPointBookImport(objectId, replace, build)仅供Sink同步构建点表，事务包含旧配置删除和整次新图创建，不是通用异步事务接口。已有行校验失败整次回滚并返回0计数/errors；写入失败抛出异常，回滚失败明确不确定。成功后一次notify(point-book-import, objectId)，后续同步通知失败返回warnings。无分组页不能清空目标。详见[原子替换与未完成字段限制](../../docs/develop/08-XLSX点表原子替换.md)。
+
+## 点位设置条件更新
+
+`updateRegisterSettings(id, { expected, changes })`仅供点位设置新接口：expected为打开时点位、分组和设备来源快照，changes仅允许类型、单位、倍率、偏移、枚举及小数位。BEGIN IMMEDIATE覆盖读取、条件核对、范围检查、绑定参数写入及读回；冲突409、缺点404、输入错误400，失败回滚且不通知。成功提交后通知一次，通知异常返回`{point,warnings}`而非假失败。省略枚举保留当前值，显式编辑需匹配原枚举。
+
+不新增列或迁移。旧updateRegister/设备分组更新/导入等兼容入口未统一加保护，不是全局版本号或跨工作区身份保证；详见[保护范围与验收](../../docs/develop/34-点位设置并发冲突保护.md)。

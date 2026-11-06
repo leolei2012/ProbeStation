@@ -27,6 +27,8 @@ import { AlarmPanel, useAlarmRules } from './AlarmPanel'
 import { ValueReading } from './ValueReading'
 import { physicalValue, displayNumber, curveValue, type ValueMode } from './physical-value'
 import { PointSettingsEditor } from './PointSettingsEditor'
+import { capturePointEditBaseline, type PointEditBaseline } from '../../../packages/core/src/point-settings-edit'
+import { saveGuardedPointSettings } from './point-settings-save'
 import { ConfigBackupSettings } from './ConfigBackupSettings'
 import { HistoryQualitySummary } from './HistoryQualitySummary'
 import { HistoryQueryTimeoutError } from './history-query'
@@ -894,7 +896,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
-  const [settingsReg, setSettingsReg] = useState<Register | null>(null)
+  const [settingsReg, setSettingsReg] = useState<(Register & { editBaseline: PointEditBaseline }) | null>(null)
   const { rules: alarmRules, ready: alarmRulesReady, error: alarmRuleError, reading: readingAlarmRules, retry: retryAlarmRules } = useAlarmRules(device.id)
   const [alarmReg, setAlarmReg] = useState<Register | null>(null)
   const [configuring, setConfiguring] = useState(false)
@@ -1015,7 +1017,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
                         </div>}
                       </div>
                     </td>}
-                    {shownColumns.action && <td className="rt-action-cell" data-label={t(configuring ? 'pointSettings' : 'write')}>{configuring ? <div className="point-config-actions"><button className="btn" disabled={rv?.covered} title={rv?.covered ? t('valueCovered') : t('pointSettings')} onClick={() => setSettingsReg(r)}>{t('pointSettingsAction')}</button><button className="btn" disabled={rv?.covered} title={t('alarmRules')} onClick={() => setAlarmReg(r)}>{t('alarmLabel')}</button></div> : writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
+                    {shownColumns.action && <td className="rt-action-cell" data-label={t(configuring ? 'pointSettings' : 'write')}>{configuring ? <div className="point-config-actions"><button className="btn" disabled={rv?.covered} title={rv?.covered ? t('valueCovered') : t('pointSettings')} onClick={() => { try { setSettingsReg({ ...r, editBaseline: capturePointEditBaseline(r, g, device) }) } catch { operation.setNotice({ error: true, text: t('operationFailed') }) } }}>{t('pointSettingsAction')}</button><button className="btn" disabled={rv?.covered} title={t('alarmRules')} onClick={() => setAlarmReg(r)}>{t('alarmLabel')}</button></div> : writable ? <button className="btn" onClick={() => setWriteReg(r)}>{t('write')}</button> : <span className="kv">{[2, 4].includes(g.functionCode) ? t('readOnly') : '—'}</span>}</td>}
                   </tr>
                 )
               }}
@@ -1026,10 +1028,9 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
       {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={() => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: t('operationOk') }) }} />}
       {alarmReg && <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} point={alarmReg} onClose={() => setAlarmReg(null)} />}
-      {settingsReg && <PointSettingsEditor name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} typeGroups={TYPE_GROUPS} available={(() => { const group = groups.find(g => g.id === settingsReg.groupId); return group ? group.startAddress + group.quantity - settingsReg.startAddress : 0 })()} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
-        const saved = await api.put('/api/registers/' + settingsReg.id, fields)
-        if (!saved || Object.entries(fields).some(([field, value]) => saved[field] !== value)) throw new Error(t('operationFailed'))
-        onRefresh(); operation.setNotice({ error: false, text: t('operationOk') })
+      {settingsReg && <PointSettingsEditor guarded name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} typeGroups={TYPE_GROUPS} available={(() => { const group = groups.find(g => g.id === settingsReg.groupId); return group ? group.startAddress + group.quantity - settingsReg.startAddress : 0 })()} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
+        const warnings = await saveGuardedPointSettings(settingsReg.editBaseline, fields, api.put)
+        onRefresh(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') })
       }} />}
       {writeReg && <WriteModal t={t} deviceName={device.name} local={device.mode === 'slave'} currentValue={views.get(writeReg.id)?.value ?? '—'} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => { setWriteReg(null); operation.setNotice({ error: false, text: t('writeOk') }) }} />}
     </div>
