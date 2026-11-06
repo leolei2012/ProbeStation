@@ -20,7 +20,9 @@ import { PointLabel, buildPointLabels, type PointLabelData } from './PointLabel'
 import { RegisterSelectButton } from './RegisterPicker'
 import { sourceKey, sourceSample, withRegisterSources } from '../../../packages/core/src/sample-source.ts'
 import { decodeHistoricalSample, historyVerificationLabel } from '../../../packages/core/src/history-integrity.ts'
-import { SerialPortPicker } from './SerialPortPicker'
+import { DeviceModal, type DeviceFields } from './DeviceModal'
+import type { DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
+import { saveGuardedDeviceSettings } from './device-settings-save'
 import { DeviceSlaveStatus } from './DeviceSlaveStatus'
 import { ColumnControl, ValueModeControl, useDisplayColumns, useValueMode } from './DataDisplayControls'
 import { AlarmPanel, useAlarmRules } from './AlarmPanel'
@@ -58,7 +60,6 @@ const TYPE_GROUPS = [
 ]
 
 interface Device { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number; dataRetainSeconds: number | null; connected: boolean }
-type DeviceFields = { mode: string; name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number }
 interface Register { slaveId?: number; sourceAmbiguous?: boolean; id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null; decimalPlaces?: number | null }
 interface DeviceGroup { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number; registers: Register[] }
 interface LatestValue extends Sample {}
@@ -622,10 +623,11 @@ export default function App() {
     setShowAdd(false); refreshDevices(); operation.setNotice({ error: false, text: t('operationOk') })
   }, [refreshDevices])
   const toggleDevice = async (id: number) => { await operation.run(async () => { await api.post('/api/monitor_objects/' + id + '/toggle'); refreshDevices() }) }
-  const editDevice = useCallback(async (id: number, f: DeviceFields) => {
+  const editDevice = useCallback(async (id: number, f: DeviceFields, expected: DeviceEditBaseline) => {
     if (!f.name) return
-    await api.put('/api/monitor_objects/' + id, f)
-    refreshDevices(); operation.setNotice({ error: false, text: t('operationOk') })
+    if (id !== expected.id) throw new Error(t('operationFailed'))
+    const warnings = await saveGuardedDeviceSettings(expected, f, api.put)
+    refreshDevices(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') })
   }, [refreshDevices])
   const deleteDevice = async (id: number) => {
     const device = devices.find((d) => d.id === id)
@@ -833,7 +835,7 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
   onNavigate: (target: DataTarget) => void
   realtime: { status: RealtimeStatus; attempt: number }
   fallbackOk?: boolean
-  busy: boolean; onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => Promise<void>; onDelete: (id: number) => void; onRefresh: (id: number) => void
+  busy: boolean; onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields, expected: DeviceEditBaseline) => Promise<void>; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
   const [tab, setTab] = useState(0)
   const queryMemory = useRef<HistoryQueryMemory>()
@@ -876,7 +878,7 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
       {tab === 5 && (configurationReady ? <PointDiagnosticsPanel key={pointCheckContext} deviceId={device.id} points={registers} groups={groups} pointLabels={pointCheckLabels} fetcher={fetchPointDiagnostics} english={t('cancel') === 'Cancel'} /> : <p role="status">{t('pointCheckWaiting')}</p>)}
       <div hidden={tab !== 1}><LiveCurve active={tab === 1} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
-      {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f) => { await onEdit(device.id, f); setShowEdit(false) }} />}
+      {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f, expected) => { if (!expected) throw new Error(t('operationFailed')); await onEdit(device.id, f, expected); setShowEdit(false) }} />}
     </div>
   )
 }
@@ -1950,89 +1952,4 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose, initialSect
       </section>
     </div>
   </div>
-}
-
-function DeviceModal({ t, initial, onClose, onSave }: { t: T; initial: Device | null; onClose: () => void; onSave: (f: DeviceFields) => Promise<void> }) {
-  const [name, setName] = useState(initial?.name ?? '')
-  const [mode, setMode] = useState(initial?.mode ?? 'master')
-  const [transport, setTransport] = useState(initial?.transport ?? 'tcp')
-  const [ip, setIp] = useState(initial?.ip ?? '')
-  const [port, setPort] = useState(initial ? String(initial.port) : '8899')
-  const [serialPath, setSerialPath] = useState(initial?.serialPath ?? '')
-  const [baudRate, setBaudRate] = useState(initial ? String(initial.baudRate ?? 9600) : '9600')
-  const [parity, setParity] = useState(initial?.parity ?? 'even')
-  const [stopBits, setStopBits] = useState(initial ? String(initial.stopBits ?? 1) : '1')
-  const [flowControl, setFlowControl] = useState(initial?.flowControl ?? 'none')
-  const [slaveId, setSlaveId] = useState(initial ? String(initial.slaveId ?? 1) : '1')
-  const [pollInterval, setPollInterval] = useState(initial ? String(initial.pollIntervalMs ?? 1000) : '1000')
-  const [timeout, setTimeout_] = useState(initial ? String(initial.timeoutMs ?? 3000) : '3000')
-  const [dataBits, setDataBits] = useState(String(initial?.dataBits ?? 8))
-  const titleId = useId()
-  const operation = useOperation(t)
-  const save = () => operation.run(async () => {
-    await onSave({ mode, name: name.trim(), ip: ip.trim(), port: transport === 'tcp' ? Number(port) : initial?.port ?? 8899, transport, serialPath: serialPath.trim(), baudRate: Number(baudRate), parity, stopBits: Number(stopBits), dataBits: Number(dataBits), flowControl, slaveId: Number(slaveId), pollIntervalMs: Number(pollInterval), timeoutMs: Number(timeout) })
-  })
-  const textField = (label: string, value: string, change: (value: string) => void, placeholder = '', numeric?: { min: number; max?: number }, unit?: string) => (
-    <label className="device-field"><span>{label}</span><span className="device-input-wrap">
-      <input aria-label={label} required type={numeric ? 'number' : 'text'} min={numeric?.min} max={numeric?.max} step={numeric ? 1 : undefined} value={value} onChange={e => change(e.target.value)} placeholder={placeholder} pattern={numeric ? undefined : '.*\\S.*'} />
-      {unit && <span className="device-input-unit">{unit}</span>}
-    </span></label>
-  )
-  const selectField = (label: string, value: string, change: (value: string) => void, options: string[]) => (
-    <label className="device-field"><span>{label}</span><select aria-label={label} value={value} onChange={e => change(e.target.value)}>{options.map(v => <option key={v} value={v}>{v}</option>)}</select></label>
-  )
-  return (
-    <div className="modal-mask">
-      <form className="modal device-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); if (!operation.busy) void save() }} onKeyDown={e => {
-        if (e.key !== 'Tab') return
-        const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)'))
-        const first = items[0], last = items[items.length - 1]
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
-        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
-      }}>
-        <div className="device-modal-header"><h3 id={titleId}>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3><button type="button" className="modal-close" aria-label={t('cancel')} disabled={operation.busy} onClick={onClose}>✕</button></div>
-        <div className="device-modal-body">
-
-          <fieldset disabled={operation.busy}>
-            <legend>基本信息 / General</legend>
-            <label className="device-field"><span>{t('name')}</span><input aria-label={t('name')} required pattern={'.*\\S.*'} value={name} onChange={e => setName(e.target.value)} autoFocus /></label>
-            <label className="device-field"><span>{t('cancel') === 'Cancel' ? 'Device role' : '设备角色'}</span><select aria-label={t('cancel') === 'Cancel' ? 'Device role' : '设备角色'} value={mode} onChange={e => { const next = e.target.value; setMode(next); if (next === 'slave') { setIp('0.0.0.0'); setDataBits('8') } }}><option value="master">{t('cancel') === 'Cancel' ? 'Master · Poll external devices' : '主站 · 主动轮询外部设备'}</option><option value="slave">{t('cancel') === 'Cancel' ? 'Slave · Respond to external masters' : '从站 · 等待外部主站读写'}</option></select></label>
-            <div className="device-transport" role="group" aria-label={t('transport')}>
-              <button type="button" className={'btn' + (transport === 'tcp' ? ' selected' : '')} aria-pressed={transport === 'tcp'} onClick={() => setTransport('tcp')}>{t('transportTcp')}</button>
-              <button type="button" className={'btn' + (transport === 'rtu' ? ' selected' : '')} aria-pressed={transport === 'rtu'} onClick={() => setTransport('rtu')}>{t('transportRtu')}</button>
-            </div>
-          </fieldset>
-          <fieldset disabled={operation.busy}>
-            <legend>连接参数 / Connection</legend>
-            <div className="device-field-grid">
-              {transport === 'tcp' ? <>
-                {textField(mode === 'slave' ? '监听地址 / Bind address' : t('ip'), ip, setIp, mode === 'slave' ? '0.0.0.0' : '192.168.1.10')}
-                {textField(mode === 'slave' ? '监听端口 / Listen port' : t('port'), port, setPort, '8899', { min: 1, max: 65535 })}
-              </> : <>
-                <SerialPortPicker value={serialPath} onChange={setSerialPath} english={t('cancel') === 'Cancel'} />
-                {textField(t('baudRate'), baudRate, setBaudRate, '9600', { min: 1 })}
-                {selectField(t('parity'), parity, setParity, ['even', 'odd', 'none'])}
-                {selectField('数据位 / Data bits', dataBits, setDataBits, mode === 'slave' ? ['8'] : ['5', '6', '7', '8'])}
-                {selectField(t('stopBits'), stopBits, setStopBits, ['1', '2'])}
-                {selectField(t('flowControl'), flowControl, setFlowControl, ['none', 'rtscts', 'xonxoff'])}
-              </>}
-            </div>
-          </fieldset>
-          <fieldset disabled={operation.busy}>
-            <legend>{mode === 'slave' ? '从站设置 / Slave' : '采集设置 / Sampling'}</legend>
-            <div className="device-field-grid">
-              {textField(t('slaveIdLabel'), slaveId, setSlaveId, '1', { min: mode === 'slave' ? 1 : 0, max: 247 })}
-              {mode === 'master' && textField(t('pollIntervalLabel'), pollInterval, setPollInterval, '1000', { min: 1, max: 2147483647 }, 'ms')}
-              {mode === 'master' && textField(t('timeoutLabel'), timeout, setTimeout_, '3000', { min: 1, max: 2147483647 }, 'ms')}
-            </div>
-            {mode === 'slave' ? <p className="device-field-hint">从站等待外部主站读写。TCP 的 0.0.0.0 接受本机所有网卡连接；外部主站使用本机实际 IP。RTU 使用独占串口。</p> : <><p className="device-field-hint">{t('pollIntervalHint')}</p><p className="device-field-hint">{t('timeoutHint')}</p></>}
-          </fieldset>
-        </div>
-        <div className="modal-actions device-modal-footer">
-          <button type="button" className="btn" disabled={operation.busy} onClick={onClose}>{t('cancel')}</button>
-          <button type="submit" className="btn primary" disabled={operation.busy}>{operation.busy ? t('working') : initial ? t('save') : t('add')}</button>
-        </div>
-      </form>
-    </div>
-  )
 }

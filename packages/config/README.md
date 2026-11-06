@@ -86,3 +86,9 @@ applyPointBookImport(objectId, replace, build)仅供Sink同步构建点表，事
 `updateRegisterSettings(id, { expected, changes })`仅供点位设置新接口：expected为打开时点位、分组和设备来源快照，changes仅允许类型、单位、倍率、偏移、枚举及小数位。BEGIN IMMEDIATE覆盖读取、条件核对、范围检查、绑定参数写入及读回；冲突409、缺点404、输入错误400，失败回滚且不通知。成功提交后通知一次，通知异常返回`{point,warnings}`而非假失败。省略枚举保留当前值，显式编辑需匹配原枚举。
 
 不新增列或迁移。旧updateRegister/设备分组更新/导入等兼容入口未统一加保护，不是全局版本号或跨工作区身份保证；详见[保护范围与验收](../../docs/develop/34-点位设置并发冲突保护.md)。
+
+## 设备编辑条件更新
+
+`updateObjectSettings(id, { expected, changes })`用于设备编辑新接口；快照仅含设备编辑表单字段，不含connected/isActive/dataRetainSeconds。BEGIN IMMEDIATE内比较整份表单旧值、校验合并结果、绑定写入并读回，失败回滚，不通知。提交后一次通知，异常转warnings；返回`{device,warnings}`。不调用poller或从站服务，连接处理由API提交后执行，冲突/非法输入不调用。旧updateObject兼容，不新增列或迁移。
+
+设备/点位已具备当前值条件保护；旧接口、MCP、导入及分组编辑尚未统一保护。分组quantity变化涉及现有点位与告警删除/新增，须另做整图核对与事务，详见[评估与边界](../../docs/develop/35-设备编辑冲突与分组风险评估.md)。

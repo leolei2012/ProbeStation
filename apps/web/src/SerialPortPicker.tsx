@@ -32,10 +32,10 @@ async function fetchPorts(signal: AbortSignal): Promise<SerialPortList> {
   return response.json()
 }
 
-export function SerialPortPicker({ value, onChange, english = false }: { value: string; onChange: (value: string) => void; english?: boolean }) {
+export function SerialPortPicker({ value, onChange, english = false, fetcher = fetchPorts }: { value: string; onChange: (value: string) => void; english?: boolean; fetcher?: (signal: AbortSignal) => Promise<SerialPortList> }) {
   const [state, setState] = useState(initialSerialPortState)
   const loader = useRef<SerialPortLoader>()
   if (!loader.current) loader.current = new SerialPortLoader(setState)
-  useEffect(() => { void loader.current!.refresh(fetchPorts); return () => loader.current!.cancel() }, [])
-  return <SerialPortPickerView value={value} onChange={onChange} state={state} refresh={() => { void loader.current!.refresh(fetchPorts) }} english={english} />
+  useEffect(() => { void loader.current!.refresh(fetcher); return () => loader.current!.cancel() }, [fetcher])
+  return <SerialPortPickerView value={value} onChange={onChange} state={state} refresh={() => { void loader.current!.refresh(fetcher) }} english={english} />
 }

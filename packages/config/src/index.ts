@@ -14,6 +14,7 @@ import { areaForFunction, type ModbusFunctionCode } from '../../core/src/protoco
 import { registerWidth } from '../../core/src/codec.ts'
 import { semanticPointFields, type SemanticPointUpdate } from '../../core/src/semantic-import.ts'
 import { capturePointEditBaseline, parsePointEditRequest, pointEditMatches } from '../../core/src/point-settings-edit.ts'
+import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest } from '../../core/src/device-settings-edit.ts'
 
 export const name = 'config'
 
@@ -184,6 +185,32 @@ export class ConfigStore {
     if (!Number.isInteger(unitId) || unitId < 1 || unitId > 247) fail('从站地址必须为 1–247')
     if (transport === 'tcp' && (typeof device.ip !== 'string' || !net.isIP(device.ip) || !Number.isInteger(device.port) || device.port < 1 || device.port > 65535)) fail('从站请填写有效的本机监听 IP 和端口')
     if (transport === 'rtu' && (typeof device.serialPath !== 'string' || !device.serialPath.trim() || (device.dataBits ?? 8) !== 8 || !['none', 'even', 'odd'].includes(device.parity ?? 'even') || ![1, 2].includes(device.stopBits ?? 1) || !Number.isInteger(device.baudRate ?? 9600) || (device.baudRate ?? 9600) < 300 || (device.baudRate ?? 9600) > 4000000)) fail('RTU 从站请填写有效串口参数，数据位必须为 8')
+  }
+  /** Editor-only conditional metadata update. Runtime connection changes belong to the API after commit. */
+  updateObjectSettings(id: number, request: unknown): { device: DeviceRecord; warnings: string[] } {
+    const { expected, changes } = parseDeviceEditRequest(request)
+    if (!Number.isSafeInteger(id) || id < 1 || expected.id !== id) throw Object.assign(new Error('设备编号与编辑快照不一致。'), { statusCode: 400 })
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请核对后重新编辑。'), { statusCode: 409 })
+    let device: DeviceRecord
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const current = this.getObject(id)
+      if (!current) throw Object.assign(new Error('设备已不存在，本次未保存。请关闭窗口并刷新。'), { statusCode: 404 })
+      let baseline
+      try { baseline = captureDeviceEditBaseline(current) } catch { baseline = null }
+      if (!baseline || !deviceEditMatches(baseline, expected)) throw Object.assign(new Error('设备配置已变更，本次未保存。草稿已保留；请记录修改，关闭并刷新配置后重新编辑。'), { statusCode: 409 })
+      this.validateDevice({ ...current, ...changes })
+      this.update('monitor_objects', id, changes, OBJECT_MAP)
+      device = this.getObject(id)!
+      if (!device) throw new Error('保存后无法读取设备，事务已中止。')
+      this.db.exec('COMMIT')
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '设备设置回滚失败，结果待核实，勿自动重试。') }
+      throw error
+    }
+    const warnings: string[] = []
+    try { this.notify('object', id) } catch { warnings.push('配置已保存，但变更通知失败；请刷新核对，勿重复保存。') }
+    return { device, warnings }
   }
   deleteObject(id: number): void {
     this.db.prepare('DELETE FROM alarm_rules WHERE register_id IN (SELECT id FROM registers WHERE object_id = ?)').run(id)
