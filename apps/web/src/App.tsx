@@ -10,6 +10,7 @@ import { physicalValue, displayNumber, curveValue, type ValueMode } from './phys
 import { PointSettingsEditor } from './PointSettingsEditor'
 import { ConfigBackupSettings } from './ConfigBackupSettings'
 import { HistoryQualitySummary } from './HistoryQualitySummary'
+import { HistoryQueryTimeoutError, runHistoryQuery } from './history-query'
 import { VirtualTableBody } from './VirtualTableBody'
 import { DeviceIssues, type DataTarget } from './DeviceIssues'
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -45,6 +46,7 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    histCancel: '取消查询', histCancelled: '查询已取消，可点击“查询”重新加载。', histTimeout: '查询超过 30 秒，请缩小时间范围后重试。',
     histCoverage: '当前视窗完整区间：{source} 个采样，显示 {shown} 个读数', histSampled: '峰谷保留降采样，放大自动加载细节', histOriginal: '原始采样',
     alarmDelete: '删除', alarmClose: '关闭',
     alarmLabel: '告警', alarmRules: '告警规则', alarmActive: '{n} 项触发', alarmNormal: '未触发', alarmWaiting: '等待有效数据', alarmNone: '未设置规则', alarmTriggered: '条件触发', alarmUnknown: '{n} 项规则暂无有效数据，设备暂停、通信异常或数据过期时不判断告警。', alarmLoadError: '告警规则加载失败', alarmHelp: '按点位类型解码后的原始值比较，不应用系数、偏移或显示舍入。条件命中时持续提示，恢复后自动消除；同一次持续告警只记录一条日志。', alarmInvalid: '请选择点位，并填写有效的原始值阈值。', alarmAdd: '新增规则', alarmEdit: '编辑规则', alarmPoint: '告警点位', alarmChoose: '选择点位', alarmOperator: '比较条件', alarmThreshold: '原始值阈值', alarmMessage: '告警提示（可选）', alarmMessageHint: '例如：温度过高，请检查散热', alarmCancelEdit: '取消编辑', alarmConfirmDelete: '删除这条告警规则？',
@@ -108,6 +110,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    histCancel: 'Cancel query', histCancelled: 'Query cancelled. Click Query to reload.', histTimeout: 'Query exceeded 30 seconds. Narrow the time range and retry.',
     histCoverage: 'Full visible range: {source} samples, {shown} displayed', histSampled: 'Extrema preserved; zoom reloads detail', histOriginal: 'Original samples',
     alarmDelete: 'Delete', alarmClose: 'Close',
     alarmLabel: 'Alarms', alarmRules: 'Alarm rules', alarmActive: '{n} triggered', alarmNormal: 'Not triggered', alarmWaiting: 'Waiting for valid data', alarmNone: 'No rules configured', alarmTriggered: 'Condition triggered', alarmUnknown: '{n} rules lack valid data. Paused devices, communication faults and stale samples are not evaluated.', alarmLoadError: 'Failed to load alarm rules', alarmHelp: 'Compare decoded raw values without scaling, offsets or display rounding. Show alarms while conditions match and clear when they recover. Log once per continuous alarm.', alarmInvalid: 'Select a point and enter a finite raw threshold.', alarmAdd: 'Add rule', alarmEdit: 'Edit rule', alarmPoint: 'Point', alarmChoose: 'Select a point', alarmOperator: 'Comparison', alarmThreshold: 'Raw threshold', alarmMessage: 'Alarm message (optional)', alarmMessageHint: 'Example: Temperature too high', alarmCancelEdit: 'Cancel editing', alarmConfirmDelete: 'Delete this alarm rule?',
@@ -1231,6 +1234,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   const [curveRange, setCurveRange] = useState<{ start: number; end: number } | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
+  const queryController = useRef<AbortController | null>(null)
   const [showExport, setShowExport] = useState(false)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
   useEffect(() => {
@@ -1246,20 +1250,21 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   useEffect(() => {
     if (!valid) return
     const controller = new AbortController()
+    queryController.current = controller
     setStatus('loading'); setError(null)
     const timer = setTimeout(async () => {
       try {
         const start = new Date(queryStart).toISOString(), end = new Date(queryEnd).toISOString()
         const path = mode === 'chart' ? 'series' : 'page'
-        const response = await request(`/api/data/object/${path}?object_id=${device.id}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&page=${page}&page_size=200&max_points=1200&register_ids=${encodeURIComponent(selectionKey)}`, { signal: controller.signal })
+        const response = await runHistoryQuery(signal => request(`/api/data/object/${path}?object_id=${device.id}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&page=${page}&page_size=200&max_points=1200&register_ids=${encodeURIComponent(selectionKey)}`, { signal }), controller.signal)
         if (controller.signal.aborted) return
         const points: HistoryPoint[] = response.points ?? []
         setData({ ...response, points, series: response.series?.map((s: any) => ({ ...s, gapMs: s.gapMs ?? Infinity })), total: response.total ?? points.length, start, end, mode }); setStatus('done')
       } catch (e) {
-        if (!controller.signal.aborted) { setError(e instanceof Error ? e.message : String(e)); setStatus('error') }
+        if (!controller.signal.aborted) { setError(e instanceof HistoryQueryTimeoutError ? 'timeout' : e instanceof Error ? e.message : String(e)); setStatus('error') }
       }
     }, 250)
-    return () => { clearTimeout(timer); controller.abort() }
+    return () => { clearTimeout(timer); controller.abort(); if (queryController.current === controller) queryController.current = null }
   }, [device.id, queryStart, queryEnd, valid, mode, page, refresh, selectionKey])
   useEffect(() => { setCurveRange(null) }, [startMs, endMs])
   const changeRange = (start: string, end: string) => { setRange({ start, end }); setCurveRange(null); setPage(0) }
@@ -1275,6 +1280,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     window.open('/api/export/' + format + '?object_id=' + device.id + '&start=' + new Date(startMs).toISOString() + '&end=' + new Date(endMs).toISOString() + '&tz=' + localTzOffsetMin() + (ids ? '&register_ids=' + ids : ''))
   }
   const currentStatus = data && (data.mode !== mode || Date.parse(data.start) !== queryStart || Date.parse(data.end) !== queryEnd) && status === 'done' ? 'loading' : status
+  const errorText = error === 'timeout' ? t('histTimeout') : error
   return <div className="history-view">
     <div className="toolbar">
       <div className="seg"><button className={mode === 'table' ? 'selected' : ''} onClick={() => { setMode('table'); setPage(0) }}>{t('histTable')}</button><button className={mode === 'chart' ? 'selected' : ''} onClick={() => { setMode('chart'); setPage(0) }}>{t('tabCurve')}</button></div>
@@ -1292,12 +1298,13 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
       <label className="hist-label">{t('histStart')}<input className="hist-input" type="datetime-local" step="1" value={range.start} onChange={e => { setPreset(null); changeRange(e.target.value, range.end) }} /></label>
       <label className="hist-label">{t('histEnd')}<input className="hist-input" type="datetime-local" step="1" value={range.end} onChange={e => { setPreset(null); changeRange(range.start, e.target.value) }} /></label>
       <button className="btn primary" disabled={!valid || currentStatus === 'loading'} onClick={() => setRefresh(v => v + 1)}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
+      {currentStatus === 'loading' && <button className="btn" onClick={() => { queryController.current?.abort(); setStatus('idle'); setError(null) }}>{t('histCancel')}</button>}
     </div>
     {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
     {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} t={t} />}
-    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody sourceSeries={data?.series} onViewportChange={setCurveRange} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={error} range={{ start: startMs, end: endMs }} /> : <>
+    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody sourceSeries={data?.series} onViewportChange={setCurveRange} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
-      <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={error} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
+      <HistoryTableBody t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={errorText} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
     </>}
     {showExport && <ExportModal t={t} onClose={() => setShowExport(false)} onPick={format => { doExport(format); setShowExport(false) }} />}
   </div>
@@ -1310,7 +1317,7 @@ function HistoryTableBody({ t, rows, selectedRegisters, status, error, page, tot
 
   return (
     <>
-      {status === 'idle' && <div className="hist-empty">{t('histIdle')}</div>}
+      {status === 'idle' && <div className="hist-empty" role="status">{t('histCancelled')}</div>}
       {status === 'done' && rows.length === 0 && <div className="hist-empty">{t('histEmpty')}</div>}
       {status === 'error' && <div className="hist-empty warn">{t('histError')} {error}</div>}
       {status === 'done' && rows.length > 0 && (selectedRegisters.length === 0 ? (
@@ -1623,6 +1630,7 @@ function ChartBody({ valueMode, t, registers, selected, pts, sourceSeries, statu
     const valid = point != null && (hover === null || Math.abs(point[0] - hover) <= s.gapMs / 2) && point[1] !== null
     return { id: s.id, name: reg?.alias || '#' + (reg?.startAddress ?? s.id), address: reg?.startAddress ?? s.id, color: s.color, value: (valid ? reading(point![1]!, reg) : '—') + ' [' + historyVerificationLabel[point ? s.verification?.find(v => v[0] === point[0])?.[1] ?? 'unverified' : 'unknown'] + ']', time: valid ? point![0] : null, point: valid ? point as [number, number] : null }
   })
+  if (status === 'idle') return <div className="hist-empty" role="status">{t('histCancelled')}</div>
   if (status === 'loading') return <div className="hist-empty" role="status">{t('histLoading')}</div>
   if (status === 'error') return <div className="hist-empty warn" role="alert">{t('histError')}: {error}</div>
   if (selected.size === 0) return <div className="hist-empty">{t('histNoRegs')}</div>
