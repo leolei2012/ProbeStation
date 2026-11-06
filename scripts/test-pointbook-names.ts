@@ -64,9 +64,9 @@ try {
     assert.ok(result.errors.length); assert.deepEqual([result.groups, result.registers], [0, 0]); assert.equal(snapshot(), before)
   }
   // Old six-column workbooks are supported only when literal group/FC/address selects one point.
-  const oldSpaced = await mutate((await sink.exportPointSheet(spaced.id)).buffer, b => b.getWorksheet('告警规则')!.spliceColumns(7, 1))
+  const oldSpaced = await mutate((await sink.exportPointSheet(spaced.id)).buffer, b => b.getWorksheet('告警规则')!.spliceColumns(7, 2))
   assert.equal((await sink.importPointBook(second.id, oldSpaced)).errors.length, 0); assert.deepEqual(shape(second.id), shape(spaced.id))
-  await reject(await mutate(exported, b => b.getWorksheet('告警规则')!.spliceColumns(7, 1)))
+  await reject(await mutate(exported, b => b.getWorksheet('告警规则')!.spliceColumns(7, 2)))
   for (const change of [
     (b: ExcelJS.Workbook) => { b.getWorksheet('告警规则')!.getCell('G1').value = '' },
     (b: ExcelJS.Workbook) => { b.getWorksheet('告警规则')!.getCell('G1').value = 'unknown binding' },
@@ -83,7 +83,7 @@ try {
   const fallback = await mutate((await sink.exportPointSheet(spaced.id)).buffer, b => { b.worksheets[2].getCell('B1').value = '' })
   const fallbackResult = await sink.importPointBook(second.id, fallback)
   assert.equal(fallbackResult.errors.length, 0); assert.ok(fallbackResult.warnings.some(w => /未提供分组名/.test(w)))
-  // The format cannot select between two definitions within one sheet; never export ambiguous alarm ownership.
+  // Legacy alarms without point identity remain ambiguous even though new files can carry identities.
   const duplicate = cfg.createObject('mock same-sheet duplicates', 'mock.invalid', 502), dg = cfg.createGroup(duplicate.id, 'duplicate definitions', 3, 0, 1)
   const dp = cfg.createRegister(dg.id, duplicate.id, 'first definition', 3, 0)
   cfg.createRegister(dg.id, duplicate.id, 'second definition', 3, 0)
@@ -91,7 +91,9 @@ try {
   assert.equal((await sink.importPointBook(second.id, noRules)).errors.length, 0); assert.equal(cfg.listRegistersByObject(second.id).length, 2)
   await reject(await mutate(noRules, b => { b.getWorksheet('告警规则')!.addRow(['duplicate definitions', 3, 0, '>', 1, '', 'duplicate definitions']) }))
   cfg.createRule(dp.id, '>', 1, 'ambiguous owner')
-  await assert.rejects(sink.exportPointSheet(duplicate.id), /不能唯一定位/)
+  const identified = await sink.exportPointSheet(duplicate.id)
+  assert.equal((await sink.importPointBook(second.id, identified.buffer)).errors.length, 0)
+  assert.deepEqual(shape(second.id), shape(duplicate.id))
   assert.throws(() => assertExportableGroupName('\ud800'), /不能保真/)
   for (const name of ['', '   ', 'bad\u0000name', 'line\nbreak', '\uffff']) {
     const bad = cfg.createObject('mock unsupported name', 'mock.invalid', 502)

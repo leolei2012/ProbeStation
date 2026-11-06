@@ -123,7 +123,7 @@ export class Sink {
    *   第1行：分组,<名>
    *   第2行：从站,<v>, 功能码,<v>, 起始地址,<v>, 数量,<v>
    *   第3行空
-   *   第4行：别名 | 数据类型 | 单位 | 系数 | 偏移 | 枚举 | 功能码 | 起始地址 | 数量 | 小数位数 | 告警数量
+   *   第4行：别名 | 数据类型 | 单位 | 系数 | 偏移 | 枚举 | 功能码 | 起始地址 | 数量 | 小数位数 | 告警数量 | 点位标识
    *   第5行起：每行一条寄存器
    * 另有「设备信息」sheet 存连接参数，仅供参考，导入不修改设备连接。
    */
@@ -135,12 +135,7 @@ export class Sink {
     const allocate = createSheetNameAllocator()
     const sheets = groups.map((g: any) => {
       assertExportableGroupName(g.name)
-      const regs = [...this.ctx.config.listRegisters(g.id)].sort((a: any, b: any) => a.startAddress - b.startAddress)
-      const counts = new Map<string, number>()
-      for (const reg of regs) { const key = JSON.stringify([reg.functionCode, reg.startAddress]); counts.set(key, (counts.get(key) ?? 0) + 1) }
-      if (regs.some((reg: any) => counts.get(JSON.stringify([reg.functionCode, reg.startAddress]))! > 1 && rules.some((rule: any) => rule.registerId === reg.id))) {
-        throw new Error('同一分组内同FC/地址的多个定义带有告警，v2点表不能唯一定位；未生成文件，请使用JSON配置备份。')
-      }
+      const regs = [...this.ctx.config.listRegisters(g.id)].sort((a: any, b: any) => a.startAddress - b.startAddress || a.id - b.id)
       return { g, regs, name: allocate(g.name) }
     })
     const wb = new ExcelJS.Workbook()
@@ -159,11 +154,12 @@ export class Sink {
     boldRows(info, 1)
 
     const alarmSheet = wb.addWorksheet('告警规则')
-    alarmSheet.addRow(['分组', '功能码', '起始地址', '告警条件', '原始值阈值', '告警提示', '点位工作表'])
-    alarmSheet.columns = [{ width: 24 }, { width: 12 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 48 }, { width: 32 }]
+    alarmSheet.addRow(['分组', '功能码', '起始地址', '告警条件', '原始值阈值', '告警提示', '点位工作表', '点位标识'])
+    alarmSheet.columns = [{ width: 24 }, { width: 12 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 48 }, { width: 32 }, { width: 20 }]
     boldRows(alarmSheet, 1)
     alarmSheet.views = [{ state: 'frozen', ySplit: 1 }]
     // 每分组一个 sheet
+    let pointSequence = 0
     for (const { g, regs, name } of sheets) {
       const s = wb.addWorksheet(name)
       // 第1、2行：分组头；(第3行留空)
@@ -171,24 +167,25 @@ export class Sink {
       s.addRow(['从站', g.slaveId ?? obj.slaveId ?? 1, '功能码', g.functionCode, '起始地址', g.startAddress, '数量', g.quantity])
       s.addRow([])
       // 第4行：数据列头
-      const head = ['别名', '数据类型', '单位', '系数', '偏移', '枚举', '功能码', '起始地址', '数量', '小数位数', '告警数量']
+      const head = ['别名', '数据类型', '单位', '系数', '偏移', '枚举', '功能码', '起始地址', '数量', '小数位数', '告警数量', '点位标识']
       s.addRow(head)
       boldRows(s, 4)
       // 第5行起：每行一条寄存器（固定列序；导出值均作字符串便于往返）
       for (const r of regs) {
+        const localId = 'p' + ++pointSequence // Workbook-local only; never expose or persist database IDs.
         const alarms = rules.filter((rule: any) => rule.registerId === r.id).map(({ operator, threshold, message }: any) => ({ operator, threshold, message }))
-        for (const alarm of alarms) alarmSheet.addRow([g.name, r.functionCode, r.startAddress, alarm.operator, String(alarm.threshold), alarm.message ?? '', name])
+        for (const alarm of alarms) alarmSheet.addRow([g.name, r.functionCode, r.startAddress, alarm.operator, String(alarm.threshold), alarm.message ?? '', name, localId])
         s.addRow([
           r.alias ?? '', r.dataType ?? 'int16', r.unit ?? '', String(r.factor ?? 1), String(r.offset ?? 0),
-          r.enumJson ? safeJson(r.enumJson) : '', String(r.functionCode), String(r.startAddress), String(r.quantity ?? 1), r.decimalPlaces == null ? '' : String(r.decimalPlaces), alarms.length || '',
+          r.enumJson ? safeJson(r.enumJson) : '', String(r.functionCode), String(r.startAddress), String(r.quantity ?? 1), r.decimalPlaces == null ? '' : String(r.decimalPlaces), alarms.length || '', localId,
         ])
       }
-      s.columns = [24, 18, 12, 12, 12, 32, 12, 14, 10, 12, 12].map(width => ({ width }))
+      s.columns = [24, 18, 12, 12, 12, 32, 12, 14, 10, 12, 12, 20].map(width => ({ width }))
       s.views = [{ state: 'frozen', ySplit: 4, xSplit: 1 }]
       s.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: head.length } }
       s.getColumn(11).eachCell((cell, row) => { if (row >= 5) cell.font = { color: { argb: 'FF777777' } } })
     }
-    alarmSheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 7 } }
+    alarmSheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 8 } }
     for (const sheet of wb.worksheets) {
       sheet.eachRow((row, index) => {
         row.height = 26

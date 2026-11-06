@@ -449,7 +449,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('export_points_xlsx', {
-      title: 'Export point sheet (xlsx)', description: '导出新版 v2 点位表：设备信息、每分组一个 sheet、告警规则 sheet（每条规则一行，阈值为解码原始值），返回 base64。',
+      title: 'Export point sheet (xlsx)', description: '导出v2点位表：设备信息、分组页、告警页，返回base64。页签唯一，点位L/告警H为文件内标识（非数据库ID），支持同页同地址多定义各自告警；告警阈值仍为解码原始值。',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
@@ -457,7 +457,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ filename, b64: buffer.toString('base64'), bytes: buffer.length }) }] }
     })
     server.registerTool('import_points_xlsx', {
-      title: 'Import point sheet (xlsx)', description: '导入 v2 点位表，必须含告警规则 sheet（无告警也保留表头），不兼容旧版。事务覆盖设备全部分组、点位和告警；已有校验发现任一行错误或写入失败则整体回滚。传 content_b64，检查errors/warnings；警告可能表示已提交，不要自动重试。',
+      title: 'Import point sheet (xlsx)', description: '导入v2点位表（须含告警页，无告警保留表头），事务覆盖设备组/点位/告警。L/H文件内点位标识需一致，重复/冲突/失效拒绝；旧无标识时只接受唯一匹配，不猜告警归属。错误保留原配置。传content_b64，检查errors/warnings；警告可能表示已提交，不要自动重试。',
       inputSchema: { device_id: zz.number(), content_b64: zz.string() },
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
