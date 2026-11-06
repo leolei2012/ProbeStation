@@ -1,3 +1,4 @@
+import { withMockRecordingIntervals } from './fixtures/recording-config.ts'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -18,8 +19,9 @@ let rows: any[] = []
 let queriedSource: number | undefined
 let queryCalls = 0, cacheReads = 0
 let imported: any[] = [], failImportLog = false
-const cfg = { getObject: () => recordingDevice, listGroups: () => groups, listRegistersByObject: () => ambiguous ? regs : [regs[0]], updateObject: (_id: number, fields: any) => { rateChanges.push(fields.pollIntervalMs); Object.assign(recordingDevice, fields) }, log: () => { if (failImportLog) throw new Error('injected log failure') },
-  importPoints: (_id: number, points: any[]) => { imported = points; return { updated: points.length, skipped: 0, errors: [], details: [], warnings: [] } } }
+const cfg = withMockRecordingIntervals({ getObject: () => recordingDevice, listGroups: () => groups, listRegistersByObject: () => ambiguous ? regs : [regs[0]], updateObject: (_id: number, fields: any) => { rateChanges.push(fields.pollIntervalMs); Object.assign(recordingDevice, fields) }, log: () => { if (failImportLog) throw new Error('injected log failure') },
+  importPoints: (_id: number, points: any[]) => { imported = points; return { updated: points.length, skipped: 0, errors: [], details: [], warnings: [] } } })
+
 const store = {
   getLatestByObjectAll: () => latest,
   getLatestByObject: (_id: number, area: string, slaveId?: number) => { cacheReads++; return Object.fromEntries([0, 1].flatMap(address => {
@@ -150,6 +152,21 @@ try {
   const listed = body(await run('list_recordings')).find((r: any) => r.id === armed.recording_id)
   assert.equal(listed.slaveId, 1); assert.equal(listed.trigger.slaveId, 2)
   await run('stop_recording', { recording_id: armed.recording_id }); assert.equal(recordingDevice.pollIntervalMs, 1000)
+  const conflictRecording = body(await run('start_recording', recArgs))
+  recordingDevice.pollIntervalMs = 55
+  const preserved = body(await run('stop_recording', { recording_id: conflictRecording.recording_id }))
+  assert.equal(preserved.ok, true); assert.equal(preserved.interval_restore, 'preserved'); assert(preserved.warnings.length); assert.equal(recordingDevice.pollIntervalMs, 55)
+  assert.equal(body(await run('get_recording', { recording_id: conflictRecording.recording_id })).intervalRestore, 'preserved')
+  recordingDevice.pollIntervalMs = 1000
+  for (const [tool, args] of [['start_recording', recArgs], ['start_trigger_recording', { ...triggerArgs, trigger_slave_id: 1 }]] as const) {
+    failImportLog = true; const started = await run(tool, args); failImportLog = false
+    assert.equal(started.isError, undefined, 'post-start log failure must not report a failed start')
+    const saved = body(started); assert(saved.recording_id); assert.equal(saved.warnings.length, 1)
+    const removed = body(await run('delete_recording', { recording_id: saved.recording_id }))
+    assert.equal(removed.ok, true); assert.equal(removed.interval_restore, 'restored'); assert.equal(removed.warnings.length, 1); assert.equal(recordingDevice.pollIntervalMs, 1000)
+  }
+  const missingRecording = body(await run('stop_recording', { recording_id: 'missing-synthetic' }))
+  assert.equal(missingRecording.ok, false); assert.equal(missingRecording.interval_restore, null); assert.deepEqual(missingRecording.warnings, [])
   for (const tool of ['start_recording', 'start_trigger_recording']) {
     const schema = schemas.get(tool)
     assert.ok(schema.slave_id.safeParse(2).success)

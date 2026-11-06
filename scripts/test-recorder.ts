@@ -1,3 +1,4 @@
+import { withMockRecordingIntervals } from './fixtures/recording-config.ts'
 import { Recorder } from '../packages/mcp/src/recorder.ts'
 
 // ============================================================
@@ -11,12 +12,12 @@ const emit = (event: string, payload: any) => listeners[event]?.(payload)
 
 const objects = new Map<number, { id: number; pollIntervalMs: number; dataRetainSeconds: number | null }>()
 objects.set(1, { id: 1, pollIntervalMs: 200, dataRetainSeconds: null })
-const cfg = {
+const cfg = withMockRecordingIntervals({
   getObject: (id: number) => objects.get(id),
   updateObject: (id: number, fields: Record<string, unknown>) => { const o = objects.get(id); if (o) Object.assign(o, fields) },
   listObjects: () => [...objects.values()],
   listGroups: () => [{ id: 1, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 512 }],
-}
+})
 
 const recorder = new Recorder(ctx as any, cfg as any)
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))

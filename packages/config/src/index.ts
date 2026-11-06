@@ -17,6 +17,7 @@ import { semanticPointFields, type SemanticPointUpdate } from '../../core/src/se
 import { capturePointEditBaseline, parsePointEditRequest, pointEditMatches } from '../../core/src/point-settings-edit.ts'
 import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest } from '../../core/src/device-settings-edit.ts'
 import { captureGroupEditGraph, groupDeletionAcknowledged, groupEditInvalid, parseGroupEditChanges, planGroupResize, type GroupEditSnapshot } from '../../core/src/group-settings-edit.ts'
+import { RecordingIntervals, type RecordingIntervalLease } from './recording-interval.ts'
 
 export const name = 'config'
 
@@ -47,6 +48,10 @@ export class ConfigStore {
   private restoring = false
   private db: DatabaseSync
   private dbPath: string
+  private recordingIntervals = new RecordingIntervals(() => this.db, id => this.getObject(id), (id, intervalMs) => this.update('monitor_objects', id, { pollIntervalMs: intervalMs }, OBJECT_MAP), () => this.restoring, id => this.notify('object', id))
+  acquireRecordingInterval(id: number, intervalMs: number) { return this.recordingIntervals.acquire(id, intervalMs) }
+  recordingIntervalLeaseValid(lease: RecordingIntervalLease) { return this.recordingIntervals.valid(lease) }
+  restoreRecordingInterval(lease: RecordingIntervalLease) { return this.recordingIntervals.restore(lease) }
 
   constructor(config: Config, private readonly onChange?: (scope: string, id?: number) => void) {
     this.dbPath = config.dbPath
@@ -103,6 +108,7 @@ export class ConfigStore {
 
   /** 切换工作区：关闭旧库、打开新库（幂等，CREATE TABLE IF NOT EXISTS）。 */
   reopen(dbPath: string): void {
+    this.recordingIntervals.reset()
     this.db.close()
     this.dbPath = dbPath
     this.db = this.open(dbPath)
@@ -215,6 +221,7 @@ export class ConfigStore {
     return { device, warnings }
   }
   deleteObject(id: number): void {
+    this.recordingIntervals.deleted(id)
     this.db.prepare('DELETE FROM alarm_rules WHERE register_id IN (SELECT id FROM registers WHERE object_id = ?)').run(id)
     this.db.prepare('DELETE FROM registers WHERE object_id = ?').run(id)
     this.db.prepare('DELETE FROM register_groups WHERE object_id = ?').run(id)
@@ -610,6 +617,7 @@ export class ConfigStore {
       }
     }
     if (cols.length === 0) return
+    if (table === 'monitor_objects' && fields.pollIntervalMs !== undefined) this.recordingIntervals.changed(id)
     vals.push(id)
     this.db.prepare(`UPDATE ${table} SET ${cols.join(', ')} WHERE id = ?`).run(...vals)
   }

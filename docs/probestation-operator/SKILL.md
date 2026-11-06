@@ -192,3 +192,7 @@ Invoke-RestMethod "$probeBase/api/monitor_objects"
 需要追查实现时，在仓库查看 `apps/cli/src/main.ts`（启动）、`packages/mcp/src/index.ts`（工具 schema）、`packages/api/src/index.ts`（REST）、`packages/core/src/paths.ts`（目录/时区）、`apps/web/src/App.tsx`（UI）。仓库路径相对项目根目录；随软件更新以运行中 schema 和对应源码为准。
 
 AI 助手不设工具次数/轮数、请求超时、输入/响应长度、附件数量/大小、查询区间/点数或并发咨询数量限额。可手动停止；配置修改仍需确认。已知模型窗口接近容量时仍自动压缩较早上下文，实际容量和 API 配额由服务商决定。
+
+### 录制结束后的间隔核对
+
+新版本get/list_recordings返回intervalRestore/warnings，stop/delete_recording返回interval_restore/warnings；ok或done只表示会话结束，不保证周期已恢复。restored表示事务已恢复；shared仍有其他会话；preserved保留当前值；uncertain须人工核实。遇到用户同值写入、ABA、设备编辑变化或外部SQLite提交，不得强制写回旧间隔。其他连接写日志也会保守取消自动恢复，可能留下短周期，须核对当前pollIntervalMs。开始已有ID但附通知/日志警告时勿重复开始。无自动重试、跨进程调度或崩溃恢复；旧REST仍无条件，不能当成有保护接口。详见[录制间隔保护](../develop/39-录制间隔归还与并发修改保护.md)。

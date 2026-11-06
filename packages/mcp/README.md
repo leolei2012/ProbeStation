@@ -99,7 +99,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 - `start_trigger_recording` 新增 `trigger_slave_id`：显式值优先，其次继承 `slave_id`，否则从当前配置唯一解析。它与录制范围独立，可从站 2 触发、只录从站 1。返回的 addresses/trigger 是解析后的 camelCase 描述，get_recording/list_recordings 同时给出范围；触发证据为 triggeredBy。
 - 触发条件保持**原始 16 位单字**比较，不按 dtype 合并或作物理值换算。只用目标来源的唯一候选、good 质量、有效整数原始字及不早于布防/前次采样的有效时间。未知/其他源不触发、不改变 changed 基线；目标坏值或重复候选清空 changed 基线，完整有效值恢复。局部 slave 的单字允许无 batchId，不生成批次；原始多字录制的自动消费仍须自行验证同来源/area/采样时间/完整批次及质量。
 - sourceVerified 仅代表来源元数据存在，不代表质量、完整多字、物理身份认证或 PASS/FAIL。录制仅在进程内存中保存，没有持久化/导入旧录制路径；重启不会恢复会话，外部保存的缺身份旧记录不能据当前配置回填。
-- 同设备同间隔录制可并行，最后一个停止才恢复最初间隔；不同间隔或期间已修改当前间隔时拒绝叠加。停止时若当前周期已经改成别的值则保留该值。最近 50 段上限只淘汰已结束记录，50 段全部活动时拒绝新会话。毫秒参数为整数且不超过 Node 定时器上限 2147483647；触发等待仍有原有 10 分钟上限。
+- 同设备同间隔录制可并行，最后一个停止才恢复最初间隔；不同间隔或期间已修改当前间隔时拒绝叠加。停止时原子核对原设备快照及间隔写入身份；同值写入/ABA或外部SQLite连接提交也保留当前值。返回恢复状态及警告，不能将done或ok=true当作已恢复。最近 50 段上限只淘汰已结束记录，50 段全部活动时拒绝新会话。毫秒参数为整数且不超过 Node 定时器上限 2147483647；触发等待仍有原有 10 分钟上限。
 
 回归 `test-recorder`、`test-recorder-source`、`test-mcp-source` 使用 mock 事件/配置/时钟/工具注册器，不监听端口、不连接设备或修改真实配置。详细兼容契约和示例见 [录制隔离说明](../../docs/develop/03-录制从站隔离.md)。
 
@@ -131,3 +131,7 @@ export_points_xlsx会分配合法唯一页签，B1保留原组名，告警G可�
 - 成功结果保留原记录字段，增加configuration_saved=true及warnings；组另附revision和实际增删ID。连接应用/通知/日志失败是已保存警告，不能当作配置未保存重试。设备MCP原master重连、随后从站同步的顺序保留，本轮没有变更硬件策略。
 
 新读工具只读配置，不枚举、连接或探测仪器。条件是并发保护，不是鉴权/授权或持久幂等键。点位`update_register`现须先`get_register_edit_snapshot`并原样携带expected；助手确认/撤销也已使用原条件。旧REST、窄状态命令、录制等剩余调用不因此获得保护，详见[最新调用方及边界](../../docs/develop/38-点位调用与助手提案条件保护.md)。先查运行实例tools/list，不能假设本地代码已部署。
+
+## 录制间隔归还（2026-11-06）
+
+开始返回warnings；get/list_recordings新增intervalRestore/warnings，stop/delete_recording新增interval_restore/warnings，旧ID/ok字段保持。pending为活动，shared为其他会话继续持有，restored为本次事务恢复，preserved为保留当前值，uncertain需核实。开始后通知/日志失败不报假开始失败；停止不自动重试。其他连接的任何提交都保守失效，可能保留录制短周期，须人工核对。进程退出不自动恢复，无持久锁/跨进程排程，不改旧REST的无条件更新契约，见[实现及剩余边界](../../docs/develop/39-录制间隔归还与并发修改保护.md)。

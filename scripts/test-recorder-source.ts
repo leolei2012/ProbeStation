@@ -1,3 +1,4 @@
+import { withMockRecordingIntervals } from './fixtures/recording-config.ts'
 import assert from 'node:assert/strict'
 import { Recorder } from '../packages/mcp/src/recorder.ts'
 
@@ -11,7 +12,8 @@ Date.now = () => now
 const device = { id: 1, mode: 'master', slaveId: 1, pollIntervalMs: 1000 }
 const groups = [1, 2].map(id => ({ id, slaveId: id, functionCode: 3, startAddress: 0, quantity: 4 }))
 const updates: number[] = []
-const cfg = { getObject: (id: number) => id === 1 ? device : undefined, listGroups: () => groups, updateObject: (_id: number, fields: any) => { updates.push(fields.pollIntervalMs); Object.assign(device, fields) } }
+const cfg = withMockRecordingIntervals({ getObject: (id: number) => id === 1 ? device : undefined, listGroups: () => groups, updateObject: (_id: number, fields: any) => { updates.push(fields.pollIntervalMs); Object.assign(device, fields) } })
+
 const recorder = new Recorder({ on: (_event: string, fn: any) => { callback = fn } }, cfg)
 const point = (slaveId: number | null | undefined, rawValue: number, extra: any = {}) => ({ objectId: 1, area: 'holding-register', address: 0, timestamp: new Date(now).toISOString(), rawValue, quality: 'good', slaveId, batchId: 'response-' + slaveId, ...extra })
 const send = (points: any[], objectId = 1) => callback(JSON.parse(JSON.stringify({ objectId, points })))

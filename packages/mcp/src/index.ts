@@ -560,16 +560,17 @@ export function apply(ctx: Context, config: Config): void {
     const addressSelection = (addresses: Array<{ area: string; address: number; slave_id?: number }> | undefined) => addresses?.map(a => ({ area: a.area, address: a.address, slaveId: a.slave_id }))
     const recordingResult = (id: string) => {
       const rec = recorder.getRecording(id)!
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ recording_id: id, slave_id: rec.slaveId, addresses: rec.addresses, trigger: rec.trigger }) }] }
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ recording_id: id, slave_id: rec.slaveId, addresses: rec.addresses, trigger: rec.trigger, warnings: [...rec.warnings] }) }] }
     }
+    const recordingLog = (id: string, message: string) => { try { cfg.log('INFO', 'mcp', message) } catch { recorder.getRecording(id)!.warnings.push('录制已开始，但操作日志写入失败；勿重复开始。') } }
     const recordingError = (error: unknown) => ({ content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'invalid recording request' }], isError: true })
     server.registerTool('start_recording', {
-      title: 'Start recording', description: '连续录制原始16位字，临时改变设备扫描间隔，结束后恢复。slave_id 为默认录制来源，addresses[].slave_id 可覆盖；无地址/来源筛选时保留所有来源。省略地址来源仅在配置唯一时接受，歧义需显式选择。回放保留 slaveId/batchId，缺来源不补全。',
+      title: 'Start recording', description: '连续录制原始16位字，临时改变设备扫描间隔，最后会话结束时仅在写入身份/配置未变化才原子恢复；否则保留当前值并返回intervalRestore/warnings。slave_id 为默认录制来源，addresses[].slave_id 可覆盖；无地址/来源筛选时保留所有来源。省略地址来源仅在配置唯一时接受，歧义需显式选择。回放保留 slaveId/batchId，缺来源不补全。',
       inputSchema: { device_id: zz.number(), interval_ms: zz.number(), duration_ms: zz.number(), slave_id: sourceId, addresses: recordingAddresses },
     }, async (args) => {
       try {
         const id = recorder.startRecording(args.device_id, args.interval_ms, args.duration_ms, addressSelection(args.addresses), args.slave_id)
-        cfg.log('INFO', 'mcp', 'start recording ' + id + ' (device ' + args.device_id + ', ' + args.interval_ms + 'ms x ' + args.duration_ms + 'ms)')
+        recordingLog(id, 'start recording ' + id + ' (device ' + args.device_id + ', ' + args.interval_ms + 'ms x ' + args.duration_ms + 'ms)')
         return recordingResult(id)
       } catch (error) { return recordingError(error) }
     })
@@ -580,7 +581,7 @@ export function apply(ctx: Context, config: Config): void {
     }, async (args) => {
       try {
         const id = recorder.startTriggerRecording(args.device_id, args.interval_ms, args.trigger_area, args.trigger_address, args.operator, args.threshold ?? 0, args.before_ms, args.after_ms, addressSelection(args.addresses), args.slave_id, args.trigger_slave_id)
-        cfg.log('INFO', 'mcp', 'start trigger recording ' + id + ' (device ' + args.device_id + ', source ' + recorder.getRecording(id)!.trigger!.slaveId + ', trigger addr ' + args.trigger_address + ' ' + args.operator + ' ' + (args.threshold ?? 0) + ')')
+        recordingLog(id, 'start trigger recording ' + id + ' (device ' + args.device_id + ', source ' + recorder.getRecording(id)!.trigger!.slaveId + ', trigger addr ' + args.trigger_address + ' ' + args.operator + ' ' + (args.threshold ?? 0) + ')')
         return recordingResult(id)
       } catch (error) { return recordingError(error) }
     })
@@ -600,19 +601,19 @@ export function apply(ctx: Context, config: Config): void {
     }, async () => ({ content: [{ type: 'text', text: JSON.stringify(recorder.listRecordings()) }] }))
 
     server.registerTool('stop_recording', {
-      title: 'Stop recording', description: '提前结束录制（触发记录可用它取消）',
+      title: 'Stop recording', description: '提前结束录制；只在原间隔写入身份有效时恢复，冲突保留当前值。返回interval_restore/warnings；ok只表示找到会话，不证明已恢复。',
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
-      const ok = recorder.stopRecording(args.recording_id)
-      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id }) }] }
+      const ok = recorder.stopRecording(args.recording_id), rec = recorder.getRecording(args.recording_id)
+      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id, interval_restore: rec?.intervalRestore ?? null, warnings: rec?.warnings ?? [] }) }] }
     })
 
     server.registerTool('delete_recording', {
       title: 'Delete recording', description: '删除一段录制（释放内存；录制中会先结束）',
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
-      const ok = recorder.deleteRecording(args.recording_id)
-      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id }) }] }
+      const rec = recorder.getRecording(args.recording_id), ok = recorder.deleteRecording(args.recording_id)
+      return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id, interval_restore: rec?.intervalRestore ?? null, warnings: rec?.warnings ?? [] }) }] }
     })
 
     // ── OTA 固件升级（PRD 07）─────────────────────

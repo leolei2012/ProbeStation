@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import { areaForFunction, type ModbusFunctionCode } from '../../core/src/protocol.ts'
+import type { RecordingIntervalLease } from '../../config/src/recording-interval.ts'
 
 export interface RecordingAddress { area: string; address: number; slaveId?: number }
 type SourceAddress = RecordingAddress & { slaveId: number }
@@ -43,6 +44,8 @@ export interface RecordingSession {
   slaveId: number | null
   addresses: SourceAddress[] | null
   originalPollInterval: number
+  intervalRestore: 'pending' | 'shared' | 'restored' | 'preserved' | 'uncertain'
+  warnings: string[]
   status: 'recording' | 'done'
   startedAt: number
   finishedAt: number | null
@@ -57,7 +60,8 @@ export interface RecordingSession {
 /**
  * 连续采样 + 触发记录引擎。
  * 原理：录制时临时把设备采样周期（monitor_objects.poll_interval_ms，PRD 08）调到 intervalMs，
- * 让 poller 以该速率轮询，本引擎订阅 poller/result 事件把采样攒进缓冲；结束后恢复原速率。
+ * 让 poller 以该速率轮询，本引擎订阅 poller/result 事件把采样攒进缓冲。
+ * 最后会话结束，仅在配置和临时间隔写入身份未变化时原子恢复；冲突保留当前值并返回警告。
  * - 连续模式：记录 durationMs 后结束。
  * - 触发模式：维护 beforeMs 的环形窗口，条件命中后继续录 afterMs 再结束（带 10 分钟安全上限）。
  */
@@ -65,6 +69,8 @@ export class Recorder {
   private static readonly MAX_SESSIONS = 50 // 长期运行防内存无限增长：只保留最近 50 段录制
   private sessions = new Map<string, RecordingSession>()
   private timers = new Map<string, NodeJS.Timeout>()
+  private intervalLeases = new Map<number, RecordingIntervalLease>()
+  private changingInterval = new Set<number>()
 
   constructor(private readonly ctx: any, private readonly cfg: any) {
     ctx.on('poller/result', ({ objectId, points }: any) => this.onResult(objectId, points))
@@ -99,16 +105,26 @@ export class Recorder {
     }) : null
   }
   private prepare(deviceId: number, intervalMs: number) {
+    if (this.changingInterval.has(deviceId)) throw new Error('recording interval operation is already in progress')
     const obj = this.cfg.getObject(deviceId)
     if (!obj) throw new Error('device ' + deviceId + ' not found')
     this.checkTime(intervalMs, 'intervalMs', 1)
     const active = [...this.sessions.values()].filter(s => s.deviceId === deviceId && s.status === 'recording')
     if (active.some(s => s.intervalMs !== intervalMs) || active.length && obj.pollIntervalMs !== intervalMs) throw new Error('device already has an active recording with a different/currently changed interval')
+    if (active.length && (!this.intervalLeases.has(deviceId) || !this.cfg.recordingIntervalLeaseValid(this.intervalLeases.get(deviceId)))) throw new Error('active recording interval ownership/configuration changed; do not join or overwrite it')
     if (this.sessions.size >= Recorder.MAX_SESSIONS && ![...this.sessions.values()].some(s => s.status === 'done')) throw new Error('too many active recordings')
     return { originalPollInterval: active[0]?.originalPollInterval ?? obj.pollIntervalMs ?? 1000, active: active.length > 0 }
   }
   private addSession(session: RecordingSession, alreadyRecording: boolean): void {
-    if (!alreadyRecording) this.cfg.updateObject(session.deviceId, { pollIntervalMs: session.intervalMs })
+    if (!alreadyRecording) {
+      this.changingInterval.add(session.deviceId)
+      try {
+        const result = this.cfg.acquireRecordingInterval(session.deviceId, session.intervalMs)
+        this.intervalLeases.set(session.deviceId, result.lease)
+        session.originalPollInterval = result.lease.originalPollInterval
+        session.warnings.push(...result.warnings)
+      } finally { this.changingInterval.delete(session.deviceId) }
+    }
     this.sessions.set(session.id, session)
     while (this.sessions.size > Recorder.MAX_SESSIONS) {
       const oldest = [...this.sessions.values()].filter(s => s.status === 'done').sort((a, b) => a.startedAt - b.startedAt)[0]
@@ -138,6 +154,7 @@ export class Recorder {
       slaveId: slaveId ?? null,
       addresses: selected,
       originalPollInterval: prepared.originalPollInterval,
+      intervalRestore: 'pending', warnings: [],
       status: 'recording',
       startedAt: Date.now(),
       finishedAt: null,
@@ -169,6 +186,7 @@ export class Recorder {
       slaveId: slaveId ?? null,
       addresses: selected,
       originalPollInterval: prepared.originalPollInterval,
+      intervalRestore: 'pending', warnings: [],
       status: 'recording',
       startedAt: Date.now(),
       finishedAt: null,
@@ -194,6 +212,7 @@ export class Recorder {
       id: s.id, deviceId: s.deviceId, mode: s.mode, status: s.status,
       slaveId: s.slaveId, addresses: s.addresses, trigger: s.trigger,
       sampleCount: s.samples.length, triggered: s.triggered, startedAt: s.startedAt, finishedAt: s.finishedAt,
+      intervalRestore: s.intervalRestore, warnings: [...s.warnings],
     }))
   }
 
@@ -255,8 +274,16 @@ export class Recorder {
     const t = this.timers.get(id)
     if (t) clearTimeout(t)
     this.timers.delete(id)
-    const obj = this.cfg.getObject(s.deviceId)
     const otherActive = [...this.sessions.values()].some(other => other.id !== id && other.deviceId === s.deviceId && other.status === 'recording')
-    if (obj && !otherActive && obj.pollIntervalMs === s.intervalMs) this.cfg.updateObject(s.deviceId, { pollIntervalMs: s.originalPollInterval })
+    if (otherActive) { s.intervalRestore = 'shared'; return }
+    const lease = this.intervalLeases.get(s.deviceId)
+    this.intervalLeases.delete(s.deviceId)
+    this.changingInterval.add(s.deviceId)
+    try {
+      if (!lease) throw new Error('missing recording interval ownership')
+      const result = this.cfg.restoreRecordingInterval(lease)
+      s.intervalRestore = result.state; s.warnings.push(...result.warnings)
+    } catch { s.intervalRestore = 'uncertain'; s.warnings.push('录制已结束，但恢复间隔结果待核实；请人工核对当前采样周期，勿自动重复恢复。') }
+    finally { this.changingInterval.delete(s.deviceId) }
   }
 }
