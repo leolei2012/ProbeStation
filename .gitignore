@@ -1,5 +1,6 @@
 node_modules/
 .npm-cache/
+/output/playwright/
 dist/
 *.log
 data/

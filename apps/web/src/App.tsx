@@ -1,3 +1,4 @@
+import { RegisterSelectButton } from './RegisterPicker'
 import { sourceKey, sourceSample, withRegisterSources } from '../../../packages/core/src/sample-source.ts'
 import { decodeHistoricalSample, historyVerificationLabel } from '../../../packages/core/src/history-integrity.ts'
 import { SerialPortPicker } from './SerialPortPicker'
@@ -49,6 +50,7 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
     histExportTooLarge: '超过 {n} 条原始行，导出会被截断，已停止生成文件。请取消并减少点位或缩小时间范围后重试。', histExportPreparing: '正在生成完整导出，可取消…', histExportTimeout: '导出超过 30 秒，已取消等待。请缩小时间范围后重试。',
     histExportFull: '导出完整时间范围', histExportViewport: '导出当前缩放区间', histExportSelected: '{n} 个已选点位 · 原始历史（含批次状态）', histExportHint: '按所示时间范围导出，不受图例显隐、Y 轴范围或降采样影响。只读取已选点位所需的数据区和原始字，每次最多 20 万条；超过时请减少点位或缩小时间范围。上限不是导出表格的行数。',
     histCancel: '取消查询', histCancelled: '查询已取消，可点击“查询”重新加载。', histTimeout: '查询超过 30 秒，请缩小时间范围后重试。',
@@ -115,6 +117,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
     histExportTooLarge: 'More than {n} raw rows: exporting would truncate the data, so no file was generated. Cancel, select fewer points or narrow the time range and retry.', histExportPreparing: 'Preparing a complete export. You can cancel…', histExportTimeout: 'Export exceeded 30 seconds. Narrow the time range and retry.',
     histExportFull: 'Export full time range', histExportViewport: 'Export zoomed time range', histExportSelected: '{n} selected points · Raw history with batch status', histExportHint: 'Export the stated time range regardless of legend visibility, Y-axis limits or downsampling. Read only the raw words required by selected points, up to 200,000 rows. Select fewer points or narrow the range if exceeded. This is not the number of spreadsheet rows.',
     histCancel: 'Cancel query', histCancelled: 'Query cancelled. Click Query to reload.', histTimeout: 'Query exceeded 30 seconds. Narrow the time range and retry.',
@@ -1130,84 +1133,6 @@ function useRegisterSelection(deviceId: number, registers: Register[]): [Set<num
   return [selected, update]
 }
 
-function RegisterSelectModal({ t, groups, initial, onClose, onApply, max }: {
-  t: T; groups: DeviceGroup[]; initial: Set<number>; onClose: () => void; onApply: (s: Set<number>) => void; max?: number
-}) {
-  const [draft, setDraft] = useState<Set<number>>(() => new Set(initial))
-  const [search, setSearch] = useState('')
-  const titleId = useId()
-  const toggle = (id: number) => setDraft((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else if (max === undefined || next.size < max) next.add(id); return next })
-  const allIds = groups.flatMap(g => g.registers).map(r => r.id)
-  const query = search.trim().toLowerCase()
-  const filtered = groups.map(g => ({ ...g, registers: g.registers.filter(r => `${g.name} ${r.alias ?? ''} ${r.startAddress} 0x${r.startAddress.toString(16)} ${r.dataType}`.toLowerCase().includes(query)) })).filter(g => g.registers.length)
-  const addVisible = () => setDraft(prev => {
-    const next = new Set(prev)
-    for (const g of filtered) for (const r of g.registers) if (max === undefined || next.size < max) next.add(r.id)
-    return next
-  })
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null
-    return () => previous?.focus()
-  }, [])
-  return (
-    <div className="modal-mask">
-      <div className="modal reg-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(e) => e.stopPropagation()} onKeyDown={e => {
-        if (e.key === 'Escape') { e.stopPropagation(); onClose() }
-        if (e.key === 'Tab') {
-          const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'))
-          const first = items[0], last = items[items.length - 1]
-          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
-          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
-        }
-      }}>
-        <div className="modal-head">
-          <span id={titleId}>{t('selectRegisters')}</span>
-          <button className="modal-close" aria-label={t('cancel')} onClick={onClose}>✕</button>
-        </div>
-        <input className="reg-picker-search" aria-label={t('searchPoints')} placeholder={t('searchPoints')} value={search} onChange={e => setSearch(e.target.value)} autoFocus />
-        <div className="reg-modal-actions">
-          <span className="reg-picker-count" aria-live="polite">{draft.size} / {allIds.length}</span>
-          <button className="btn" onClick={addVisible} disabled={!filtered.length || (max !== undefined && draft.size >= max)}>{t('selectAll')}</button>
-          <button className="btn" onClick={() => setDraft(new Set())}>{t('clearAll')}</button>
-        </div>
-        {max && <p className="chart-hint">{t('curveSelectLimit').replace('{n}', String(max))}</p>}
-        <div className="reg-list">
-          {filtered.map(g => (
-            <div key={g.id} className="reg-group">
-              <div className="reg-group-name"><span>{g.name}</span><span>{g.registers.filter(r => draft.has(r.id)).length} / {g.registers.length}</span></div>
-              {g.registers.map(r => (
-                <label key={r.id} className={'reg-item' + (draft.has(r.id) ? ' selected' : '') + (!draft.has(r.id) && max !== undefined && draft.size >= max ? ' unavailable' : '')}>
-                  <input type="checkbox" checked={draft.has(r.id)} disabled={!draft.has(r.id) && max !== undefined && draft.size >= max} onChange={() => toggle(r.id)} />
-                  <span className="reg-item-copy"><span className="reg-item-alias" title={r.alias ?? ('reg' + r.id)}>{r.alias || ('reg' + r.id)}</span><span className="reg-item-meta">{t('colAddr')} {r.startAddress} · FC{r.functionCode}</span></span>
-                  <span className="reg-item-type">{r.dataType}</span>
-                </label>
-              ))}
-            </div>
-          ))}
-          {!filtered.length && <div className="hist-empty">{t('noMatchingPoints')}</div>}
-        </div>
-        <div className="modal-actions">
-          <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" onClick={() => onApply(draft)}>{t('save')}</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function RegisterSelectButton({ t, groups, selected, onApply, max }: {
-  t: T; groups: DeviceGroup[]; selected: Set<number>; onApply: (s: Set<number>) => void; max?: number
-}) {
-  const [show, setShow] = useState(false)
-  const total = groups.reduce((n, g) => n + g.registers.length, 0)
-  return (
-    <>
-      <button className="btn reg-picker-trigger" onClick={() => setShow(true)}>{t('selectRegisters')} <span>{selected.size}/{total}</span></button>
-      {show && <RegisterSelectModal t={t} groups={groups} max={max} initial={selected} onClose={() => setShow(false)} onApply={(s) => { onApply(s); setShow(false) }} />}
-    </>
-  )
-}
-
 function deriveHistoryRows(pts: HistoryPoint[], registers: Register[], selectedRegisters: Register[], valueMode: ValueMode): Array<{ ts: string; values: Record<number, string> }> {
   const buckets = new Map<string, HistoryPoint[]>()
   for (const p of pts) { const ts = p.timestampMs != null ? new Date(p.timestampMs).toISOString() : p.ts; if (!buckets.has(ts)) buckets.set(ts, []); buckets.get(ts)!.push(p) }
@@ -1294,7 +1219,7 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     <div className="toolbar">
       <div className="seg"><button className={mode === 'table' ? 'selected' : ''} onClick={() => { setMode('table'); setPage(0) }}>{t('histTable')}</button><button className={mode === 'chart' ? 'selected' : ''} onClick={() => { setMode('chart'); setPage(0) }}>{t('tabCurve')}</button></div>
       <ValueModeControl t={t} value={valueMode} onChange={setValueMode} />
-      <RegisterSelectButton t={t} groups={groups} selected={selected} onApply={setSelected} />
+      <RegisterSelectButton t={t} groups={groups} deviceSlaveId={device.mode === 'slave' ? device.slaveId : undefined} selected={selected} onApply={setSelected} />
       <div style={{ flex: 1 }} />
       <button className="btn" disabled={!valid || selected.size === 0 || currentStatus === 'loading'} onClick={() => beginExport('full')}>{t('histExportFull')}</button>
       {mode === 'chart' && <button className="btn" disabled={!valid || selected.size === 0 || !curveRange || currentStatus !== 'done'} onClick={() => beginExport('viewport')}>{t('histExportViewport')}</button>}
@@ -1487,7 +1412,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
     <div className="toolbar">
       <button className="btn" aria-pressed={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '退出铺满' : '铺满窗口'}</button>
       <ValueModeControl t={t} value={valueMode} onChange={mode => { setValueMode(mode); setHover(null) }} />
-      <RegisterSelectButton t={t} groups={numericGroups} selected={selected} max={8} onApply={ids => { setSelection(ids); setFrozen(null); setHover(null) }} />
+      <RegisterSelectButton t={t} groups={numericGroups} deviceSlaveId={device.mode === 'slave' ? device.slaveId : undefined} selected={selected} max={8} onApply={ids => { setSelection(ids); setFrozen(null); setHover(null) }} />
       <label className="live-window-label">{t('liveWindow')}<select className="hist-input" value={seconds} onChange={e => { setSeconds(Number(e.target.value)); setHover(null) }}>{[30, 60, 300, 600].map(n => <option key={n} value={n}>{n < 60 ? `${n} s` : `${n / 60} min`}</option>)}</select></label>
       <button className="btn" onClick={() => { setFrozen(frozen ? null : frame); setHover(null) }}>{t(frozen ? 'resumeCurve' : 'freezeCurve')}</button>
       <button className="btn" onClick={clear}>{t('clearCurve')}</button>

@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "test": "tsx scripts/test-safe.ts",
+    "preview:picker": "tsx scripts/preview-register-picker.ts",
     "diagnose:points": "tsx scripts/diagnose-points.ts",
     "test:edition": "npm run build:web && tsx scripts/offline-test-app.ts",
     "typecheck:web": "tsc -p tsconfig.web.json",
