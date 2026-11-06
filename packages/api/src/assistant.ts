@@ -1,3 +1,5 @@
+import { decodeLatestSample } from '../../core/src/history-integrity.ts'
+import { sourceSample, withRegisterSources } from '../../core/src/sample-source.ts'
 import { assistantHistoryPoints } from './history-assessment.ts'
 import { chatResponse } from './assistant-stream'
 import { parseAttachments, contextSize, imageBytes } from './assistant-attachments'
@@ -7,7 +9,7 @@ import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { areaForFunction, decodeRawByAddr, registerWidth } from '@probebench/core'
+import { areaForFunction, registerWidth } from '@probebench/core'
 
 type Services = { cfg: any; store: any; poller: any }
 type Settings = { provider: string; baseUrl: string; model: string; apiKey: string; reasoningProtocol: 'default' | 'reasoning_effort'; contextWindow?: number | null }
@@ -68,19 +70,19 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
     return cfg.getObject(id) ?? fail('设备不存在', 404)
   }
   const record = (target: string, id: number) => target === 'device' ? cfg.getObject(id) : target === 'group' ? cfg.getGroup(id) : cfg.getRegister(id)
+  const sourceRegisters = (id: number) => withRegisterSources<any>(cfg.listRegistersByObject(id), cfg.listGroups(id), cfg.getObject(id))
   const snapshot = (regs: any[], raw: any) => regs.map(r => {
-    const area = areaForFunction(r.functionCode), words: Record<number, number> = {}, samples = []
-    for (let i = 0; i < registerWidth(r.dataType); i++) { const p = raw[`${area}:${r.startAddress + i}`]; if (p) words[r.startAddress + i] = p.rawValue; samples.push(p ?? null) }
-    const times = samples.map(p => p?.timestampMs ?? p?.timestamp)
-    const coherent = samples.every(Boolean) && new Set(times).size === 1
-    return { id: r.id, alias: r.alias, area, address: r.startAddress, dataType: r.dataType, rawDecodedValue: coherent ? decodeRawByAddr([r], words).get(r.id) ?? null : null, coherent, samples, factor: r.factor, offset: r.offset, unit: r.unit }
+    const area = areaForFunction(r.functionCode)
+    const samples = Array.from({ length: registerWidth(r.dataType) }, (_, i) => ({ ...sourceSample<any>(raw, '', area, r.startAddress + i, r.slaveId), address: r.startAddress + i }))
+    const assessment = decodeLatestSample(r, samples)
+    return { id: r.id, alias: r.alias, area, address: r.startAddress, slaveId: r.slaveId ?? null, dataType: r.dataType, rawDecodedValue: assessment.automaticEligible ? assessment.value : null, compatibilityValue: assessment.verification === 'unverified' ? assessment.value : null, verification: assessment.verification, automaticEligible: assessment.automaticEligible, coherent: assessment.verification !== 'unknown', samples, factor: r.factor, offset: r.offset, unit: r.unit }
   })
-  async function historyRows(id: number, address: number, start: string, end: string, area: any, offset: number, signal?: AbortSignal) {
+  async function historyRows(id: number, address: number, start: string, end: string, area: any, offset: number, signal?: AbortSignal, slaveId?: number) {
     const result: any[] = []
     // Storage batches are an implementation detail; all matching rows are returned to the model.
     for (;;) {
       signal?.throwIfAborted()
-      const rows = await store.queryWithOffset(id, address, start, end, area, 200000, offset + result.length)
+      const rows = await store.queryWithOffset(id, address, start, end, area, 200000, offset + result.length, slaveId)
       for (const row of rows) result.push(row)
       if (rows.length < 200000) return result
     }
@@ -109,8 +111,8 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
     }
     const d = device(a.device_id, s)
     const offset = a.offset === undefined ? 0 : integer(a.offset, 0, Number.MAX_SAFE_INTEGER)
-    if (name === 'list_points') { const all = cfg.listRegistersByObject(d.id); return { groups: cfg.listGroups(d.id), registers: all.slice(offset), total: all.length, offset } }
-    if (name === 'get_snapshot') { const all = cfg.listRegistersByObject(d.id); return { readAt: new Date().toISOString(), device: d, points: snapshot(all.slice(offset), store.getLatestByObjectAll(d.id)), total: all.length, offset } }
+    if (name === 'list_points') { const all = sourceRegisters(d.id); return { groups: cfg.listGroups(d.id), registers: all.slice(offset), total: all.length, offset } }
+    if (name === 'get_snapshot') { const all = sourceRegisters(d.id); return { readAt: new Date().toISOString(), device: d, points: snapshot(all.slice(offset), store.getLatestByObjectAll(d.id)), total: all.length, offset } }
     if (name === 'get_diagnostics') return { stats: poller.getDeviceDiagnostics(d.id), frames: poller.getDeviceFrames(d.id, Number.MAX_SAFE_INTEGER) }
     if (name === 'get_history_stats') return store.statsByObject(d.id)
     if (name === 'query_history') {
@@ -118,22 +120,22 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
       integer(a.address, 0, 65535)
       const from = Date.parse(string(a.start, 50)), to = Date.parse(string(a.end, 50))
       if (![a.start, a.end].every(v => /(?:Z|[+-]\d{2}:\d{2})$/i.test(v)) || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) fail('请提供带时区的有效时间范围')
-      const matching = cfg.listRegistersByObject(d.id).filter((r: any) => areaForFunction(r.functionCode) === a.area && r.startAddress === a.address)
+      const matching = sourceRegisters(d.id).filter((r: any) => areaForFunction(r.functionCode) === a.area && r.startAddress === a.address)
       if (matching.length !== 1) fail('点位不存在或地址不唯一，请核对分组')
       const r = matching[0], width = registerWidth(r.dataType)
-      const base = await historyRows(d.id, a.address, a.start, a.end, a.area, offset, s.controller?.signal)
+      const base = await historyRows(d.id, a.address, a.start, a.end, a.area, offset, s.controller?.signal, r.slaveId)
       // Fetch adjacent words for this same page's time span, never combine unrelated sampling times.
       const words = base.map((p: any) => ({ ...p, address: a.address }))
       const times = base.map((p: any) => p.timestampMs).filter(Number.isFinite)
       const wordStart = times.length ? new Date(times.reduce((a: number, b: number) => Math.min(a, b), Infinity)).toISOString() : a.start
       const wordEnd = times.length ? new Date(times.reduce((a: number, b: number) => Math.max(a, b), -Infinity)).toISOString() : a.end
       for (let i = 1; i < width; i++) {
-        const rows = await historyRows(d.id, a.address + i, wordStart, wordEnd, a.area, 0, s.controller?.signal)
+        const rows = await historyRows(d.id, a.address + i, wordStart, wordEnd, a.area, 0, s.controller?.signal, r.slaveId)
         for (const p of rows) words.push({ ...p, address: a.address + i })
       }
       const points = assistantHistoryPoints(r, words, base)
       const values = points.map((p: any) => p.value).filter((v: any) => typeof v === 'number' && Number.isFinite(v))
-      return { register: r, points, offset, truncated: false, nextOffset: null, statisticsScope: '仅完整同批且质量有效的 value 参与统计；批次未验证值仅在 compatibilityValue 供人工查看，不得用于自动 PASS/FAIL。未知 value 为 null。时间显示为服务器本地时间。', count: values.length, min: values.length ? values.reduce((a: number, b: number) => Math.min(a, b), Infinity) : null, max: values.length ? values.reduce((a: number, b: number) => Math.max(a, b), -Infinity) : null }
+      return { register: r, points, offset, truncated: false, nextOffset: null, statisticsScope: '仅目标从站来源明确、完整同批且质量有效的 value 参与统计；批次/来源未验证值仅在 compatibilityValue 供人工查看，不得用于自动 PASS/FAIL。未知 value 为 null。时间显示为服务器本地时间。', count: values.length, min: values.length ? values.reduce((a: number, b: number) => Math.min(a, b), Infinity) : null, max: values.length ? values.reduce((a: number, b: number) => Math.max(a, b), -Infinity) : null }
     }
     fail('不支持的工具')
   }
@@ -328,7 +330,7 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
     if (b.deviceId !== undefined) {
       const id = integer(b.deviceId), d = cfg.getObject(id)
       if (!d) fail('设备不存在', 404)
-      const regs = cfg.listRegistersByObject(id)
+      const regs = sourceRegisters(id)
       deviceContext = { device: d, connected: poller.isDeviceConnected(id), pointCount: regs.length, truncated: false, points: snapshot(regs, store.getLatestByObjectAll(id)) }
     }
     const controller = new AbortController(), started = Date.now()
@@ -365,12 +367,12 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
         }
       } else if (poller.getDeviceDiagnostics(d.id)?.connected === false) { issues.push({ deviceId: d.id, label: d.name, reason: '设备未连接', view: 'diagnostics' }); continue }
       const raw = store.getLatestByObjectAll(d.id)
-      const regs = cfg.listRegistersByObject(d.id).filter((r: any) => active.some((g: any) => g.id === r.groupId))
+      const regs = sourceRegisters(d.id).filter((r: any) => active.some((g: any) => g.id === r.groupId))
       // Same two-cycle allowance as the observation table, including Modbus chunks.
       const limit = Math.max(5000, active.reduce((sum: number, g: any) => sum + Math.max(1, Math.ceil((g.quantity || 1) / (g.functionCode <= 2 ? 2000 : 125))) * ((d.pollIntervalMs ?? 1000) + (d.timeoutMs ?? 3000)), 0) * 2)
       let stale = 0, missing = 0, bad = 0
       for (const r of regs) {
-        const samples = Array.from({ length: registerWidth(r.dataType) }, (_, i) => raw[`${areaForFunction(r.functionCode)}:${r.startAddress + i}`])
+        const samples = Array.from({ length: registerWidth(r.dataType) }, (_, i) => sourceSample<any>(raw, '', areaForFunction(r.functionCode), r.startAddress + i, r.slaveId))
         const times = samples.map(p => p?.timestampMs ?? Date.parse(p?.timestamp ?? ''))
         if (times.some(t => !Number.isFinite(t))) missing++
         else if (Date.now() - Math.min(...times) > limit) stale++

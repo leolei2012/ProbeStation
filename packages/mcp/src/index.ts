@@ -1,4 +1,5 @@
-import { decodeHistoricalSample } from '../../core/src/history-integrity.ts'
+import { sourceSample, withRegisterSources } from '../../core/src/sample-source.ts'
+import { decodeHistoricalSample, decodeLatestSample } from '../../core/src/history-integrity.ts'
 import type { Context } from 'cordis'
 import z from 'schemastery'
 import http from 'node:http'
@@ -7,7 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z as zz } from 'zod'
-import { areaForFunction, decodeRawByAddr, encodeRegister, functionCodeForArea, invertSemantic, parseEnum, registerWidth, resolveSemantic, smartParseCsv, type ModbusArea } from '@probebench/core'
+import { areaForFunction, encodeRegister, functionCodeForArea, invertSemantic, parseEnum, registerWidth, resolveSemantic, smartParseCsv, type ModbusArea } from '@probebench/core'
 import { Recorder } from './recorder.ts'
 
 /** 把 RegisterRecord 映射成语义寄存器（factor/offset/unit/enum）。 */
@@ -48,6 +49,12 @@ export function apply(ctx: Context, config: Config): void {
   /** 按设备、数据区和协议地址定位点，四数据区地址空间相互独立。 */
   const findRegisterByAddress = (deviceId: number, area: ModbusArea, address: number) =>
     cfg.listRegistersByObject(deviceId).find((r: any) => r.startAddress === address && areaForFunction(r.functionCode) === area)
+
+  const sourceRegisters = (id: number) => withRegisterSources<any>(cfg.listRegistersByObject(id), cfg.listGroups(id), cfg.getObject(id))
+  const findSourceRegister = (id: number, area: ModbusArea, address: number) => {
+    const matches = sourceRegisters(id).filter(r => r.startAddress === address && areaForFunction(r.functionCode) === area)
+    return matches.length === 1 ? matches[0] : undefined
+  }
 
   // 每个会话一个独立 McpServer：Protocol 只能连一个 transport，多会话/多连接必须各自实例。
   function registerTools(server: McpServer): void {
@@ -232,12 +239,11 @@ export function apply(ctx: Context, config: Config): void {
       title: 'Read register', description: '按 Modbus 地址读某设备单个寄存器的实时值（address 即寄存器起始地址，无需数据库 id）',
       inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number() },
     }, async (args) => {
-      const reg = findRegisterByAddress(args.device_id, args.area, args.address)
-      if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
-      const latest = store.getLatestByObject(args.device_id, args.area)
-      const rawByAddr: Record<number, number> = {}
-      for (const k of Object.keys(latest)) rawByAddr[Number(k)] = latest[Number(k)].rawValue
-      const decoded = decodeRawByAddr([reg], rawByAddr).get(reg.id) ?? null
+      const reg = findSourceRegister(args.device_id, args.area, args.address)
+      if (!reg) return { content: [{ type: 'text', text: 'register missing or source ambiguous at address ' + args.address }], isError: true }
+      const latest = store.getLatestByObject(args.device_id, args.area, reg.slaveId)
+      const assessment = decodeLatestSample(reg, Array.from({ length: registerWidth(reg.dataType) }, (_, i) => ({ ...latest[reg.startAddress + i], address: reg.startAddress + i })))
+      const decoded = assessment.automaticEligible ? assessment.value : null
       const lv = latest[reg.startAddress]
       // 语义翻译：enum 命中给 label，否则 ×factor+offset 给物理值
       let value: number | string | null = decoded === null ? null : (typeof decoded === 'bigint' ? String(decoded) : decoded)
@@ -247,26 +253,28 @@ export function apply(ctx: Context, config: Config): void {
         const s = resolveSemantic(semanticOf(reg), decoded)
         value = s.value; unit = s.unit; label = s.label
       }
-      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, area: args.area, address: reg.startAddress, alias: reg.alias, value, unit, label, timestamp: lv?.timestamp ?? null, quality: lv?.quality ?? null }) }] }
+      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, area: args.area, address: reg.startAddress, alias: reg.alias, slave_id: reg.slaveId ?? null, verification: assessment.verification, automatic_eligible: assessment.automaticEligible, value, unit, label, timestamp: lv?.timestamp ?? null, quality: lv?.quality ?? null }) }] }
     })
 
     server.registerTool('get_device_snapshot', {
       title: 'Get device snapshot', description: '读某设备全部寄存器的实时值快照（含别名、地址、类型、时间戳、质量）',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
-      const regs = cfg.listRegistersByObject(args.device_id)
+      const regs = sourceRegisters(args.device_id)
       const latestAll = store.getLatestByObjectAll(args.device_id)
       const decoded = new Map<number, number | bigint>()
-      for (const area of ['coil', 'discrete-input', 'holding-register', 'input-register'] as ModbusArea[]) {
-        const subset = regs.filter((r: any) => areaForFunction(r.functionCode) === area)
-        const rawByAddr: Record<number, number> = {}
-        for (const [key, value] of Object.entries(latestAll) as Array<[string, any]>) if (key.startsWith(area + ':')) rawByAddr[Number(key.slice(area.length + 1))] = value.rawValue
-        for (const [id, value] of decodeRawByAddr(subset, rawByAddr)) decoded.set(id, value)
+      const assessments = new Map<number, ReturnType<typeof decodeLatestSample>>()
+      for (const r of regs) {
+        const area = areaForFunction(r.functionCode)
+        const words = Array.from({ length: registerWidth(r.dataType) }, (_, i) => ({ ...sourceSample<any>(latestAll, '', area, r.startAddress + i, r.slaveId), address: r.startAddress + i }))
+        const result = decodeLatestSample(r, words)
+        assessments.set(r.id, result)
+        if (result.automaticEligible) decoded.set(r.id, result.value!)
       }
       const out = regs.map((r) => {
         const v = decoded.get(r.id) ?? null
         const area = areaForFunction(r.functionCode)
-        const lv = latestAll[area + ':' + r.startAddress]
+        const lv = sourceSample<any>(latestAll, '', area, r.startAddress, r.slaveId)
         let value: number | string | null = v === null ? null : (typeof v === 'bigint' ? String(v) : v)
         let unit: string | null = null
         let label: string | null = null
@@ -280,6 +288,9 @@ export function apply(ctx: Context, config: Config): void {
           address: r.startAddress,
           area,
           data_type: r.dataType,
+          slave_id: r.slaveId ?? null,
+          verification: assessments.get(r.id)?.verification ?? 'unknown',
+          automatic_eligible: assessments.get(r.id)?.automaticEligible ?? false,
           value,
           unit,
           label,
@@ -294,15 +305,15 @@ export function apply(ctx: Context, config: Config): void {
       title: 'Query history', description: '查某寄存器的时间范围历史时序（按 area+address 定位）。返回每条含原始 16 位字 raw_value 与语义值 value（×factor+offset 或枚举 label）；limit 可选（默认 2000，上限 200000），分页用 offset 前移',
       inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number(), start: zz.string(), end: zz.string(), limit: zz.number().optional(), offset: zz.number().optional() },
     }, async (args) => {
-      const reg = findRegisterByAddress(args.device_id, args.area, args.address)
-      if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
+      const reg = findSourceRegister(args.device_id, args.area, args.address)
+      if (!reg) return { content: [{ type: 'text', text: 'register missing or source ambiguous at address ' + args.address }], isError: true }
       const limit = args.limit != null ? Math.max(1, Math.min(200000, Math.trunc(args.limit))) : 2000
       const offset = args.offset != null ? Math.max(0, Math.trunc(args.offset)) : 0
       // 单地址精确查询（走 (object_id, ts) 索引 + area/address 过滤），并支持 offset 分页，超大范围也能翻页取全。
-      const points = await store.queryWithOffset(args.device_id, args.address, args.start, args.end, args.area, limit, offset)
+      const points = await store.queryWithOffset(args.device_id, args.address, args.start, args.end, args.area, limit, offset, reg.slaveId)
       const sem = semanticOf(reg)
       const width = registerWidth(reg.dataType ?? 'int16')
-      const out = points.map((p: { ts: string; rawValue: number; quality: string; batchId?: string | null }) => {
+      const out = points.map((p: { ts: string; rawValue: number; quality: string; batchId?: string | null; slaveId?: number | null }) => {
         // 单字类型直接解码；多字类型（width>1）需相邻地址，此处只返回起始地址的原始字，由消费端按 register_width 组合
         let decoded: number | bigint | null = null
         const assessment = decodeHistoricalSample(reg, [{ ...p, address: reg.startAddress }])
@@ -314,7 +325,7 @@ export function apply(ctx: Context, config: Config): void {
           const s = resolveSemantic(sem, decoded)
           value = s.value; unit = s.unit; label = s.label
         }
-        return { ts: p.ts, raw_value: p.rawValue, value, unit, label, quality: p.quality, batch_id: p.batchId ?? null, verification: assessment.verification, automatic_eligible: assessment.automaticEligible, compatibility_value: assessment.verification === 'unverified' ? String(assessment.value) : null, data_type: reg.dataType ?? 'int16', register_width: width, factor: sem.factor, offset: sem.offset }
+        return { ts: p.ts, raw_value: p.rawValue, value, unit, label, quality: p.quality, batch_id: p.batchId ?? null, slave_id: p.slaveId ?? null, verification: assessment.verification, automatic_eligible: assessment.automaticEligible, compatibility_value: assessment.verification === 'unverified' ? String(assessment.value) : null, data_type: reg.dataType ?? 'int16', register_width: width, factor: sem.factor, offset: sem.offset }
       })
       return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, alias: reg.alias, area: args.area, address: reg.startAddress, register_width: width, count: points.length, offset, warning: 'Unverified compatibility values are view-only; never automatic PASS/FAIL evidence. Multiword values are unavailable in this raw-word endpoint.', points: out }) }] }
     })

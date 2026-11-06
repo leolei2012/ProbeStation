@@ -20,20 +20,20 @@ assert.throws(() => historyExportReadRanges([{ functionCode: 3, startAddress: Na
 const store = new DuckDBStore({ dbPath: ':memory:', flushIntervalMs: 0, flushBatchSize: 1000, retentionSeconds: 0, retentionCheckMs: 0 })
 const start = '2026-11-06T00:00:00Z', base = Date.parse(start), end = new Date(base + 300000).toISOString()
 const registers = [
-  { id: 1, startAddress: 0, functionCode: 3, dataType: 'uint32', alias: 'selected' },
-  { id: 9, startAddress: 99, functionCode: 3, dataType: 'uint16', alias: 'unselected' },
+  { id: 1, startAddress: 0, functionCode: 3, dataType: 'uint32', slaveId: 1, alias: 'selected' },
+  { id: 9, startAddress: 99, functionCode: 3, dataType: 'uint16', slaveId: 1, alias: 'unselected' },
 ]
 try {
   const conn = await (store as any).ready
   await conn.run(`INSERT INTO poll_data (object_id, area, address, ts, raw_value, quality, batch_id)
     SELECT 1, 'holding-register', 99, TIMESTAMP '2026-11-06 00:00:00' + i * INTERVAL '1 millisecond', 7, 'good', 'unselected-' || i
     FROM range(200001) r(i)`)
-  store.write([0, 1].map(address => ({ objectId: 1, area: 'holding-register' as const, address, timestamp: new Date(base + 250000).toISOString(), rawValue: address === 0 ? 1 : 2, quality: 'good', batchId: 'selected-response' })))
+  store.write([0, 1].map(address => ({ objectId: 1, area: 'holding-register' as const, address, timestamp: new Date(base + 250000).toISOString(), rawValue: address === 0 ? 1 : 2, slaveId: 1, quality: 'good', batchId: 'selected-response' })))
   await store.flush()
   const sink = new Sink({ config: { listRegistersByObject: () => registers }, store })
   const csv = await sink.exportCsv(1, start, end, [1])
   assert.equal(csv.split('\n').length, 2, 'unselected points must not consume export quota or create empty timestamps')
-  assert.match(csv, /65538,批次已验证,true/)
+  assert.match(csv, /65538,批次\/来源已验证,true/)
   const overlap = await store.queryObjectForExport(1, start, end, [
     { area: 'holding-register', startAddress: 0, endAddress: 1 },
     { area: 'holding-register', startAddress: 1, endAddress: 1 },
@@ -46,13 +46,13 @@ try {
   assert.deepEqual(await store.queryObjectForExport(1, start, end, [{ area: "holding-register' OR TRUE --" as any, startAddress: 0, endAddress: 65535 }]), [], 'area values are parameters, never SQL fragments')
 
   registers.push(
-    { id: 2, startAddress: 1, functionCode: 3, dataType: 'uint16', alias: 'overlap' },
-    { id: 3, startAddress: 4, functionCode: 3, dataType: 'float64-LE', alias: 'wide64' },
-    { id: 4, startAddress: 0, functionCode: 4, dataType: 'uint32-LE', alias: 'input32' },
-    { id: 5, startAddress: 0, functionCode: 1, dataType: 'uint16', alias: 'coil' },
-    { id: 6, startAddress: 0, functionCode: 2, dataType: 'uint16', alias: 'discrete' },
+    { id: 2, startAddress: 1, functionCode: 3, dataType: 'uint16', slaveId: 1, alias: 'overlap' },
+    { id: 3, startAddress: 4, functionCode: 3, dataType: 'float64-LE', slaveId: 1, alias: 'wide64' },
+    { id: 4, startAddress: 0, functionCode: 4, dataType: 'uint32-LE', slaveId: 1, alias: 'input32' },
+    { id: 5, startAddress: 0, functionCode: 1, dataType: 'uint16', slaveId: 1, alias: 'coil' },
+    { id: 6, startAddress: 0, functionCode: 2, dataType: 'uint16', slaveId: 1, alias: 'discrete' },
   )
-  const write = (area: ModbusArea, address: number, words: number[], offset: number, batchId: string) => store.write(words.map((rawValue, i) => ({ objectId: 1, area, address: address + i, timestamp: new Date(base + offset).toISOString(), rawValue, quality: 'good', batchId })))
+  const write = (area: ModbusArea, address: number, words: number[], offset: number, batchId: string) => store.write(words.map((rawValue, i) => ({ objectId: 1, area, address: address + i, timestamp: new Date(base + offset).toISOString(), rawValue, slaveId: 1, quality: 'good', batchId })))
   write('holding-register', 4, encodeRegister('float64-LE', 42.25), 250000, '64bit-response')
   write('input-register', 0, encodeRegister('uint32-LE', 123456), 250000, 'input-response')
   write('coil', 0, [1], 250000, 'coil-response')
@@ -60,7 +60,7 @@ try {
   write('holding-register', 0, [3], 250020, 'partial-response')
   write('holding-register', 0, [4], 250021, 'mixed-high')
   write('holding-register', 1, [5], 250021, 'mixed-low')
-  store.write([0, 1].map(address => ({ objectId: 1, area: 'holding-register' as const, address, timestamp: new Date(base + 250022).toISOString(), rawValue: address, quality: address === 0 ? 'bad' : 'good', batchId: 'bad-response' })))
+  store.write([0, 1].map(address => ({ objectId: 1, area: 'holding-register' as const, address, timestamp: new Date(base + 250022).toISOString(), rawValue: address, slaveId: 1, quality: address === 0 ? 'bad' : 'good', batchId: 'bad-response' })))
   await store.flush()
   const scoped = (await sink.exportCsv(1, start, end, [1, 2, 3, 4, 5, 6])).split('\n').map(line => line.split(','))
   const value = (name: string) => scoped[1][scoped[0].indexOf(name)]

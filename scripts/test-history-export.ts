@@ -50,7 +50,7 @@ try {
   assert.equal(rows.length, 6, 'zoom export contains exactly timestamps 9 through 13, including the exact end boundary')
   assert.equal(rows[0].length, 4, 'one selected point exports only value/status/eligibility')
   assert.equal(rows[0][1], '32位测试值')
-  assert.deepEqual(rows.slice(1).map(row => row.slice(2)), [['批次已验证', 'true'], ...Array.from({ length: 4 }, () => ['批次未验证', 'false'])])
+  assert.deepEqual(rows.slice(1).map(row => row.slice(2)), [['批次/来源已验证', 'true'], ...Array.from({ length: 4 }, () => ['批次/来源未验证', 'false'])])
   for (const row of rows.slice(1)) {
     const time = Date.parse(row[0].replace(' ', 'T') + 'Z')
     assert.ok(time >= range.start && time <= range.end, 'no rows from outside the visible time range')

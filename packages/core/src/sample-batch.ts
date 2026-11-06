@@ -1,9 +1,11 @@
 import { registerWidth } from './codec.ts'
 
 /** New samples carry response identity. Legacy samples retain their existing checks. */
-export function sameResponseBatch(words: Array<{ batchId?: string | null } | undefined>): boolean {
+export function sameResponseBatch(words: Array<{ batchId?: string | null; slaveId?: number | null } | undefined>): boolean {
   if (words.length < 2) return true
   if (words.some(word => !word)) return false
+  const sources = words.map(word => word!.slaveId ?? null)
+  if (new Set(sources).size !== 1) return false
   const ids = words.map(word => word!.batchId)
   if (ids.every(id => id == null)) return true
   return typeof ids[0] === 'string' && ids[0].length > 0 && ids.every(id => id === ids[0])

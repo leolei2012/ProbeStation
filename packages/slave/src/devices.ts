@@ -54,7 +54,7 @@ export class DeviceSlaves {
         const registers = this.cfg.listRegisters(group.id)
         for (const reg of registers) {
           const count = registerWidth(reg.dataType), values = entry.server.read(area, reg.startAddress, count)
-          values.forEach((rawValue: number, i: number) => { const address = reg.startAddress + i, key = area + ':' + address; if (!seen.has(key)) { seen.add(key); points.push({ objectId: device.id, area, address, rawValue, quality: 'good', timestamp }) } })
+          values.forEach((rawValue: number, i: number) => { const address = reg.startAddress + i, key = area + ':' + address; if (!seen.has(key)) { seen.add(key); points.push({ objectId: device.id, slaveId: device.slaveId ?? 1, area, address, rawValue, quality: 'good', timestamp }) } })
         }
         this.groupState(device.id, group.id, '')
       } catch (e: any) { this.groupState(device.id, group.id, e.message) }

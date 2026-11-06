@@ -11,15 +11,15 @@ import { createOfflineTestApp } from './offline-test-app.ts'
 const store = new DuckDBStore({ dbPath: ':memory:', flushIntervalMs: 0, flushBatchSize: 1000, retentionSeconds: 0, retentionCheckMs: 0 })
 const start = '2026-10-01T00:00:00Z', end = '2026-10-01T00:01:00Z'
 try {
-  store.write([0, 1].map(address => ({ objectId: 1, area: 'holding-register' as const, address, timestamp: start, rawValue: address === 0 ? 1 : 0, quality: 'good', batchId: address === 0 ? 'A' : 'B' })))
+  store.write([0, 1].map(address => ({ objectId: 1, area: 'holding-register' as const, address, timestamp: start, rawValue: address === 0 ? 1 : 0, slaveId: 1, quality: 'good', batchId: address === 0 ? 'A' : 'B' })))
   await store.flush()
-  const curve = await store.queryRegisterCurve(1, start, end, [{ id: 1, functionCode: 3, startAddress: 0, dataType: 'uint32' }])
+  const curve = await store.queryRegisterCurve(1, start, end, [{ id: 1, functionCode: 3, startAddress: 0, dataType: 'uint32', slaveId: 1 }])
   assert.equal(curve.series[0].samples[0][1], null, 'mixed responses must remain unknown')
   assert.deepEqual(curve.series[0].integrity, { verified: 0, unverified: 0, unknown: 1 })
   for (const dataType of ['uint32', 'uint32-LE', 'float64', 'float64-LE']) {
-    const reg = { id: 1, groupId: 1, functionCode: 3, startAddress: 0, dataType }
+    const reg = { id: 1, groupId: 1, functionCode: 3, startAddress: 0, dataType, slaveId: 1 }
     const words = encodeRegister(dataType, 65536)
-    const rows = words.map((rawValue, address) => ({ address, rawValue, quality: 'good', batchId: 'response', ts: start, timestampMs: Date.parse(start), area: 'holding-register' }))
+    const rows = words.map((rawValue, address) => ({ address, rawValue, slaveId: 1, quality: 'good', batchId: 'response', ts: start, timestampMs: Date.parse(start), area: 'holding-register' }))
     assert.equal(decodeHistoricalSample(reg, rows).verification, 'verified')
     const legacy = rows.map(p => ({ ...p, batchId: null }))
     assert.equal(decodeHistoricalSample(reg, legacy).value, 65536)
@@ -39,10 +39,10 @@ try {
     assert.equal(compatible.value, null); assert.equal(compatible.compatibilityValue, 65536)
     assert.equal(compatible.automaticEligible, false)
   }
-  const reg = { id: 1, groupId: 1, alias: 'test', functionCode: 3, startAddress: 0, dataType: 'uint32' }
+  const reg = { id: 1, groupId: 1, alias: 'test', functionCode: 3, startAddress: 0, dataType: 'uint32', slaveId: 1 }
   for (const [i, ids] of [[null, null], ['same', 'same'], ['A', 'B']].entries()) {
     const timestamp = new Date(Date.parse(start) + 1000 * (i + 1)).toISOString()
-    store.write(ids.map((batchId, address) => ({ objectId: 1, area: 'holding-register' as const, address, timestamp, rawValue: address ? 0 : 1, quality: 'good', batchId })))
+    store.write(ids.map((batchId, address) => ({ objectId: 1, area: 'holding-register' as const, address, timestamp, rawValue: address ? 0 : 1, slaveId: 1, quality: 'good', batchId })))
   }
   await store.flush()
   const rows = await store.queryObject(1, start, end)
@@ -53,22 +53,22 @@ try {
   const sink = new Sink({ config: { listRegistersByObject: () => [reg] }, store })
   const csv = (await sink.exportCsv(1, start, end)).split('\n').map(line => line.split(','))
   assert.ok(csv[0].includes('test__batch_status')); assert.ok(csv[0].includes('test__automatic_eligible'))
-  assert.deepEqual(csv.slice(1).map(row => row.slice(1)), [['', '未知', 'false'], ['65536', '批次未验证', 'false'], ['65536', '批次已验证', 'true'], ['', '未知', 'false']])
+  assert.deepEqual(csv.slice(1).map(row => row.slice(1)), [['', '未知', 'false'], ['65536', '批次/来源未验证', 'false'], ['65536', '批次/来源已验证', 'true'], ['', '未知', 'false']])
   const wb = new ExcelJS.Workbook(); await wb.xlsx.load(await sink.exportXlsx(1, start, end) as any)
-  assert.equal(wb.getWorksheet('data')!.getCell('C3').value, '批次未验证')
+  assert.equal(wb.getWorksheet('data')!.getCell('C3').value, '批次/来源未验证')
   assert.equal(wb.getWorksheet('data')!.getCell('D3').value, false)
   assert.equal(wb.getWorksheet('data')!.getCell('D4').value, true)
   assert.ok(wb.getWorksheet('历史身份说明'))
   // Local display timestamps omit milliseconds; raw epoch metadata must prevent false collisions.
   for (const [i, timestamp] of ['2026-10-01T00:00:30.100Z', '2026-10-01T00:00:30.200Z'].entries()) {
-    store.write([0, 1].map(address => ({ objectId: 2, area: 'holding-register' as const, address, timestamp, rawValue: address ? i : 1, quality: 'good', batchId: 'millisecond-' + i })))
+    store.write([0, 1].map(address => ({ objectId: 2, area: 'holding-register' as const, address, timestamp, rawValue: address ? i : 1, slaveId: 1, quality: 'good', batchId: 'millisecond-' + i })))
   }
   await store.flush()
   const precise = await store.queryObject(2, start, end)
   assert.deepEqual(decodeHistorySeries([reg], precise, new Set([1]))[0].samples, [[Date.parse('2026-10-01T00:00:30.100Z'), 65536], [Date.parse('2026-10-01T00:00:30.200Z'), 65537]])
   const preciseCsv = await sink.exportCsv(2, start, end)
-  assert.match(preciseCsv, /30\.100,65536,批次已验证,true/)
-  assert.match(preciseCsv, /30\.200,65537,批次已验证,true/)
+  assert.match(preciseCsv, /30\.100,65536,批次\/来源已验证,true/)
+  assert.match(preciseCsv, /30\.200,65537,批次\/来源已验证,true/)
 } finally {
   await (store as any).mutations
   const conn = await (store as any).ready; conn.closeSync(); (store as any).instance.closeSync()

@@ -73,25 +73,34 @@ const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T2
 
 `queryRegisterCurve(objectId, start, end, registers, maxPoints, signal?)` 使用独立 DuckDB 连接流式读取所选点位的全部区间，按实际采样时间检查完整原始字、批次身份与质量后解码，再保留桶内首/末值、数值最小/最大值及无效读数。返回 series、sourceSamples、displayedSamples、downsampled、complete。内存中保留显示桶，查询不受旧 `queryObject` 的 20 万行默认值影响；AbortSignal 可中断对应查询。
 
-旧 `queryObjectCurve` 为内部逐地址聚合，不作为自动判断依据；对应旧 HTTP 入口已返回 410。前端使用检查批次后保留峰值的 `queryRegisterCurve`，返回逐点 verification 与降采样前 integrity 计数。当前降采样为查询时计算，尚无预计算多级聚合表。
+旧 `queryObjectCurve` 逐地址聚合丢失来源和响应身份，内部方法已明确抛错；对应旧 HTTP 入口返回 410。前端使用检查批次后保留峰值的 `queryRegisterCurve`，返回逐点 verification 与降采样前 integrity 计数。当前降采样为查询时计算，尚无预计算多级聚合表。
 
 `queryRegisterCurve` 每条 series 的 `summary` 包含完整查询区间内降采样前的 `sourceSamples`、`validSamples`、`invalidSamples`。这是按点位解码后的采样数，多字点位缺字或质量异常计为无效，非有限数或无法精确表示的 64 位整数也计为无效；没有采样的时段不在分母中，有效率不是设备在线率。空区间返回三个零。
 
 ## 历史身份显示与自动消费边界
 
-历史样本分 verified/unverified/unknown：完整、地址唯一、质量有效并带相同非空 batchId 才 verified；全部缺身份的完整样本保留兼容值、标记 unverified，不作为自动 PASS/FAIL 依据；混批、部分身份、缺字、重复地址、坏质量或非有限值为 unknown。曲线无法精确表示的 64 位整数也显示未知。单字也需要已有身份才能称已验证。不会生成或回填旧身份。
+历史样本分 verified/unverified/unknown：目标从站来源明确、完整、地址唯一、质量有效并带相同非空 batchId 才 verified；缺 batchId 或 slaveId 的完整样本在无来源歧义时保留兼容值、标记 unverified，不作为自动 PASS/FAIL 依据；混批、部分身份、缺字、重复地址、坏质量或非有限值为 unknown。曲线无法精确表示的 64 位整数也显示未知。单字也需要已有身份才能称已验证。不会生成或回填旧身份。
 
-曲线 summary 的 validSamples 是可显示数，包含 unverified 兼容值；integrity 分开给出 verified/unverified/unknown 的降采样前数量，逐显示点 verification 与 samples 对齐。显示点可用于人工观察，Min/Max 不生成 PASS/FAIL。四个原始查询返回 batchId，另带 timestampMs 供消费端避免本地显示字符串精度丢失，时间戳分页语义不变。同一精确时间重复地址保守判未知。
+曲线 summary 的 validSamples 是可显示数，包含 unverified 兼容值；integrity 分开给出 verified/unverified/unknown 的降采样前数量，逐显示点 verification 与 samples 对齐。显示点可用于人工观察，Min/Max 不生成 PASS/FAIL。四个原始查询返回 batchId 和可空 slaveId，另带 timestampMs 供消费端避免本地显示字符串精度丢失，时间戳分页语义不变。同一精确时间重复地址保守判未知。
 
 曲线 `segments: [time, segmentId][]` 在降采样前根据原始采样连续性生成，随后随保留的真实点一起返回。`sourceGapMs` 为原始正采样间隔中位数的三倍（不足时为 null）；真实采样空档和无效读数推进段身份。前端按段身份连线，不能把降采样后相隔较远的显示点再当作断采；这不会增加虚构样本或更改质量计数。旧 `gapMs` 只保留最近读数/旧客户端兼容用途，缺 segments 的旧响应采用原有保守回退。修复需同时更新后端和前端，不能仅刷新运行旧代码的后端页面。
 
 表格、CSV/XLSX 使用同一共享判定；导出增加状态与 automatic_eligible 列，未知值为空。助手历史工具仅 verified value 进入统计，无身份值只在 compatibilityValue 中供人工查看，未知 value 为 null。历史数据不等同测试通过，未实现自动 PASS/FAIL 引擎。旧聚合 HTTP 入口已停用，返回 410。
 
-离线回归：`node node_modules/tsx/dist/cli.mjs scripts/test-store-batch.ts`；`npm run check` 先构建前端再运行 17 组显式安全回归，含隔离入口 API/资源验收。`npm run test:edition` 启动只读临时测试版，详见 docs/test/隔离测试版使用说明.md。真实迁移和页面视觉验收未完成。
+离线回归：`node node_modules/tsx/dist/cli.mjs scripts/test-store-batch.ts`；`npm run check` 先构建前端再运行 25 组显式安全回归，含隔离入口 API/资源验收。`npm run test:edition` 启动只读临时测试版，详见 docs/test/隔离测试版使用说明.md。真实迁移和页面视觉验收未完成。
 
 
 ## 历史导出上限判断（2026-11-06）
 
 普通 `queryObject()` 仍最多返回 200000 条。新增 `queryObjectForExport()` 仅供导出，使用同一参数绑定查询和原始字段映射，最多返回 200001 条；sink 若观察到第 200001 条即拒绝生成文件，恰好 200000 条可完整导出。可选 ranges 按数据区/地址限定所需原始字，在 LIMIT 前筛选；不提供 ranges 保持旧的全设备查询，空 ranges 返回空结果。范围值全部绑定，EXISTS 不会重复返回重叠范围的原始行。未改变批次身份、采样、迁移或历史显示策略。边界回归：`node node_modules/tsx/dist/cli.mjs scripts/test-export-limit.ts`，仅内存库。
 
-按点位导出时，sink 使用 dtype 的完整字宽生成 ranges；未选地址不会占用 20 万行上限。回归：`node node_modules/tsx/dist/cli.mjs scripts/test-export-selection.ts`。现存多 Slave 同地址来源区分仍未持久化。
+按点位导出时，sink 使用 dtype 的完整字宽生成 ranges；未选地址不会占用 20 万行上限。回归：`node node_modules/tsx/dist/cli.mjs scripts/test-export-selection.ts`。来源筛选和旧 NULL 行的处理见下文。
+
+## 多从站来源（2026-11-06）
+
+- `PollPoint.slaveId` 保存请求目标字节（整数 0–255），并非额外物理身份认证。`slave_id INTEGER` 可空、无默认；迁移事务幂等且验证列定义。旧行不从当前配置、时间戳或 batchId 回填，保持 NULL；迁移失败拒绝读写，flush 失败保留所有待写行供重试。真实库未打开，下次正常启动会尝试加列。
+- 热层主键 `objectId:slave:slaveId:area:address`，未知来源使用 `slave:unknown`。单一已观测来源保留旧 `objectId:area:address` 别名，出现不同来源（包括未知）则移除；重开清空热层及冲突记录。设备相对快照去除 objectId 前缀。消费者应用 `sourceSample` 严格选已知来源；旧别名也必须携带匹配的来源才能填值。
+- `query(..., limit?, slaveId?)`、`queryWithOffset(..., limit, offset?, slaveId?)` 可选择目标，保留该来源及 NULL 原始行，并原样返回身份；省略选择器则返回全部来源。REST `/api/data/query` 可选 `slave_id`。原始页返回所有来源，解码表格按点位来源隔离。
+- 曲线 register 描述必须包含当前期望 `slaveId`（由 owning group 绑定，本地 slave 模式用设备编号），先筛选来源再组时间戳解码。未绑定目标的内部调用只能兼容查看，不能自动已验证。旧 NULL 行在当前配置存在跨来源重叠时未知，否则可显示但永不 automaticEligible；不能混合已知/未知字补齐。
+- 导出 ranges 增加可选 slaveId，只有同来源/area 的相邻地址才合并，在 LIMIT+1 前绑定筛选。其他已知从站不占目标配额；NULL 行无法安全排除，仍保守计入，且不能当作已知来源。
+- `test-store-source`、`test-source-pipeline` 分别验证迁移/重开/往返和缓存→实时/历史/API/CSV/XLSX/助手资格、配额、失败重试。均为内存或新临时库，无真实设备。

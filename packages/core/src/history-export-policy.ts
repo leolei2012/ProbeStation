@@ -3,19 +3,19 @@ import { areaForFunction, type ModbusArea, type ModbusFunctionCode } from './pro
 
 export const HISTORY_EXPORT_RAW_LIMIT = 200_000
 
-export interface HistoryExportReadRange { area: ModbusArea; startAddress: number; endAddress: number }
+export interface HistoryExportReadRange { area: ModbusArea; startAddress: number; endAddress: number; slaveId?: number }
 
 /** Include every word required by the existing decoder, merging overlaps without duplicating rows. */
-export function historyExportReadRanges(registers: readonly { functionCode: number; startAddress: number; dataType: string }[]): HistoryExportReadRange[] {
+export function historyExportReadRanges(registers: readonly { functionCode: number; startAddress: number; dataType: string; slaveId?: number }[]): HistoryExportReadRange[] {
   const ranges = registers.map(r => {
     const area = areaForFunction(r.functionCode as ModbusFunctionCode), endAddress = r.startAddress + registerWidth(r.dataType) - 1
     if (!area || !Number.isSafeInteger(r.startAddress) || r.startAddress < 0 || !Number.isSafeInteger(endAddress)) throw new Error('Invalid historical export point range')
-    return { area, startAddress: r.startAddress, endAddress }
-  }).sort((a, b) => a.area.localeCompare(b.area) || a.startAddress - b.startAddress)
+    return { area, startAddress: r.startAddress, endAddress, ...(r.slaveId !== undefined ? { slaveId: r.slaveId } : {}) }
+  }).sort((a, b) => a.area.localeCompare(b.area) || (a.slaveId ?? -1) - (b.slaveId ?? -1) || a.startAddress - b.startAddress)
   const merged: HistoryExportReadRange[] = []
   for (const range of ranges) {
     const previous = merged.at(-1)
-    if (previous?.area === range.area && range.startAddress <= previous.endAddress + 1) previous.endAddress = Math.max(previous.endAddress, range.endAddress)
+    if (previous?.area === range.area && previous.slaveId === range.slaveId && range.startAddress <= previous.endAddress + 1) previous.endAddress = Math.max(previous.endAddress, range.endAddress)
     else merged.push({ ...range })
   }
   return merged

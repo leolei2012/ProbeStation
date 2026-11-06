@@ -1,8 +1,8 @@
 import { decodeHistoricalSample, type HistoryVerification } from '../../../packages/core/src/history-integrity.ts'
 import { isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec.ts'
 
-export interface HistoryPoint { ts: string; area: string; address: number; rawValue: number; quality?: string; batchId?: string | null; timestampMs?: number }
-export interface HistoryRegister { id: number; groupId: number; startAddress: number; dataType: string; functionCode: number }
+export interface HistoryPoint { ts: string; area: string; address: number; rawValue: number; quality?: string; batchId?: string | null; timestampMs?: number; slaveId?: number | null }
+export interface HistoryRegister { id: number; groupId: number; startAddress: number; dataType: string; functionCode: number; slaveId?: number; sourceAmbiguous?: boolean }
 export type HistorySample = [number, number | null]
 /** Use Date's millisecond precision for both viewport identity and serialized requests. */
 export function historyQueryRange(range: { start: number; end: number }) {
@@ -55,6 +55,7 @@ export function decodeHistorySeries(registers: HistoryRegister[], points: Histor
     for (const [time, rows] of [...buckets].sort((a, b) => a[0] - b[0])) {
       const relevant = rows.filter(p => p.area === area && p.address >= r.startAddress && p.address < r.startAddress + registerWidth(r.dataType))
       if (!relevant.length) continue
+      if (r.slaveId !== undefined && relevant.every(p => p.slaveId != null && p.slaveId !== r.slaveId)) continue
       const decoded = decodeHistoricalSample(r, relevant), v = decoded.value
       const n = v == null || (typeof v === 'bigint' && (v > BigInt(Number.MAX_SAFE_INTEGER) || v < BigInt(Number.MIN_SAFE_INTEGER))) ? NaN : Number(v)
       const state = Number.isFinite(n) ? decoded.verification : 'unknown'

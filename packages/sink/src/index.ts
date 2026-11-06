@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs'
 import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
 import { areaForFunction, formatRegisterValue, decodeHistoricalSample, historyVerificationLabel, type HistoryVerification } from '@probebench/core'
 import { HISTORY_EXPORT_RAW_LIMIT, HistoryExportLimitError, historyExportReadRanges } from '../../core/src/history-export-policy.ts'
+import { withRegisterSources } from '../../core/src/sample-source.ts'
 
 export const name = 'sink'
 export const inject = ['config', 'store']
@@ -59,7 +60,7 @@ export class Sink {
   constructor(private readonly ctx: any) {}
 
   private async collect(objectId: number, start: string, end: string, registerIds?: number[]) {
-    let registers = this.ctx.config.listRegistersByObject(objectId)
+    let registers = withRegisterSources<any>(this.ctx.config.listRegistersByObject(objectId), this.ctx.config.listGroups?.(objectId) ?? [], this.ctx.config.getObject?.(objectId))
     if (registerIds && registerIds.length > 0) {
       const idSet = new Set(registerIds)
       registers = registers.filter((r: any) => idSet.has(r.id))
@@ -113,8 +114,8 @@ export class Sink {
       sheet.addRow(row)
     }
     const notes = wb.addWorksheet('历史身份说明')
-    notes.addRow(['批次未验证的值仅供查看，不可作为自动 PASS/FAIL 依据。未知值留空。'])
-    notes.addRow(['automatic_eligible 只表示完整同批且质量有效，不表示测试通过；本程序未生成 PASS/FAIL。'])
+    notes.addRow(['批次/来源未验证的值仅供查看，不可作为自动 PASS/FAIL 依据。无法归属从站、混批或缺字等未知值留空。'])
+    notes.addRow(['automatic_eligible 只表示目标从站来源明确、完整同批且质量有效，不表示测试通过；本程序未生成 PASS/FAIL。'])
     const buf = await wb.xlsx.writeBuffer()
     return Buffer.from(buf)
   }

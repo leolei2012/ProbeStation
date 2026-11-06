@@ -40,6 +40,7 @@ export async function createOfflineTestApp() {
       const words = encodeRegister(r.dataType, r.id === reg.id ? 65536 + i : 20 + i / 10)
       store.write(words.flatMap((rawValue, index) => kind === 'missing' && index === words.length - 1 ? [] : [{
         objectId: device.id, area: 'holding-register' as const, address: r.startAddress + index, timestamp, rawValue,
+        slaveId: kind === 'unverified' ? null : 1,
         quality: kind === 'bad' && index === 0 ? 'bad' : 'good',
         batchId: kind === 'unverified' ? null : `${i}-${r.id}-${kind === 'mixed' ? index : 'response'}`,
       }]))

@@ -8,7 +8,8 @@ export function sourceKey(objectId: number | string, area: string, address: numb
 export function sourceSample<T extends { slaveId?: number | null }>(latest: Record<string, T>, objectId: number | string, area: string, address: number, slaveId?: number): T | undefined {
   const key = `${objectId === '' ? '' : objectId + ':'}${area}:${address}`
   if (slaveId === undefined) return latest[key]
-  return latest[sourceKey(objectId, area, address, slaveId)] ?? (latest[key]?.slaveId === slaveId ? latest[key] : undefined)
+  const scoped = latest[sourceKey(objectId, area, address, slaveId)]
+  return scoped?.slaveId === slaveId ? scoped : latest[key]?.slaveId === slaveId ? latest[key] : undefined
 }
 
 export function withRegisterSources<T extends { groupId?: number; functionCode: number; startAddress: number; dataType: string; slaveId?: number }>(registers: T[], groups: Array<{ id: number; slaveId?: number; functionCode: number; startAddress: number; quantity: number }>, device?: { mode?: string; slaveId?: number }) {

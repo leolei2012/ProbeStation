@@ -11,17 +11,20 @@ const reg = { id: 10, objectId: 1, groupId: 2, alias: '计数', dataType: 'uint3
 const logs: string[] = []
 let historyCount = 1
 let historyBatchMode: 'legacy' | 'verified' | 'mixed' = 'legacy'
+let historySlaveId: number | null = 1
+let snapshotMode: 'verified' | 'legacy' | 'unknown' | 'other' = 'verified'
+let ambiguousAddress = false
 const cfg = {
   getObject: (id: number) => id === 1 ? device : id === 3 ? { id: 3, name: '其他设备' } : undefined,
   listObjects: () => [device, { id: 3, name: '其他设备' }],
-  listRegistersByObject: () => [reg], listGroups: () => [{ id: 2, objectId: 1 }],
+  listRegistersByObject: () => ambiguousAddress ? [reg, { ...reg, id: 11, groupId: 3 }] : [reg], listGroups: () => [{ id: 2, objectId: 1, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 2 }, ...(ambiguousAddress ? [{ id: 3, objectId: 1, slaveId: 2, functionCode: 3, startAddress: 0, quantity: 2 }] : [])],
   getRegister: (id: number) => id === 10 ? reg : undefined, getGroup: () => ({ id: 2, objectId: 1, isActive: 1 }),
   updateObject: (_id: number, fields: any) => Object.assign(device, fields),
   log: (...args: any[]) => logs.push(args.join(' ')),
 }
 const store = {
-  getLatestByObjectAll: () => ({ 'holding-register:0': { rawValue: 1, timestamp: '2026-10-06 10:00:00', quality: 'good' }, 'holding-register:1': { rawValue: 2, timestamp: '2026-10-06 10:00:00', quality: 'good' } }),
-  queryWithOffset: async (_id: number, address: number) => Array.from({ length: historyCount }, (_, i) => ({ ts: '2026-10-06 10:00:00', timestampMs: 1791242400000 + i, rawValue: address === 0 ? 1 : 2, quality: 'good', batchId: historyBatchMode === 'legacy' ? null : `response-${i}-${historyBatchMode === 'mixed' ? address : 'same'}` })),
+  getLatestByObjectAll: () => Object.fromEntries([0, 1].map(address => ['holding-register:' + address, { rawValue: address ? 2 : 1, timestamp: '2026-10-06 10:00:00', slaveId: snapshotMode === 'unknown' ? null : snapshotMode === 'other' ? 2 : 1, quality: 'good', batchId: snapshotMode === 'legacy' ? null : 'snapshot' }])),
+  queryWithOffset: async (_id: number, address: number) => Array.from({ length: historyCount }, (_, i) => ({ ts: '2026-10-06 10:00:00', timestampMs: 1791242400000 + i, rawValue: address === 0 ? 1 : 2, slaveId: historySlaveId, quality: 'good', batchId: historyBatchMode === 'legacy' ? null : `response-${i}-${historyBatchMode === 'mixed' ? address : 'same'}` })),
   statsByObject: async () => ({ totalRows: 2 }),
 }
 let responses: any[] = []
@@ -72,6 +75,17 @@ try {
   assert(s.entries.some((e: any) => e.role === 'tool' && e.content.includes('台架') && !e.content.includes('其他设备')))
   s = await turn(id, call('get_snapshot', { device_id: 1 }))
   assert(s.entries.at(-2).content.includes('65538'))
+  const snapshotOutput = () => JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n')).points[0]
+  assert.equal(snapshotOutput().rawDecodedValue, 65538); assert.equal(snapshotOutput().automaticEligible, true)
+  snapshotMode = 'legacy'; s = await turn(id, call('get_snapshot', { device_id: 1 }))
+  assert.equal(snapshotOutput().rawDecodedValue, null); assert.equal(snapshotOutput().compatibilityValue, 65538)
+  assert.equal(snapshotOutput().automaticEligible, false)
+  for (const kind of ['unknown', 'other'] as const) {
+    snapshotMode = kind; s = await turn(id, call('get_snapshot', { device_id: 1 }))
+    assert.equal(snapshotOutput().rawDecodedValue, null); assert.equal(snapshotOutput().verification, 'unknown')
+  }
+  snapshotMode = 'verified'
+
   historyCount = 600
   s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-01T00:00:00Z', end: '2026-10-10T00:00:00Z' }))
   const completeHistory = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
@@ -91,6 +105,14 @@ try {
   s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))
   const verifiedHistory = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
   assert.equal(verifiedHistory.count, 1); assert.equal(verifiedHistory.points[0].value, 65538)
+  historySlaveId = null
+  s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))
+  const noSource = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))
+  assert.equal(noSource.count, 0); assert.equal(noSource.points[0].compatibilityValue, 65538); assert.equal(noSource.points[0].automaticEligible, false)
+  ambiguousAddress = true
+  s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))
+  assert.ok(s.entries.at(-2).content.includes('地址不唯一'))
+  ambiguousAddress = false; historySlaveId = 1
   historyBatchMode = 'mixed'
   s = await turn(id, call('query_history', { device_id: 1, area: 'holding-register', address: 0, start: '2026-10-06T00:00:00Z', end: '2026-10-06T01:00:00Z' }))
   const mixedHistory = JSON.parse(s.entries.at(-2).content.split('\n').slice(2).join('\n'))

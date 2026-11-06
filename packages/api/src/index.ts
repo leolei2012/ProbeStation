@@ -1,3 +1,4 @@
+import { validSlaveId } from '../../core/src/sample-source.ts'
 import type { Context } from 'cordis'
 import z from 'schemastery'
 import Fastify, { type FastifyInstance } from 'fastify'
@@ -327,8 +328,9 @@ export function apply(ctx: Context, config: Config): void {
       const q = req.query as any
       const area = String(q.area ?? '')
       if (!['coil', 'discrete-input', 'holding-register', 'input-register'].includes(area)) return reply.code(400).send({ error: 'area is required' })
+      if (q.slave_id !== undefined && (typeof q.slave_id !== 'string' || !/^\d+$/.test(q.slave_id) || !validSlaveId(Number(q.slave_id)))) return reply.code(400).send({ error: 'slave_id 无效' })
       const limit = Number(q.limit ?? 0)
-      return store.query(Number(q.object_id), Number(q.address), String(q.start), String(q.end), area, limit > 0 ? limit : undefined)
+      return store.query(Number(q.object_id), Number(q.address), String(q.start), String(q.end), area, limit > 0 ? limit : undefined, q.slave_id === undefined ? undefined : Number(q.slave_id))
     })
     fastify.get('/api/data/object', async (req: any) => {
       const q = req.query as any
