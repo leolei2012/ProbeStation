@@ -60,7 +60,7 @@ try {
   await sink.importPointBook(target.id, exported.buffer); assert.equal(targetRules().length, 2)
 
   // Inject failures after earlier operations have already run inside the transaction.
-  const methods = ['deleteGroup', 'createGroup', 'createRegister', 'createRule', 'updateGroup'] as const
+  const methods = ['deleteGroup', 'createGroup', 'createRegister', 'createRule'] as const
   const originals = new Map(methods.map(method => [method, cfg[method].bind(cfg)]))
   const db = (cfg as any).db, exec = db.exec.bind(db)
   for (const failure of [...methods, 'begin', 'commit'] as const) {
@@ -109,4 +109,4 @@ try {
   assert.equal(snapshot(), before); assert.equal(events.length, count)
   assert.equal((await sink.importPointBook(target.id, exported.buffer)).errors.length, 0)
 } finally { (cfg as any).db.close() }
-console.log('POINTBOOK ATOMIC OK: later-row/empty/invalid file rejection, replace/append, full-graph notification, delete/group/point/rule/update/commit rollback and retry, uncertain rollback and post-commit warnings; memory-only XLSX')
+console.log('POINTBOOK ATOMIC OK: later-row/empty/invalid file rejection, replace/append, full-graph notification, delete/group/point/rule/commit rollback and retry, uncertain rollback and post-commit warnings; memory-only XLSX')

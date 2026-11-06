@@ -1,6 +1,6 @@
 import type { Context } from 'cordis'
 import ExcelJS from 'exceljs'
-import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
+import { parsePointBook } from './pointbook.ts'
 import { areaForFunction, formatRegisterValue, decodeHistoricalSample, historyVerificationLabel, type HistoryVerification } from '@probebench/core'
 import { HISTORY_EXPORT_RAW_LIMIT, HistoryExportLimitError, historyExportReadRanges } from '../../core/src/history-export-policy.ts'
 import { withRegisterSources } from '../../core/src/sample-source.ts'
@@ -124,13 +124,13 @@ export class Sink {
   /**
    * 点表导出：把一台设备的点位（寄存器带全语义）导成 xlsx，
    * **每个寄存器分组单独作为一个 sheet**（分组名即 sheet 名）。
-   * sheet 布局固定、便于本文件的对称导入重建（见 config.importPointBook）：
+   * sheet 布局固定、便于本文件的对称导入重建（见 importPointBook）：
    *   第1行：分组,<名>
    *   第2行：从站,<v>, 功能码,<v>, 起始地址,<v>, 数量,<v>
    *   第3行空
    *   第4行：别名 | 数据类型 | 单位 | 系数 | 偏移 | 枚举 | 功能码 | 起始地址 | 数量 | 小数位数 | 告警数量
    *   第5行起：每行一条寄存器
-   * 另有「设备信息」sheet 存连接参数（导入用于可选建连接）。
+   * 另有「设备信息」sheet 存连接参数，仅供参考，导入不修改设备连接。
    */
   async exportPointSheet(objectId: number): Promise<{ buffer: Buffer; filename: string }> {
     const obj = this.ctx.config.getObject(objectId)
@@ -211,118 +211,21 @@ export class Sink {
     const wb = new ExcelJS.Workbook()
     await wb.xlsx.load(buffer as any)
     const cfg = this.ctx.config
-    const errors: string[] = []
-    let groups = 0
-    let registers = 0
-    const cell = (row: any, idx: number): string => {
-      const c = row?.getCell(idx)?.value
-      if (c == null) return ''
-      return typeof c === 'object' ? String((c as any).text ?? (c as any).result ?? '') : String(c)
-    }
-    type Alarm = { operator: string; threshold: number; message: string | null }
-    const alarmsBySheet = new Map<string, Map<number, Alarm[]>>()
-    const pointLocations = new Map<string, { sheet: string; row: number }[]>()
-    const key = (group: string, fc: number, address: number) => JSON.stringify([group, fc, address])
-    wb.eachSheet((ws: any) => {
-      if (['设备信息', '告警规则'].includes(ws.name)) return
-      alarmsBySheet.set(ws.name, new Map())
-      const group = cell(ws.getRow(1), 2) || ws.name
-      const fc = Number(cell(ws.getRow(2), 4)) || 3
-      for (let ri = 5; ri <= ws.rowCount; ri++) {
-        const row = ws.getRow(ri), addr = cell(row, 8).trim()
-        if (!/^\d+$/.test(addr)) continue
-        const id = key(group, Number(cell(row, 7)) || fc, Number(addr))
-        pointLocations.set(id, [...(pointLocations.get(id) ?? []), { sheet: ws.name, row: ri }])
-      }
-    })
-    const alarmSheet = wb.getWorksheet('告警规则')
-    if (!alarmSheet) errors.push('缺少「告警规则」页，请使用新版点位表模板；无告警时保留空表头。')
-    else {
-      const headers = ['分组', '功能码', '起始地址', '告警条件', '原始值阈值', '告警提示']
-      if (headers.some((h, i) => cell(alarmSheet.getRow(1), i + 1).trim() !== h)) errors.push('「告警规则」页列头不正确，请使用新版模板。')
-      for (let ri = 2; ri <= alarmSheet.rowCount; ri++) {
-        const row = alarmSheet.getRow(ri)
-        const fields = Array.from({ length: 6 }, (_, i) => cell(row, i + 1))
-        if (fields.every(f => !f.trim())) continue
-        try {
-          const [group, fc, addr, op, limit, message] = fields
-          const operator = op.trim().replace('≥', '>=').replace('≤', '<=').replace('≠', '!=').replace(/^=$/, '==')
-          if (!group.trim() || !/^\d+$/.test(fc.trim()) || !/^\d+$/.test(addr.trim()) || !ALARM_OPERATORS.includes(operator as any) || !limit.trim() || !Number.isFinite(Number(limit)) || message.length > 200) throw new Error('分组、功能码、地址、条件、阈值或提示无效')
-          const matches = pointLocations.get(key(group.trim(), Number(fc), Number(addr))) ?? []
-          if (matches.length !== 1) throw new Error(matches.length ? '对应点位不唯一' : '找不到对应点位')
-          const location = matches[0], rows = alarmsBySheet.get(location.sheet)!
-          rows.set(location.row, [...(rows.get(location.row) ?? []), { operator, threshold: Number(limit), message: message.trim() || null }])
-        } catch (e: any) { errors.push('告警规则第 ' + ri + ' 行：' + e.message) }
-      }
-    }
-    if (errors.length) return { groups: 0, registers: 0, errors, warnings: [] }
+    const parsed = parsePointBook(wb)
+    if (parsed.errors.length) return { groups: 0, registers: 0, errors: parsed.errors, warnings: parsed.warnings }
     const result: PointBookImportReport = cfg.applyPointBookImport(objectId, replace, () => {
-      wb.eachSheet((ws: any) => {
-        if (['设备信息', '告警规则'].includes(ws.name)) return
-        const nRows = ws.rowCount
-        if (nRows < 2) { errors.push('sheet "' + ws.name + '" 空，跳过'); return }
-        const r1 = ws.getRow(1)
-        const groupName = cell(r1, 2) || ws.name
-        // 读分组头（第2行“从站,..,功能码,..,起始地址,..,数量,..”）
-        const r2 = ws.getRow(2)
-        let fc = 3
-        let start = 0
-        let qty = 0
-        for (let c = 1; c <= 7; c += 2) {
-          const label = cell(r2, c).trim()
-          if (label === '从站') { /* 忽略 slave，用 obj 默认 */ }
-          else if (label === '功能码') fc = parseInt(cell(r2, c + 1), 10) || fc
-          else if (label === '起始地址') start = parseInt(cell(r2, c + 1), 10) || 0
-          else if (label === '数量') qty = parseInt(cell(r2, c + 1), 10) || 0
-        }
-        const g = cfg.createGroup(objectId, groupName, fc, start, Infinity)
-        groups++
-        // 第4行是列头，数据从第5行起；但更稳：跳过前两个空行与前两行分组头，从第3行？布局：r1 分组, r2 从站.., r3 空, r4 列头, r5..数据
-        const dataStart = 5
-        let added = 0
-        let lo = Infinity
-        let hi = -Infinity
-        const addRowReg = (alias: string, dataType: string, unit: string, factor: number, offset: number, enumJson: string | null, regFc: number, addr: number, decimalPlaces: number | null) => {
-          const reg = cfg.createRegister(g.id, objectId, alias || null, regFc, addr, dataType, { unit: unit || null, factor, offset, enumJson, decimalPlaces })
-          added++
-          if (addr < lo) lo = addr
-          if (addr > hi) hi = addr
-          return reg
-        }
-        for (let ri = dataStart; ri <= nRows; ri++) {
-          const row = ws.getRow(ri)
-          const alias = cell(row, 1).trim()
-          const dtRaw = cell(row, 2).trim()
-          const unit = cell(row, 3).trim()
-          const factor = parseFloat(cell(row, 4)) || 1
-          const offset = parseFloat(cell(row, 5)) || 0
-          const enumRaw = cell(row, 6).trim()
-          const rcFc = parseInt(cell(row, 7), 10)
-          const addr = parseInt(cell(row, 8), 10)
-          if (!alias && Number.isNaN(addr) && !dtRaw && !unit) continue
-          if (Number.isNaN(addr)) { errors.push('sheet ' + groupName + ' 第 ' + ri + ' 行地址非法'); continue }
-          const decimalText = cell(row, 10).trim()
-          const decimalPlaces = decimalText === '' ? null : Number(decimalText)
-          if (decimalPlaces !== null && (!Number.isInteger(decimalPlaces) || decimalPlaces < 0 || decimalPlaces > 8)) { errors.push('sheet ' + groupName + ' 第 ' + ri + ' 行小数位数必须为 0–8'); continue }
-          const dataType = dtRaw || 'int16'
-          let enumJson: string | null = null
-          if (enumRaw) {
-            try {
-              const o: Record<string, string> = {}
-              for (const pair of enumRaw.split(';')) { const i = pair.indexOf('='); if (i > 0) o[pair.slice(0, i).trim()] = pair.slice(i + 1).trim() }
-              enumJson = JSON.stringify(o)
-            } catch { enumJson = null }
-          }
-          const reg = addRowReg(alias, dataType, unit, factor, offset, enumJson, Number.isNaN(rcFc) ? fc : rcFc, addr, decimalPlaces)
-          for (const alarm of alarmsBySheet.get(ws.name)?.get(ri) ?? []) cfg.createRule(reg.id, alarm.operator, alarm.threshold, alarm.message)
+      let registers = 0
+      for (const group of parsed.groups) {
+        const g = cfg.createGroup(objectId, group.name, group.functionCode, group.startAddress, group.quantity, group.mode, group.slaveId)
+        for (const point of group.points) {
+          const reg = cfg.createRegister(g.id, objectId, point.alias, point.functionCode, point.startAddress, point.dataType, point)
+          for (const alarm of point.alarms) cfg.createRule(reg.id, alarm.operator, alarm.threshold, alarm.message)
           registers++
         }
-        // 分组 quantity 覆盖该组取读的最宽连续跨度（含可能的 gap 宽读，与人工点表一致）
-        if (added > 0) cfg.updateGroup(g.id, { quantity: hi >= lo ? (hi - lo + 1) : added, startAddress: lo })
-        else { errors.push('sheet ' + groupName + ' 无可解析点行'); }
-      })
-      return { groups, registers, errors }
+      }
+      return { groups: parsed.groups.length, registers, errors: [] }
     })
+    result.warnings = [...parsed.warnings, ...result.warnings]
     if (!result.errors.length) {
       try { cfg.log('INFO', 'sink', 'importPointBook ' + objectId + ' -> groups=' + result.groups + ' regs=' + result.registers) }
       catch { result.warnings.push('点位表已提交，但日志写入失败；请核对返回结果，勿重复导入。') }

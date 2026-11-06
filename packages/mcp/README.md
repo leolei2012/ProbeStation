@@ -112,4 +112,4 @@ read_register/query_history 可选 `slave_id`（0–255 整数）或 `register_i
 
 import_points的JSON行支持可选slave_id/register_id；CSV识别来源/点位ID列。必须与设备、area/address一致，多候选返回details/candidates并跳过，不任选首项。JSON省略字段/CSV缺列保留原值；unit/enum显式null清除，存在但空白的CSV单元格沿用旧默认/清空行为。有效行原子提交，仍需检查updated/skipped/errors及新增details/warnings/parse，不能把工具返回当作全部行成功。数量/归属/告警不改；不是全量import_points_xlsx。见[完整兼容规则](../../docs/develop/07-语义点表安全导入.md)。注册器mock已验证参数映射，无实际MCP监听或配置写入。
 
-全量import_points_xlsx的旧配置删除、新组/点位/告警创建现为同一事务；已有行校验或写入失败回滚整次，无分组页拒绝清空。检查errors/warnings，已提交后的通知/日志失败不会变成可自动重试的失败。当前XLSX成功解析仍有来源/quantity/零倍率/宽度的独立待办，不宣称完整保真，详见[边界](../../docs/develop/08-XLSX点表原子替换.md)。
+全量import_points_xlsx先校验整本v2计划，再事务替换；错误保留原配置，无分组页拒绝清空。现保留分组从站/显式范围、独立quantity和零倍率，检查多字完整覆盖，不补占位。缺来源/FC默认1/FC03及推导范围均会返回warnings要求核对，缺quantity默认1。提交后通知/日志失败也可能只返回警告，不自动重试。v2其他未定义字段不猜测，范围与限制见[说明](../../docs/develop/09-XLSX点表字段保真.md)。
