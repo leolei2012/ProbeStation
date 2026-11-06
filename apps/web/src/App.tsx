@@ -1,3 +1,4 @@
+import { RecordingIntervalNotice } from './RecordingIntervalNotice'
 import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
@@ -873,6 +874,7 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
         <span className={groups.some(g => groupErrors[g.id]) ? 'has-fault' : ''}>{t('faultsLabel')}: {groups.filter(g => groupErrors[g.id]).length}</span>
       </div>
       {device.mode === 'slave' && <DeviceSlaveStatus deviceId={device.id} />}
+      <RecordingIntervalNotice deviceId={device.id} />
       <TabBar tabs={[{ id: 0, label: t('tabLive') }, { id: 1, label: t('liveCurve') }, { id: 2, label: t('tabHistory') }, ...(device.mode === 'slave' ? [] : [{ id: 3, label: t('tabRaw') }, { id: 4, label: t('tabFirmware') }]), { id: 5, label: t('pointCheckTab') }]} active={tab} onChange={setTab} />
       <AlarmPanel configurationReady={configurationReady} onHistory={onNavigate} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}

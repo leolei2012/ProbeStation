@@ -1,3 +1,4 @@
+import { RecordingIntervalNotice } from '../../apps/web/src/RecordingIntervalNotice'
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { PointSettingsEditor, type PointSettings } from '../../apps/web/src/PointSettingsEditor'
@@ -93,6 +94,20 @@ function AliasPreview() {
       }} /></div><pre>{JSON.stringify({ point, source }, null, 2)}</pre>
   </section>
 }
+function RecordingReviewPreview() {
+  const [scenario, setScenario] = useState('preserved'), [fail, setFail] = useState(false), [hang, setHang] = useState(false)
+  return <section><h2>录制间隔核对（纯模拟，只读）</h2><p>选择情形后点击“重新读取”；读取失败/挂起时应保留旧记录并标记未核实。当前间隔只供核对，页面没有恢复/连接按钮；可缩至360px检查长说明。</p>
+    <select aria-label="录制核对模拟情形" value={scenario} onChange={e => setScenario(e.target.value)}>{['preserved', 'uncertain', 'empty', 'active', 'missing', 'dropped', 'unavailable', 'long'].map(name => <option key={name}>{name}</option>)}</select>
+    <label><input type="checkbox" checked={fail} onChange={e => setFail(e.target.checked)} />读取失败</label><label><input type="checkbox" checked={hang} onChange={e => setHang(e.target.checked)} />读取挂起，10秒后超时</label>
+    <RecordingIntervalNotice deviceId={1} get={async () => {
+      if (fail) throw new Error('模拟读取失败')
+      if (hang) return new Promise(() => {})
+      if (scenario === 'unavailable') return { available: false, deviceId: 1 }
+      return { available: true, deviceId: 1, checkedAt: Date.now(), current: scenario === 'missing' ? null : { name: '模拟设备', mode: 'master', intervalMs: 10 }, active: scenario === 'active' ? [{ recordingId: 'mock-active', intervalMs: 10 }] : [],
+        notices: ['empty', 'active'].includes(scenario) ? [] : [{ recordingId: 'mock-recording', deviceId: 1, state: scenario === 'uncertain' ? 'uncertain' : 'preserved', originalIntervalMs: 1000, recordingIntervalMs: 10, finishedAt: Date.now() - 30000, warnings: [scenario === 'long' ? '长说明'.repeat(150) : '模拟归还条件已失效，请核对当前间隔。'] }], retention: { scope: 'process', limit: 100, dropped: scenario === 'dropped' ? 3 : 0 } }
+    }} />
+  </section>
+}
 function Preview() {
   const [settings, setSettings] = useState<PointSettings>({ dataType: 'uint32', unit: '旧单位', factor: 0, offset: 12.5, enumJson: null, decimalPlaces: 1 })
   const [show, setShow] = useState(false), [failOnce, setFailOnce] = useState(false)
@@ -106,6 +121,7 @@ function Preview() {
   return <main style={{ padding: 24 }}>
     <h1>纯 mock 点位设置流程</h1>
     <p>无服务、数据库或设备；保存只更新此页面内存。关闭页面即丢弃模拟配置。</p>
+    <RecordingReviewPreview />
     <AliasPreview />
     <GroupPreview show={showGroup} setShow={setShowGroup} disabled={show || showDevice || showGroup} />
     <h2>设备编辑并发保护（纯模拟）</h2>

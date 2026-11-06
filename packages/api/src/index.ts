@@ -1,3 +1,4 @@
+import { registerRecordingAttention } from './recording-attention.ts'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import type { Context } from 'cordis'
 import z from 'schemastery'
@@ -69,6 +70,7 @@ export function apply(ctx: Context, config: Config): void {
     await fastify.register(compress, { global: true }) // gzip/brotli 压缩响应（静态资源 + API）
 
     fastify.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
+    registerRecordingAttention(fastify, () => ctx.get('mcp', false) as any)
     registerSerialPorts(fastify)
     registerAssistant(fastify, { cfg, store, poller }, dataDir)
     registerCurve(fastify, cfg, store)

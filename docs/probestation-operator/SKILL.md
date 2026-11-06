@@ -196,3 +196,7 @@ AI 助手不设工具次数/轮数、请求超时、输入/响应长度、附件
 ### 录制结束后的间隔核对
 
 新版本get/list_recordings返回intervalRestore/warnings，stop/delete_recording返回interval_restore/warnings；ok或done只表示会话结束，不保证周期已恢复。restored表示事务已恢复；shared仍有其他会话；preserved保留当前值；uncertain须人工核实。遇到用户同值写入、ABA、设备编辑变化或外部SQLite提交，不得强制写回旧间隔。其他连接写日志也会保守取消自动恢复，可能留下短周期，须核对当前pollIntervalMs。开始已有ID但附通知/日志警告时勿重复开始。无自动重试、跨进程调度或崩溃恢复；旧REST仍无条件，不能当成有保护接口。详见[录制间隔保护](../develop/39-录制间隔归还与并发修改保护.md)。
+
+### 发现和处理录制间隔核对记录
+
+优先只读`get_recording_interval_status {device_id}`检查本次checkedAt/current、活动录制及notices；Web设备概要也有“录制间隔核对”。删除样本不清核对记录，但仅保留当前进程当前配置最近100条，dropped是全局移出计数，重开/重启不保留。available=false或读取失败不能当作没有问题，current=null不能选同编号替代设备。先人工确认当前间隔符合预期；需要变更时使用现有设备编辑原快照条件，不盲目写回notices的originalIntervalMs，不用旧REST绕过。没有强制恢复或自动已解决能力，详见[提示与限制](../develop/40-录制间隔核对提示与只读检查.md)。

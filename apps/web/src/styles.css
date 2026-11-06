@@ -975,3 +975,11 @@ table.reg th, .btn { white-space: nowrap; }
 .point-enum-original pre { max-height: 24vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .point-enum-editor input[aria-invalid="true"] { border-color: var(--error); }
 .point-enum-opaque .warn { color: var(--error); font-size: 12px; line-height: 1.7; }
+
+.recording-interval-notice { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border-2); border-radius: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.recording-interval-notice.needs-review { border-color: #b58b38; }
+.recording-interval-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.recording-interval-notice p { margin: 6px 0; }
+.recording-interval-notice ul { padding-left: 20px; max-height: 300px; overflow-y: auto; }
+.recording-interval-notice li { margin-bottom: 10px; }
+.recording-interval-notice small { color: var(--text-2); }

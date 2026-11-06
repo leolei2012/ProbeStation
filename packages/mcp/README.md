@@ -47,6 +47,7 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `start_recording` | `device_id, interval_ms, duration_ms, slave_id?, addresses?` | 连续采样：录 duration_ms，事后 get_recording 回放 |
 | `start_trigger_recording` | `device_id, interval_ms, trigger_area, trigger_address, operator, threshold?, before_ms, after_ms, slave_id?, trigger_slave_id?, addresses?` | 触发记录：条件命中缓存前后窗口（operator 支持 > < >= <= == != changed） |
 | `get_recording` | `recording_id` | 取录制完整采样序列（原始 16 位字） |
+| `get_recording_interval_status` | `device_id` | 只读当前间隔/活动录制/当前配置保留的核对记录与移出计数，不恢复或连接 |
 | `list_recordings` | — | 列录制会话（不含 samples） |
 | `stop_recording` | `recording_id` | 提前结束/取消录制 |
 | `import_points` | `device_id, points[]\|csv` | 更新已有语义；可选逐点 slave_id/register_id，歧义跳过并返回候选，省略字段/缺列保留原值 |
@@ -135,3 +136,7 @@ export_points_xlsx会分配合法唯一页签，B1保留原组名，告警G可�
 ## 录制间隔归还（2026-11-06）
 
 开始返回warnings；get/list_recordings新增intervalRestore/warnings，stop/delete_recording新增interval_restore/warnings，旧ID/ok字段保持。pending为活动，shared为其他会话继续持有，restored为本次事务恢复，preserved为保留当前值，uncertain需核实。开始后通知/日志失败不报假开始失败；停止不自动重试。其他连接的任何提交都保守失效，可能保留录制短周期，须人工核对。进程退出不自动恢复，无持久锁/跨进程排程，不改旧REST的无条件更新契约，见[实现及剩余边界](../../docs/develop/39-录制间隔归还与并发修改保护.md)。
+
+## 录制间隔核对提示
+
+`get_recording_interval_status {device_id}`只读返回本次checkedAt、current、active、notices、retention。核对记录独立于样本，当前配置最近100条，超限有全局dropped计数；reopen或进程重启不保留，不按当前值相等推断已处理。available=false表示服务未提供，current=null表示设备缺失。Web概要使用相同只读结果；失败保留旧记录并标记未核实。需调整时人工核对并使用既有设备编辑及原条件，不能盲目用旧原值或无条件REST恢复。详见[状态与覆盖边界](../../docs/develop/40-录制间隔核对提示与只读检查.md)。

@@ -595,6 +595,10 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(rec) }] }
     })
 
+    server.registerTool('get_recording_interval_status', { title: 'Review recording intervals', description: '只读当前设备间隔、活动录制及本进程最近保留的未恢复/待核对记录；删除/淘汰样本仍保留核对记录。current是本次配置读取，不代表硬件实测频率；不恢复间隔。核对后通过现有设备编辑有条件修改，禁止盲目写回原值。', annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { device_id: zz.number().int().positive().max(Number.MAX_SAFE_INTEGER) } }, async args => {
+      try { return { content: [{ type: 'text', text: JSON.stringify(recorder.getRecordingIntervalStatus(args.device_id)) }] } } catch { return { content: [{ type: 'text', text: '录制间隔状态未核实，请重新读取。' }], isError: true } }
+    })
+
     server.registerTool('list_recordings', {
       title: 'List recordings', description: '列出录制会话（不含 samples，用 get_recording 取详情）',
       inputSchema: {},
@@ -706,5 +710,5 @@ export function apply(ctx: Context, config: Config): void {
     ctx.logger('mcp').info('MCP server on http://' + config.host + ':' + config.port + '/mcp')
   })
 
-  ctx.provide('mcp', { createServer })
+  ctx.provide('mcp', { createServer, getRecordingIntervalStatus: (deviceId: number) => recorder.getRecordingIntervalStatus(deviceId) })
 }

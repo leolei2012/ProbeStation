@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import { areaForFunction, type ModbusFunctionCode } from '../../core/src/protocol.ts'
 import type { RecordingIntervalLease } from '../../config/src/recording-interval.ts'
+import { parseRecordingIntervalStatus, type RecordingIntervalNotice, type RecordingIntervalStatus } from '../../core/src/recording-attention.ts'
 
 export interface RecordingAddress { area: string; address: number; slaveId?: number }
 type SourceAddress = RecordingAddress & { slaveId: number }
@@ -71,8 +72,14 @@ export class Recorder {
   private timers = new Map<string, NodeJS.Timeout>()
   private intervalLeases = new Map<number, RecordingIntervalLease>()
   private changingInterval = new Set<number>()
+  private intervalNotices: RecordingIntervalNotice[] = []
+  private droppedNotices = 0
+  private intervalScope: unknown
+  private sessionScopes = new WeakMap<RecordingSession, unknown>()
+  private static readonly MAX_INTERVAL_NOTICES = 100
 
   constructor(private readonly ctx: any, private readonly cfg: any) {
+    this.intervalScope = cfg.getRecordingIntervalScope()
     ctx.on('poller/result', ({ objectId, points }: any) => this.onResult(objectId, points))
   }
 
@@ -116,6 +123,7 @@ export class Recorder {
     return { originalPollInterval: active[0]?.originalPollInterval ?? obj.pollIntervalMs ?? 1000, active: active.length > 0 }
   }
   private addSession(session: RecordingSession, alreadyRecording: boolean): void {
+    this.sessionScopes.set(session, this.cfg.getRecordingIntervalScope())
     if (!alreadyRecording) {
       this.changingInterval.add(session.deviceId)
       try {
@@ -207,6 +215,18 @@ export class Recorder {
     return this.sessions.get(id) ?? null
   }
 
+  /** Read-only current metadata plus bounded completion notices, independent of sample deletion/eviction. */
+  getRecordingIntervalStatus(deviceId: number): RecordingIntervalStatus {
+    this.syncIntervalScope()
+    const row = this.cfg.getObject(deviceId)
+    return parseRecordingIntervalStatus({ available: true, deviceId, checkedAt: Date.now(), current: row ? { name: typeof row.name === 'string' ? row.name : null, mode: typeof row.mode === 'string' ? row.mode : null, intervalMs: typeof row.pollIntervalMs === 'number' && Number.isFinite(row.pollIntervalMs) ? row.pollIntervalMs : null } : null,
+      active: [...this.sessions.values()].filter(s => this.sessionScopes.get(s) === this.intervalScope && s.deviceId === deviceId && s.status === 'recording').map(s => ({ recordingId: s.id, intervalMs: s.intervalMs })), notices: this.intervalNotices.filter(n => n.deviceId === deviceId), retention: { scope: 'process', limit: Recorder.MAX_INTERVAL_NOTICES, dropped: this.droppedNotices } }, deviceId)
+  }
+  private syncIntervalScope() {
+    const scope = this.cfg.getRecordingIntervalScope()
+    if (scope !== this.intervalScope) { this.intervalScope = scope; this.intervalNotices = []; this.droppedNotices = 0 }
+  }
+
   listRecordings() {
     return [...this.sessions.values()].map((s) => ({
       id: s.id, deviceId: s.deviceId, mode: s.mode, status: s.status,
@@ -285,5 +305,13 @@ export class Recorder {
       s.intervalRestore = result.state; s.warnings.push(...result.warnings)
     } catch { s.intervalRestore = 'uncertain'; s.warnings.push('录制已结束，但恢复间隔结果待核实；请人工核对当前采样周期，勿自动重复恢复。') }
     finally { this.changingInterval.delete(s.deviceId) }
+    if (s.intervalRestore === 'preserved' || s.intervalRestore === 'uncertain') {
+      this.syncIntervalScope()
+      if (this.sessionScopes.get(s) !== this.intervalScope) { s.warnings.push('录制属于此前打开的配置，核对记录未归入当前同编号设备。'); return }
+      try { this.cfg.log('WARN', 'recorder', `录制间隔待核对 recording=${s.id} device=${s.deviceId} state=${s.intervalRestore} original=${s.originalPollInterval}ms recording=${s.intervalMs}ms；未自动重复恢复，请核对当前配置。`) }
+      catch { s.warnings.push('间隔核对日志未保存；本次运行仍可查看核对记录。') }
+      this.intervalNotices.unshift(Object.freeze({ recordingId: s.id, deviceId: s.deviceId, state: s.intervalRestore, originalIntervalMs: s.originalPollInterval, recordingIntervalMs: s.intervalMs, finishedAt: s.finishedAt!, warnings: Object.freeze([...s.warnings]) }))
+      if (this.intervalNotices.length > Recorder.MAX_INTERVAL_NOTICES) { this.intervalNotices.pop(); this.droppedNotices++ }
+    }
   }
 }

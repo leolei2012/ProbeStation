@@ -52,6 +52,7 @@ export class ConfigStore {
   acquireRecordingInterval(id: number, intervalMs: number) { return this.recordingIntervals.acquire(id, intervalMs) }
   recordingIntervalLeaseValid(lease: RecordingIntervalLease) { return this.recordingIntervals.valid(lease) }
   restoreRecordingInterval(lease: RecordingIntervalLease) { return this.recordingIntervals.restore(lease) }
+  getRecordingIntervalScope() { return this.recordingIntervals.scope() }
 
   constructor(config: Config, private readonly onChange?: (scope: string, id?: number) => void) {
     this.dbPath = config.dbPath

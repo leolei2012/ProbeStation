@@ -157,6 +157,12 @@ try {
   const preserved = body(await run('stop_recording', { recording_id: conflictRecording.recording_id }))
   assert.equal(preserved.ok, true); assert.equal(preserved.interval_restore, 'preserved'); assert(preserved.warnings.length); assert.equal(recordingDevice.pollIntervalMs, 55)
   assert.equal(body(await run('get_recording', { recording_id: conflictRecording.recording_id })).intervalRestore, 'preserved')
+  const rateWritesBeforeRead = rateChanges.length
+  const attention = body(await run('get_recording_interval_status', { device_id: 1 }))
+  assert.equal(attention.current.intervalMs, 55); assert.equal(attention.notices[0].recordingId, conflictRecording.recording_id)
+  await run('delete_recording', { recording_id: conflictRecording.recording_id })
+  assert.equal(body(await run('get_recording_interval_status', { device_id: 1 })).notices[0].recordingId, conflictRecording.recording_id)
+  assert.equal(rateChanges.length, rateWritesBeforeRead, 'read-only inspection and deleting a completed recording do not adjust rate')
   recordingDevice.pollIntervalMs = 1000
   for (const [tool, args] of [['start_recording', recArgs], ['start_trigger_recording', { ...triggerArgs, trigger_slave_id: 1 }]] as const) {
     failImportLog = true; const started = await run(tool, args); failImportLog = false

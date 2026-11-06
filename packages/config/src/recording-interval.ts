@@ -11,11 +11,13 @@ const rate = (value: number) => Number.isSafeInteger(value) && value > 0 && valu
 export class RecordingIntervals {
   private revisions = new Map<number, symbol>()
   private leases = new WeakMap<RecordingIntervalLease, Guard>()
+  private identity = Symbol()
+  scope() { return this.identity }
   constructor(private db: () => DatabaseSync, private read: (id: number) => DeviceRecord | undefined, private write: (id: number, rate: number) => void, private restoring: () => boolean, private notify: (id: number) => void) {}
   /** Called for every supported poll-interval write, including same-value writes and rolled-back attempts. */
   changed(id: number) { if (this.revisions.has(id)) this.revisions.set(id, Symbol()) }
   deleted(id: number) { this.revisions.delete(id) }
-  reset() { this.revisions.clear(); this.leases = new WeakMap() }
+  reset() { this.revisions.clear(); this.leases = new WeakMap(); this.identity = Symbol() }
   private version() {
     const value = this.db().prepare('PRAGMA data_version').get()?.data_version
     if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new Error('无法核对配置数据库写入身份。')
