@@ -2,6 +2,7 @@ import type { Context } from 'cordis'
 import ExcelJS from 'exceljs'
 import { parsePointBook } from './pointbook.ts'
 import { assertExportableGroupName, createSheetNameAllocator } from './sheet-names.ts'
+import { historyColumnNames } from './history-columns.ts'
 import { areaForFunction, formatRegisterValue, decodeHistoricalSample, historyVerificationLabel, type HistoryVerification } from '@probebench/core'
 import { HISTORY_EXPORT_RAW_LIMIT, HistoryExportLimitError, historyExportReadRanges } from '../../core/src/history-export-policy.ts'
 import { withRegisterSources } from '../../core/src/sample-source.ts'
@@ -11,7 +12,7 @@ export const name = 'sink'
 export const inject = ['config', 'store']
 
 function escapeCsv(v: string): string {
-  if (/[",\n]/.test(v)) return '"' + v.replace(/"/g, '""') + '"'
+  if (/[",\r\n]/.test(v)) return '"' + v.replace(/"/g, '""') + '"'
   return v
 }
 
@@ -82,7 +83,9 @@ export class Sink {
 
   async exportCsv(objectId: number, start: string, end: string, registerIds?: number[], tzOffsetMin = 0): Promise<string> {
     const { registers, tsOrder, formatted, verification } = await this.collect(objectId, start, end, registerIds)
-    const header = [['timestamp', '(', tzLabel(tzOffsetMin), ')'].join(''), ...registers.flatMap((r: any) => { const name = r.alias ?? `reg${r.id}`; return [name, name + '__batch_status', name + '__automatic_eligible'] })]
+    const timestamp = `timestamp(${tzLabel(tzOffsetMin)})`
+    const names = historyColumnNames(registers, [timestamp, `timestamp (${tzLabel(tzOffsetMin)})`])
+    const header = [timestamp, ...names.flatMap(name => [name, name + '__batch_status', name + '__automatic_eligible'])]
     const lines = [header.map(escapeCsv).join(',')]
     for (const ts of tsOrder) {
       const m = formatted.get(ts)!
@@ -94,11 +97,12 @@ export class Sink {
 
   async exportXlsx(objectId: number, start: string, end: string, registerIds?: number[], tzOffsetMin = 0): Promise<Buffer> {
     const { registers, tsOrder, formatted, verification } = await this.collect(objectId, start, end, registerIds)
+    const names = historyColumnNames(registers, [`timestamp(${tzLabel(tzOffsetMin)})`, `timestamp (${tzLabel(tzOffsetMin)})`])
     const wb = new ExcelJS.Workbook()
     const sheet = wb.addWorksheet('data')
     sheet.columns = [
       { header: `timestamp (${tzLabel(tzOffsetMin)})`, key: 'ts', width: 24 },
-      ...registers.flatMap((r: any) => [{ header: r.alias ?? `reg${r.id}`, key: `r${r.id}`, width: 16 }, { header: (r.alias ?? `reg${r.id}`) + '__batch_status', key: `s${r.id}`, width: 20 }, { header: (r.alias ?? `reg${r.id}`) + '__automatic_eligible', key: `a${r.id}`, width: 24 }]),
+      ...registers.flatMap((r: any, i: number) => [{ header: names[i], key: `r${r.id}`, width: 24 }, { header: names[i] + '__batch_status', key: `s${r.id}`, width: 28 }, { header: names[i] + '__automatic_eligible', key: `a${r.id}`, width: 32 }]),
     ]
     for (const ts of tsOrder) {
       const row: Record<string, unknown> = { ts: formatTsLocal(ts, tzOffsetMin) }
@@ -112,6 +116,13 @@ export class Sink {
     const notes = wb.addWorksheet('历史身份说明')
     notes.addRow(['批次/来源未验证的值仅供查看，不可作为自动 PASS/FAIL 依据。无法归属从站、混批或缺字等未知值留空。'])
     notes.addRow(['automatic_eligible 只表示目标从站来源明确、完整同批且质量有效，不表示测试通过；本程序未生成 PASS/FAIL。'])
+    notes.addRow(['重名列附从站和点位ID；从站指当前配置目标，不能替代逐行批次/来源状态。原始别名以JSON文本保存。'])
+    notes.addRow([])
+    notes.addRow(['数据列', '点位ID', '分组ID', '从站（当前配置）', '数据区', '地址', 'dtype', '原始别名(JSON)'])
+    registers.forEach((r: any, i: number) => notes.addRow([names[i], r.id, r.groupId ?? null, r.slaveId ?? null, areaForFunction(r.functionCode), r.startAddress, r.dataType, JSON.stringify(r.alias ?? null)]))
+    notes.columns = [38, 12, 12, 20, 22, 12, 18, 48].map(width => ({ width }))
+    notes.getRow(5).font = { bold: true }
+    notes.views = [{ state: 'frozen', ySplit: 5 }]
     const buf = await wb.xlsx.writeBuffer()
     return Buffer.from(buf)
   }
