@@ -1,3 +1,4 @@
+import { HistoryNavigation } from './history-navigation'
 import { LatestConfigRead, readDeviceGroups, groupsForSelection } from './config-read'
 import { PointBookImportResult, type PointBookResult } from './PointBookImportResult'
 import { InvalidPointBookReportError, pointBookReportKind, uploadPointBook as sendPointBook, type PointBookReport } from './pointbook-result'
@@ -55,6 +56,7 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    histNavigationWaiting: '正在等待点表加载以定位点位 #{id}；加载失败时可使用顶部重试。', histNavigationMissing: '当前已加载点表中未找到点位 #{id}，请刷新配置后再次点击引用，或重新选择点位。', histNavigationInvalid: '历史跳转参数无效，请手动选择时间与点位。',
     pointBookReport: '点表导入结果', pointBookFile: '文件', pointBookCompleted: '导入已完成', pointBookRejected: '导入未完成', pointBookUncertain: '导入结果待核实', pointBookCounts: '{g} 个分组 · {r} 个点位', pointBookWarnings: '需要核对的提示', pointBookErrors: '错误详情', pointBookUncertainHint: '请求或返回异常，配置可能已更新。请核对当前配置后再决定是否重新导入。', pointBookInvalidReport: '服务端返回的导入结果格式无效。',
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
@@ -124,6 +126,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    histNavigationWaiting: 'Waiting for point definitions to locate #{id}. Use the retry control above if loading fails.', histNavigationMissing: 'Point #{id} was not found in the loaded definitions. Refresh configuration and reopen the reference, or select a point.', histNavigationInvalid: 'Invalid history navigation parameters. Select the time range and points manually.',
     pointBookReport: 'Point table import result', pointBookFile: 'File', pointBookCompleted: 'Import completed', pointBookRejected: 'Import not completed', pointBookUncertain: 'Import outcome unconfirmed', pointBookCounts: '{g} groups · {r} points', pointBookWarnings: 'Items to review', pointBookErrors: 'Error details', pointBookUncertainHint: 'The request or response failed; configuration may have changed. Check the current configuration before deciding to import again.', pointBookInvalidReport: 'The server returned an invalid import report.',
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
@@ -421,7 +424,8 @@ export default function App() {
   const [deviceConnected, setDeviceConnected] = useState<Record<number, boolean>>({})
   const [view, setView] = useState<'monitor' | 'database'>('monitor')
   const [dataTarget, setDataTarget] = useState<DataTarget | null>(null)
-  const navigateData = (target: DataTarget) => { setSelectedId(target.deviceId); setView('monitor'); setDataTarget({ ...target, token: Date.now() }) }
+  const navigationSequence = useRef(0)
+  const navigateData = (target: DataTarget) => { setSelectedId(target.deviceId); setView('monitor'); setDataTarget({ ...target, token: ++navigationSequence.current }) }
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const operation = useOperation(t)
@@ -674,7 +678,7 @@ export default function App() {
                   }}
                   onPointerCancel={() => { setDraggedDevice(null); setDropTarget(null) }}
                   onLostPointerCapture={() => { setDraggedDevice(null); setDropTarget(null) }}>⠿</span>}
-                <button className="device-select" aria-current={selectedId === d.id ? 'page' : undefined} onClick={() => { setSelectedId(d.id); setView('monitor'); if (window.innerWidth <= 768) setCollapsed(true) }}>
+                <button className="device-select" aria-current={selectedId === d.id ? 'page' : undefined} onClick={() => { setDataTarget(null); setSelectedId(d.id); setView('monitor'); if (window.innerWidth <= 768) setCollapsed(true) }}>
                   <span className={'device-dot' + (deviceConnected[d.id] === true ? ' on' : '')} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="device-name">{d.name}</div>
@@ -710,7 +714,7 @@ export default function App() {
         {view === 'database'
           ? <DatabaseView t={t} devices={devices} />
           : (selected
-              ? <DeviceView target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+              ? <DeviceView configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
               : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
       </main>
 
@@ -806,8 +810,8 @@ function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
   )
 }
 
-function DeviceView({ target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
-  target: DataTarget | null; t: T; device: Device; connected: boolean; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
+function DeviceView({ configurationReady, target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
+  configurationReady: boolean; target: DataTarget | null; t: T; device: Device; connected: boolean; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
   realtime: { status: RealtimeStatus; attempt: number }
   fallbackOk?: boolean
   busy: boolean; onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields) => Promise<void>; onDelete: (id: number) => void; onRefresh: (id: number) => void
@@ -843,7 +847,7 @@ function DeviceView({ target, t, device, connected, groups, latest, groupErrors,
       <TabBar tabs={[t('tabLive'), t('liveCurve'), t('tabHistory'), t('tabRaw'), ...(device.mode === 'slave' ? [] : [t('tabFirmware')])]} active={tab} onChange={setTab} />
       <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
-      {tab === 2 && <HistoryView target={target} t={t} device={device} groups={groups} registers={registers} />}
+      {tab === 2 && <HistoryView configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
       <div hidden={tab !== 1}><LiveCurve active={tab === 1} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
@@ -1182,7 +1186,7 @@ function deriveHistoryRows(pts: HistoryPoint[], registers: Register[], selectedR
   })
 }
 
-function HistoryView({ target, t, device, groups, registers }: { target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
+function HistoryView({ configurationReady, target, t, device, groups, registers }: { configurationReady: boolean; target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
   const localInput = (date: Date) => toLocalInput(date) + ':' + String(date.getSeconds()).padStart(2, '0')
   const [mode, setMode] = useState<'table' | 'chart'>('table')
   const [valueMode, setValueMode] = useValueMode('ps-history-value-mode-' + device.id)
@@ -1197,11 +1201,25 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
   const queryTask = useRef<HistoryQueryTask | null>(null)
   const [exportRequest, setExportRequest] = useState<HistoryExportRequest | null>(null)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
+  const navigation = useRef<HistoryNavigation>()
+  if (!navigation.current) navigation.current = new HistoryNavigation()
+  const [navigationRevision, setNavigationRevision] = useState(0)
+  const [navigationNotice, setNavigationNotice] = useState<{ kind: 'waiting' | 'missing' | 'invalid'; id?: number } | null>(null)
   useEffect(() => {
-    if (target?.view !== 'history' || !target.start || !target.end) return
-    setRange({ start: localInput(new Date(target.start)), end: localInput(new Date(target.end)) }); setPreset(null); setPage(0); setMode('chart')
-    if (target.registerId && registers.some(r => r.id === target.registerId)) setSelected(new Set([target.registerId]))
-  }, [target?.token, registers])
+    const action = navigation.current!.consume(target, device.id, registers.map(r => r.id), configurationReady)
+    if (!target || target.view !== 'history') setNavigationNotice(null)
+    if (!action) return
+    if (action.invalid) { setNavigationNotice({ kind: 'invalid' }); setSelected(new Set()); return }
+    if (action.range) {
+      setRange({ start: localInput(new Date(action.range.start)), end: localInput(new Date(action.range.end)) })
+      setPreset(null); setPage(0); setMode('chart'); setCurveRange(null); setNavigationRevision(value => value + 1); setRefresh(value => value + 1); setNavigationNotice(null)
+    }
+    if (action.focus) {
+      setSelected(action.focus.state === 'found' ? new Set([action.focus.id]) : new Set())
+      setNavigationNotice(action.focus.state === 'found' ? null : { kind: action.focus.state, id: action.focus.id })
+    }
+  }, [target, device.id, registers, configurationReady])
+  const cancelNavigation = () => { navigation.current!.cancelPending(); setNavigationNotice(null) }
   const selectedRegisters = registers.filter(r => selected.has(r.id))
   const pointLabels = useMemo(() => buildPointLabels(registers, groups, t, device.mode === 'slave' ? device.slaveId : undefined), [registers, groups, t, device.mode, device.slaveId])
   const startMs = Date.parse(range.start), endMs = Date.parse(range.end)
@@ -1246,12 +1264,13 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     <div className="toolbar">
       <div className="seg"><button className={mode === 'table' ? 'selected' : ''} onClick={() => { setMode('table'); setPage(0) }}>{t('histTable')}</button><button className={mode === 'chart' ? 'selected' : ''} onClick={() => { setMode('chart'); setPage(0) }}>{t('tabCurve')}</button></div>
       <ValueModeControl t={t} value={valueMode} onChange={setValueMode} />
-      <RegisterSelectButton t={t} groups={groups} deviceSlaveId={device.mode === 'slave' ? device.slaveId : undefined} selected={selected} onApply={setSelected} />
+      <RegisterSelectButton t={t} groups={groups} deviceSlaveId={device.mode === 'slave' ? device.slaveId : undefined} selected={selected} onApply={ids => { cancelNavigation(); setSelected(ids) }} />
       <div style={{ flex: 1 }} />
       <button className="btn" disabled={!valid || selected.size === 0 || currentStatus === 'loading'} onClick={() => beginExport('full')}>{t('histExportFull')}</button>
       {mode === 'chart' && <button className="btn" disabled={!valid || selected.size === 0 || !curveRange || currentStatus !== 'done'} onClick={() => beginExport('viewport')}>{t('histExportViewport')}</button>}
     </div>
     <p className="chart-hint" role="note">{t('histIntegrityHint')}</p>
+    {navigationNotice && <p className={'chart-hint' + (navigationNotice.kind !== 'waiting' ? ' warn' : '')} role={navigationNotice.kind === 'waiting' ? 'status' : 'alert'}>{t(navigationNotice.kind === 'waiting' ? 'histNavigationWaiting' : navigationNotice.kind === 'missing' ? 'histNavigationMissing' : 'histNavigationInvalid').replace('{id}', String(navigationNotice.id ?? ''))}</p>}
     {valueMode === 'physical' && <p className="chart-hint">{t('physicalHistoryHint')}</p>}
     <div className="hist-quick history-presets">
       {[5, 30, 60, 360, 1440, 0].map(minutes => <button key={minutes} className={'btn' + (preset === minutes ? ' selected' : '')} onClick={() => applyPreset(minutes)}>{minutes === 0 ? t('histToday') : minutes < 60 ? t('histMinutes').replace('{n}', String(minutes)) : t('histHours').replace('{n}', String(minutes / 60))}</button>)}
@@ -1259,12 +1278,12 @@ function HistoryView({ target, t, device, groups, registers }: { target: DataTar
     <div className="toolbar history-range">
       <label className="hist-label">{t('histStart')}<input className="hist-input" type="datetime-local" step="1" value={range.start} onChange={e => { setPreset(null); changeRange(e.target.value, range.end) }} /></label>
       <label className="hist-label">{t('histEnd')}<input className="hist-input" type="datetime-local" step="1" value={range.end} onChange={e => { setPreset(null); changeRange(range.start, e.target.value) }} /></label>
-      <button className="btn primary" disabled={!plan || currentStatus === 'loading'} onClick={() => setRefresh(v => v + 1)}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
-      {currentStatus === 'loading' && <button className="btn" onClick={() => queryTask.current?.cancel()}>{t('histCancel')}</button>}
+      <button className="btn primary" disabled={!plan || currentStatus === 'loading'} onClick={() => { cancelNavigation(); setRefresh(v => v + 1) }}>{t(currentStatus === 'loading' ? 'histLoading' : 'histQuery')}</button>
+      {currentStatus === 'loading' && <button className="btn" onClick={() => { cancelNavigation(); queryTask.current?.cancel() }}>{t('histCancel')}</button>}
     </div>
     {mode === 'chart' && currentStatus === 'done' && data?.sourceSamples !== undefined && <p className="chart-hint" role="status">{t('histCoverage').replace('{source}', String(data.sourceSamples)).replace('{shown}', String(data.displayedSamples))} · {t(data.downsampled ? 'histSampled' : 'histOriginal')}</p>}
     {valid && mode === 'chart' && currentStatus === 'done' && data?.series && <HistoryQualitySummary series={data.series} registers={registers} pointLabels={pointLabels} t={t} />}
-    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody pointLabels={pointLabels} sourceSeries={data?.series} onViewportChange={setCurveRange} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>
+    {!valid ? <div className="hist-empty warn">{t('histRangeInvalid')}</div> : mode === 'chart' ? <ChartBody key={navigationRevision} pointLabels={pointLabels} sourceSeries={data?.series} onViewportChange={view => { cancelNavigation(); setCurveRange(view) }} valueMode={valueMode} t={t} registers={registers} selected={selected} pts={data?.points ?? []} status={currentStatus} error={errorText} range={{ start: startMs, end: endMs }} /> : <>
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
       <HistoryTableBody pointLabels={pointLabels} t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={errorText} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
     </>}
