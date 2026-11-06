@@ -5,7 +5,7 @@ import { localTs, areaForFunction, registerWidth, type ModbusArea, type ModbusFu
 import { CurveSampler } from './curve-sampling.ts'
 import { ensurePollDataSchema } from './schema.ts'
 import { decodeHistoricalSample } from '../../core/src/history-integrity.ts'
-import { HISTORY_EXPORT_RAW_LIMIT } from '../../core/src/history-export-policy.ts'
+import { HISTORY_EXPORT_RAW_LIMIT, type HistoryExportReadRange } from '../../core/src/history-export-policy.ts'
 
 function rawTimestampMs(value: unknown): number {
   const text = String(value)
@@ -258,21 +258,30 @@ export class DuckDBStore {
   }
 
   /** Export-only lookahead. Ordinary raw-query limits remain unchanged. */
-  async queryObjectForExport(objectId: number, start: string, end: string) {
-    return this.readObjectRows(objectId, start, end, HISTORY_EXPORT_RAW_LIMIT + 1)
+  async queryObjectForExport(objectId: number, start: string, end: string, ranges?: readonly HistoryExportReadRange[]) {
+    if (ranges?.length === 0) return []
+    return this.readObjectRows(objectId, start, end, HISTORY_EXPORT_RAW_LIMIT + 1, ranges)
   }
 
-  private async readObjectRows(objectId: number, start: string, end: string, limit: number): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>> {
+  private async readObjectRows(objectId: number, start: string, end: string, limit: number, ranges?: readonly HistoryExportReadRange[]): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>> {
     await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
     const endUtc = this.normalizeToUtc(end)
+    const params: Record<string, string | number> = { objectId, start: startUtc, end: endUtc, limit }
+    const scopes = ranges?.map((range, i) => {
+      params[`exportArea${i}`] = range.area; params[`exportStart${i}`] = range.startAddress; params[`exportEnd${i}`] = range.endAddress
+      return `($exportArea${i}, $exportStart${i}, $exportEnd${i})`
+    })
+    const selected = scopes?.length ? `AND EXISTS (SELECT 1 FROM (VALUES ${scopes.join(',')}) AS export_scope(area, lo, hi)
+      WHERE export_scope.area = poll_data.area AND poll_data.address BETWEEN export_scope.lo AND export_scope.hi)` : ''
     const reader = await conn.runAndReadAll(
       `SELECT ts, area, address, raw_value, quality, batch_id FROM poll_data
        WHERE object_id = $objectId AND ts >= $start AND ts <= $end
+       ${selected}
        ORDER BY ts
        LIMIT $limit`,
-      { objectId, start: startUtc, end: endUtc, limit },
+      params,
     )
     const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
     return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))

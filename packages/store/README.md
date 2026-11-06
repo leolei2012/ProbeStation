@@ -92,4 +92,6 @@ const rows = await ctx.store.query(9, 470, '2026-01-01T00:00:00Z', '2026-12-31T2
 
 ## 历史导出上限判断（2026-11-06）
 
-普通 `queryObject()` 仍最多返回 200000 条。新增 `queryObjectForExport()` 仅供导出，使用同一参数绑定查询和原始字段映射，最多返回 200001 条；sink 若观察到第 200001 条即拒绝生成文件，恰好 200000 条可完整导出。上限按设备全部原始字行计算，未改变批次身份、采样、迁移或历史显示策略。边界回归：`node node_modules/tsx/dist/cli.mjs scripts/test-export-limit.ts`，仅内存库。
+普通 `queryObject()` 仍最多返回 200000 条。新增 `queryObjectForExport()` 仅供导出，使用同一参数绑定查询和原始字段映射，最多返回 200001 条；sink 若观察到第 200001 条即拒绝生成文件，恰好 200000 条可完整导出。可选 ranges 按数据区/地址限定所需原始字，在 LIMIT 前筛选；不提供 ranges 保持旧的全设备查询，空 ranges 返回空结果。范围值全部绑定，EXISTS 不会重复返回重叠范围的原始行。未改变批次身份、采样、迁移或历史显示策略。边界回归：`node node_modules/tsx/dist/cli.mjs scripts/test-export-limit.ts`，仅内存库。
+
+按点位导出时，sink 使用 dtype 的完整字宽生成 ranges；未选地址不会占用 20 万行上限。回归：`node node_modules/tsx/dist/cli.mjs scripts/test-export-selection.ts`。现存多 Slave 同地址来源区分仍未持久化。

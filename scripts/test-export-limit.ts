@@ -9,8 +9,9 @@ import { captureHistoryExport, fetchHistoryExport } from '../apps/web/src/histor
 
 const point = { ts: '2026-11-06 00:00:00', timestampMs: Date.parse('2026-11-06T00:00:00Z'), objectId: 1, area: 'holding-register', address: 0, rawValue: 7, quality: 'good', batchId: 'A' }
 const rows = Array.from({ length: HISTORY_EXPORT_RAW_LIMIT + 1 }, () => point)
+const limitRegister = { id: 1, startAddress: 0, functionCode: 3, dataType: 'uint16', alias: 'limit-test' }
 let rawCount = rows.length, ordinaryQueries = 0
-const sink = new Sink({ config: { listRegistersByObject: () => [] }, store: {
+const sink = new Sink({ config: { listRegistersByObject: () => [limitRegister] }, store: {
   queryObject: async () => { ordinaryQueries++; return rows.slice(0, HISTORY_EXPORT_RAW_LIMIT) },
   queryObjectForExport: async () => rows.slice(0, rawCount),
 } })
@@ -63,7 +64,7 @@ try {
     assert.equal(result.at(-1)!.area, 'holding-register')
   }
   assert.equal((await store.queryObject(1, start, new Date(base + HISTORY_EXPORT_RAW_LIMIT).toISOString(), HISTORY_EXPORT_RAW_LIMIT + 1)).length, HISTORY_EXPORT_RAW_LIMIT, 'ordinary API raw-query cap remains unchanged')
-  const realSink = new Sink({ config: { listRegistersByObject: () => [] }, store })
+  const realSink = new Sink({ config: { listRegistersByObject: () => [limitRegister] }, store })
   await assert.rejects(realSink.exportCsv(1, start, new Date(base + HISTORY_EXPORT_RAW_LIMIT).toISOString()), HistoryExportLimitError)
 } finally {
   await (store as any).mutations

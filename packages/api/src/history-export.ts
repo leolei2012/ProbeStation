@@ -15,7 +15,7 @@ export function registerHistoryExport(app: FastifyInstance, sink: Pick<Sink, 'ex
       return result
     } catch (error) {
       if (!(error instanceof HistoryExportLimitError)) throw error
-      return reply.code(413).send({ code: error.code, limit: error.limit, error: `时间范围超过 ${error.limit} 条原始行，导出会被截断，已停止生成文件。请缩小时间范围后重试。` })
+      return reply.code(413).send({ code: error.code, limit: error.limit, error: `所选点位超过 ${error.limit} 条所需原始行，导出会被截断，已停止生成文件。请减少点位或缩小时间范围后重试。` })
     }
   })
 }

@@ -48,8 +48,8 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
-    histExportTooLarge: '超过 {n} 条原始行，导出会被截断，已停止生成文件。请取消并缩小时间范围后重试。', histExportPreparing: '正在生成完整导出，可取消…', histExportTimeout: '导出超过 30 秒，已取消等待。请缩小时间范围后重试。',
-    histExportFull: '导出完整时间范围', histExportViewport: '导出当前缩放区间', histExportSelected: '{n} 个已选点位 · 原始历史（含批次状态）', histExportHint: '按所示时间范围导出，不受图例显隐、Y 轴范围或降采样影响。每次最多 20 万条设备原始采样行；超过时停止生成文件，请缩小范围。上限不是导出表格的行数。',
+    histExportTooLarge: '超过 {n} 条原始行，导出会被截断，已停止生成文件。请取消并减少点位或缩小时间范围后重试。', histExportPreparing: '正在生成完整导出，可取消…', histExportTimeout: '导出超过 30 秒，已取消等待。请缩小时间范围后重试。',
+    histExportFull: '导出完整时间范围', histExportViewport: '导出当前缩放区间', histExportSelected: '{n} 个已选点位 · 原始历史（含批次状态）', histExportHint: '按所示时间范围导出，不受图例显隐、Y 轴范围或降采样影响。只读取已选点位所需的数据区和原始字，每次最多 20 万条；超过时请减少点位或缩小时间范围。上限不是导出表格的行数。',
     histCancel: '取消查询', histCancelled: '查询已取消，可点击“查询”重新加载。', histTimeout: '查询超过 30 秒，请缩小时间范围后重试。',
     histCoverage: '当前视窗完整区间：{source} 个采样，显示 {shown} 个读数', histSampled: '峰谷保留降采样，放大自动加载细节', histOriginal: '原始采样',
     alarmDelete: '删除', alarmClose: '关闭',
@@ -114,8 +114,8 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
-    histExportTooLarge: 'More than {n} raw rows: exporting would truncate the data, so no file was generated. Cancel, narrow the time range and retry.', histExportPreparing: 'Preparing a complete export. You can cancel…', histExportTimeout: 'Export exceeded 30 seconds. Narrow the time range and retry.',
-    histExportFull: 'Export full time range', histExportViewport: 'Export zoomed time range', histExportSelected: '{n} selected points · Raw history with batch status', histExportHint: 'Export the stated time range regardless of legend visibility, Y-axis limits or downsampling. Up to 200,000 device raw sample rows. Larger requests generate no file; narrow the range. This is not the number of spreadsheet rows.',
+    histExportTooLarge: 'More than {n} raw rows: exporting would truncate the data, so no file was generated. Cancel, select fewer points or narrow the time range and retry.', histExportPreparing: 'Preparing a complete export. You can cancel…', histExportTimeout: 'Export exceeded 30 seconds. Narrow the time range and retry.',
+    histExportFull: 'Export full time range', histExportViewport: 'Export zoomed time range', histExportSelected: '{n} selected points · Raw history with batch status', histExportHint: 'Export the stated time range regardless of legend visibility, Y-axis limits or downsampling. Read only the raw words required by selected points, up to 200,000 rows. Select fewer points or narrow the range if exceeded. This is not the number of spreadsheet rows.',
     histCancel: 'Cancel query', histCancelled: 'Query cancelled. Click Query to reload.', histTimeout: 'Query exceeded 30 seconds. Narrow the time range and retry.',
     histCoverage: 'Full visible range: {source} samples, {shown} displayed', histSampled: 'Extrema preserved; zoom reloads detail', histOriginal: 'Original samples',
     alarmDelete: 'Delete', alarmClose: 'Close',
