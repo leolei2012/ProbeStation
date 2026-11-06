@@ -4,6 +4,7 @@ import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 import { localTs, areaForFunction, registerWidth, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
 import { CurveSampler } from './curve-sampling.ts'
 import { ensurePollDataSchema } from './schema.ts'
+import { sourceKey, validSlaveId } from '../../core/src/sample-source.ts'
 import { decodeHistoricalSample } from '../../core/src/history-integrity.ts'
 import { HISTORY_EXPORT_RAW_LIMIT, type HistoryExportReadRange } from '../../core/src/history-export-policy.ts'
 
@@ -42,6 +43,7 @@ export interface PollPoint {
   rawValue: number
   quality: string
   batchId?: string | null
+  slaveId?: number | null
 }
 
 /**
@@ -53,7 +55,8 @@ export class DuckDBStore {
   private ready: Promise<DuckDBConnection>
   private instance: DuckDBInstance | null = null
   private buffer: PollPoint[] = []
-  private readonly latest = new Map<string, { rawValue: number; quality: string; timestamp: string; batchId?: string | null }>()
+  private readonly latest = new Map<string, { rawValue: number; quality: string; timestamp: string; batchId?: string | null; slaveId?: number | null }>()
+  private readonly sources = new Map<string, Set<number | null>>()
   private flushTimer: NodeJS.Timeout | null = null
   private retentionTimer: NodeJS.Timeout | null = null
   private dbPath: string
@@ -117,7 +120,7 @@ export class DuckDBStore {
       old.closeSync()
       this.instance?.closeSync()
       this.instance = null
-      this.latest.clear()
+      this.latest.clear(); this.sources.clear()
       this.dbPath = dbPath
       this.initError = this.persistenceError = null
       this.ready = this.init()
@@ -131,13 +134,20 @@ export class DuckDBStore {
     if (this.switching) throw new Error('Store is reopening')
     if (this.initError) throw this.initError
     for (const p of points) {
+      if (p.slaveId != null && !validSlaveId(p.slaveId)) throw new Error('PollPoint.slaveId must be an integer byte or null')
       if (!p.area) throw new Error('PollPoint.area is required')
       if (p.batchId != null && typeof p.batchId !== 'string') throw new Error('PollPoint.batchId must be a string or null')
     }
     for (const p of points) {
       const area = p.area
       this.buffer.push({ ...p })
-      this.latest.set(`${p.objectId}:${area}:${p.address}`, { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp, ...(p.batchId !== undefined ? { batchId: p.batchId } : {}) })
+      const key = `${p.objectId}:${area}:${p.address}`, slaveId = p.slaveId ?? null
+      const value = { rawValue: p.rawValue, quality: p.quality, timestamp: p.timestamp, ...(p.batchId !== undefined ? { batchId: p.batchId } : {}), slaveId }
+      this.latest.set(sourceKey(p.objectId, area, p.address, slaveId), value)
+      const sources = this.sources.get(key) ?? new Set<number | null>()
+      sources.add(slaveId); this.sources.set(key, sources)
+      if (sources.size === 1) this.latest.set(key, value)
+      else this.latest.delete(key)
     }
     if (this.buffer.length >= this.config.flushBatchSize) this.background(this.flush())
   }
@@ -158,10 +168,10 @@ export class DuckDBStore {
           for (let offset = 0; offset < batch.length; offset += 500) {
             const values: Array<string | number | null> = []
             const rows = batch.slice(offset, offset + 500).map(p => {
-              values.push(p.objectId, p.area, p.address, p.timestamp, p.rawValue, p.quality, p.batchId ?? null)
-              return '(?, ?, ?, CAST(? AS TIMESTAMP), ?, ?, ?)'
+              values.push(p.objectId, p.area, p.address, p.timestamp, p.rawValue, p.quality, p.batchId ?? null, p.slaveId ?? null)
+              return '(?, ?, ?, CAST(? AS TIMESTAMP), ?, ?, ?, ?)'
             })
-            await conn.run(`INSERT INTO poll_data (object_id, area, address, ts, raw_value, quality, batch_id) VALUES ${rows.join(',')}`, values)
+            await conn.run(`INSERT INTO poll_data (object_id, area, address, ts, raw_value, quality, batch_id, slave_id) VALUES ${rows.join(',')}`, values)
           }
           await conn.run('COMMIT')
         } catch (error) {
@@ -252,7 +262,7 @@ export class DuckDBStore {
 
   async queryObject(
     objectId: number, start: string, end: string, limit?: number,
-  ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>> {
+  ): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>> {
     const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
     return this.readObjectRows(objectId, start, end, limitClamped)
   }
@@ -263,7 +273,7 @@ export class DuckDBStore {
     return this.readObjectRows(objectId, start, end, HISTORY_EXPORT_RAW_LIMIT + 1, ranges)
   }
 
-  private async readObjectRows(objectId: number, start: string, end: string, limit: number, ranges?: readonly HistoryExportReadRange[]): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>> {
+  private async readObjectRows(objectId: number, start: string, end: string, limit: number, ranges?: readonly HistoryExportReadRange[]): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>> {
     await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
@@ -276,28 +286,28 @@ export class DuckDBStore {
     const selected = scopes?.length ? `AND EXISTS (SELECT 1 FROM (VALUES ${scopes.join(',')}) AS export_scope(area, lo, hi)
       WHERE export_scope.area = poll_data.area AND poll_data.address BETWEEN export_scope.lo AND export_scope.hi)` : ''
     const reader = await conn.runAndReadAll(
-      `SELECT ts, area, address, raw_value, quality, batch_id FROM poll_data
+      `SELECT ts, area, address, raw_value, quality, batch_id, slave_id FROM poll_data
        WHERE object_id = $objectId AND ts >= $start AND ts <= $end
        ${selected}
        ORDER BY ts
        LIMIT $limit`,
       params,
     )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
-    return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
+    return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }))
   }
 
   /** 全局快照键统一为 objectId:area:address。timestamp 输出为服务器本地时间。 */
-  getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> {
-    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> = {}
+  getLatest(): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null; slaveId?: number | null }> {
+    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null; slaveId?: number | null }> = {}
     for (const [k, v] of this.latest) out[k] = { ...v, timestamp: localTs(v.timestamp), timestampMs: Date.parse(v.timestamp) }
     return out
   }
 
   /** 单设备、单数据区的最新快照（按地址键控）。timestamp 输出为服务器本地时间。 */
-  getLatestByObject(objectId: number, area: ModbusArea): Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> {
-    const out: Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> = {}
-    const prefix = `${objectId}:${area}:`
+  getLatestByObject(objectId: number, area: ModbusArea, slaveId?: number): Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null; slaveId?: number | null }> {
+    const out: Record<number, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null; slaveId?: number | null }> = {}
+    const prefix = slaveId === undefined ? `${objectId}:${area}:` : `${objectId}:slave:${slaveId}:${area}:`
     for (const [k, v] of this.latest) {
       if (k.startsWith(prefix)) out[Number(k.slice(prefix.length))] = { ...v, timestamp: localTs(v.timestamp), timestampMs: Date.parse(v.timestamp) }
     }
@@ -305,8 +315,8 @@ export class DuckDBStore {
   }
 
   /** 单设备四数据区快照，键统一为 area:address。timestamp 输出为服务器本地时间。 */
-  getLatestByObjectAll(objectId: number): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> {
-    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null }> = {}
+  getLatestByObjectAll(objectId: number): Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null; slaveId?: number | null }> {
+    const out: Record<string, { rawValue: number; quality: string; timestamp: string; timestampMs?: number; batchId?: string | null; slaveId?: number | null }> = {}
     const prefix = objectId + ':'
     for (const [k, v] of this.latest) {
       if (!k.startsWith(prefix)) continue
@@ -323,7 +333,7 @@ export class DuckDBStore {
    */
   async queryObjectPage(
     objectId: number, start: string, end: string, page = 0, pageSize = 200,
-  ): Promise<{ points: Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>; total: number; page: number; pageSize: number; hasMore: boolean }> {
+  ): Promise<{ points: Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>; total: number; page: number; pageSize: number; hasMore: boolean }> {
     await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
@@ -354,18 +364,18 @@ export class DuckDBStore {
 
     // 3) 取该页时间戳对应的全部原始点
     const ptsReader = await conn.runAndReadAll(
-      `SELECT ts, area, address, raw_value, quality, batch_id FROM poll_data
+      `SELECT ts, area, address, raw_value, quality, batch_id, slave_id FROM poll_data
        WHERE object_id = $objectId AND ts >= $lo AND ts <= $hi
        ORDER BY ts ASC, address ASC`,
       { objectId, lo: pageTs[0], hi: pageTs[pageTs.length - 1] },
     )
-    const rows = ptsReader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
+    const rows = ptsReader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
     const points = rows.map(r => ({
       ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts),
       area: String(r.area ?? 'holding-register') as ModbusArea,
       address: Number(r.address),
       rawValue: Number(r.raw_value),
-      quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id),
+      quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id),
     }))
     return { points, total, page: p, pageSize: size, hasMore: p * size + pageTs.length < total }
   }
@@ -373,27 +383,27 @@ export class DuckDBStore {
   /** Query the cold tier for a single address over a time range. */
   async query(
     objectId: number, address: number, start: string, end: string, area: ModbusArea, limit?: number,
-  ): Promise<Array<{ ts: string; rawValue: number; quality: string; batchId: string | null; timestampMs: number }>> {
+  ): Promise<Array<{ ts: string; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>> {
     await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
     const endUtc = this.normalizeToUtc(end)
     const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
     const reader = await conn.runAndReadAll(
-      `SELECT ts, raw_value, quality, batch_id FROM poll_data
+      `SELECT ts, raw_value, quality, batch_id, slave_id FROM poll_data
        WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
        ORDER BY ts
        LIMIT $limit`,
       { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped },
     )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
-    return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }))
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
+    return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }))
   }
 
   /** 单地址查询 + offset 分页（升序，最早的在前），供 MCP 等需要翻完整大时间范围的场景。 */
   async queryWithOffset(
     objectId: number, address: number, start: string, end: string, area: ModbusArea, limit: number, offset = 0,
-  ): Promise<Array<{ ts: string; rawValue: number; quality: string; timestampMs: number; batchId: string | null }>> {
+  ): Promise<Array<{ ts: string; rawValue: number; quality: string; timestampMs: number; batchId: string | null; slaveId: number | null }>> {
     await this.mutations
     const conn = await this.ready
     const startUtc = this.normalizeToUtc(start)
@@ -401,17 +411,17 @@ export class DuckDBStore {
     const limitClamped = Math.max(1, Math.min(200000, Math.trunc(limit)))
     const off = Math.max(0, Math.trunc(offset) || 0)
     const reader = await conn.runAndReadAll(
-      `SELECT ts, raw_value, quality, batch_id FROM poll_data
+      `SELECT ts, raw_value, quality, batch_id, slave_id FROM poll_data
        WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
        ORDER BY ts
        LIMIT $limit OFFSET $off`,
       { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped, off },
     )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown }>
+    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
     return rows.map(r => {
       const timestamp = String(r.ts)
       const utc = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(timestamp) ? timestamp : timestamp + 'Z'
-      return { ts: localTs(timestamp), timestampMs: Date.parse(utc), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), batchId: r.batch_id == null ? null : String(r.batch_id) }
+      return { ts: localTs(timestamp), timestampMs: Date.parse(utc), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }
     })
   }
 

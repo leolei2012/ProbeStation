@@ -6,7 +6,7 @@ export async function ensurePollDataSchema(conn: DuckDBConnection): Promise<void
   try {
     await conn.run(`CREATE TABLE IF NOT EXISTS poll_data (
       object_id INTEGER, area VARCHAR DEFAULT 'holding-register', address INTEGER,
-      ts TIMESTAMP, raw_value DOUBLE, quality VARCHAR, batch_id VARCHAR
+      ts TIMESTAMP, raw_value DOUBLE, quality VARCHAR, batch_id VARCHAR, slave_id INTEGER
     )`)
     const columns = async () => (await conn.runAndReadAll("PRAGMA table_info('poll_data')")).getRowObjects()
     let cols = await columns()
@@ -15,12 +15,14 @@ export async function ensurePollDataSchema(conn: DuckDBConnection): Promise<void
     if (!has('address') && has('register_id')) await conn.run('ALTER TABLE poll_data RENAME COLUMN register_id TO address')
     if (!has('area')) await conn.run("ALTER TABLE poll_data ADD COLUMN area VARCHAR DEFAULT 'holding-register'")
     if (!has('batch_id')) await conn.run('ALTER TABLE poll_data ADD COLUMN batch_id VARCHAR')
+    if (!has('slave_id')) await conn.run('ALTER TABLE poll_data ADD COLUMN slave_id INTEGER')
     cols = await columns()
-    const expected = { object_id: 'INTEGER', area: 'VARCHAR', address: 'INTEGER', ts: 'TIMESTAMP', raw_value: 'DOUBLE', quality: 'VARCHAR', batch_id: 'VARCHAR' }
+    const expected = { object_id: 'INTEGER', area: 'VARCHAR', address: 'INTEGER', ts: 'TIMESTAMP', raw_value: 'DOUBLE', quality: 'VARCHAR', batch_id: 'VARCHAR', slave_id: 'INTEGER' }
     for (const [name, type] of Object.entries(expected)) {
       const col = cols.find(c => c.name === name)
       if (!col || col.type !== type) throw new Error(`poll_data.${name} must be ${type}; found ${col?.type ?? 'missing'}`)
       if (name === 'batch_id' && (col.notnull || col.dflt_value != null)) throw new Error('poll_data.batch_id must be nullable without a default')
+      if (name === 'slave_id' && (col.notnull || col.dflt_value != null)) throw new Error('poll_data.slave_id must be nullable without a default')
     }
     await conn.run('CREATE INDEX IF NOT EXISTS idx_poll_object_ts ON poll_data(object_id, ts)')
     await conn.run('COMMIT')

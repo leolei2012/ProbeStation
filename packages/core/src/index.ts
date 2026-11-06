@@ -27,6 +27,7 @@ export * from './protocol.ts'
 export * from './points.ts'
 export * from './paths.ts'
 export * from './sample-batch.ts'
+export * from './sample-source.ts'
 export * from './history-integrity.ts'
 export * from './history-export-policy.ts'
 
