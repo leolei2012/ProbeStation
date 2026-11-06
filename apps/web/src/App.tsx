@@ -75,6 +75,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     histCancel: '取消查询', histCancelled: '查询已取消，可点击“查询”重新加载。', histTimeout: '查询超过 30 秒，请缩小时间范围后重试。',
     histCoverage: '当前视窗完整区间：{source} 个采样，显示 {shown} 个读数', histSampled: '峰谷保留降采样，放大自动加载细节', histOriginal: '原始采样',
     alarmDelete: '删除', alarmClose: '关闭',
+    alarmRulesReading: '正在读取规则', alarmRulesUnverified: '规则待核实', alarmRetainedRules: '以下按上次读取规则计算，供核对；不代表当前完整告警状态。', alarmWriteVerify: '保存/删除结果需核实。请先重新读取规则并核对，避免重复操作；重新读取不会重复保存或删除。',
     alarmLabel: '告警', alarmRules: '告警规则', alarmActive: '{n} 项触发', alarmNormal: '未触发', alarmWaiting: '等待有效数据', alarmNone: '未设置规则', alarmTriggered: '条件触发', alarmUnknown: '{n} 项规则暂无有效数据，设备暂停、通信异常或数据过期时不判断告警。', alarmLoadError: '告警规则加载失败', alarmHelp: '按点位类型解码后的原始值比较，不应用系数、偏移或显示舍入。条件命中时持续提示，恢复后自动消除；同一次持续告警只记录一条日志。', alarmInvalid: '请选择点位，并填写有效的原始值阈值。', alarmAdd: '新增规则', alarmEdit: '编辑规则', alarmPoint: '告警点位', alarmChoose: '选择点位', alarmOperator: '比较条件', alarmThreshold: '原始值阈值', alarmMessage: '告警提示（可选）', alarmMessageHint: '例如：温度过高，请检查散热', alarmCancelEdit: '取消编辑', alarmConfirmDelete: '删除这条告警规则？',
     displayValueMode: '数值显示模式', pointDecimals: '物理值小数位数', pointDecimalsAuto: '自动', displayColumns: '显示列', displayColumnsHint: '原始值与物理值共用一列，至少保留一种数值。设置保存在当前浏览器。', displayColumnsConfigHint: '配置模式保留点位设置列，类型在点位设置中修改。原始值在上、物理值在下。', displayColumnsCompact: '精简显示', displayColumnsAll: '显示全部', livePhysicalHint: '按原始解码值 × 系数 + 偏移绘制，不因小数位数设置舍入曲线；悬停读数显示工程单位。', mixedUnitsHint: '当前曲线包含不同工程单位，数值共用纵轴。建议分开选择点位；历史曲线也可使用相对量程比较趋势。', exportRaw: '导出原始值', physicalHistoryHint: '历史物理值按当前点位系数、偏移计算；不是采样时的配置快照。',
 
@@ -147,6 +148,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     histCancel: 'Cancel query', histCancelled: 'Query cancelled. Click Query to reload.', histTimeout: 'Query exceeded 30 seconds. Narrow the time range and retry.',
     histCoverage: 'Full visible range: {source} samples, {shown} displayed', histSampled: 'Extrema preserved; zoom reloads detail', histOriginal: 'Original samples',
     alarmDelete: 'Delete', alarmClose: 'Close',
+    alarmRulesReading: 'Reading rules', alarmRulesUnverified: 'Rules unverified', alarmRetainedRules: 'Calculated with the last rule list for review; not the complete current alarm status.', alarmWriteVerify: 'Save/delete outcome needs verification. Read the rules again and check before repeating the operation; rereading never saves or deletes.',
     alarmLabel: 'Alarms', alarmRules: 'Alarm rules', alarmActive: '{n} triggered', alarmNormal: 'Not triggered', alarmWaiting: 'Waiting for valid data', alarmNone: 'No rules configured', alarmTriggered: 'Condition triggered', alarmUnknown: '{n} rules lack valid data. Paused devices, communication faults and stale samples are not evaluated.', alarmLoadError: 'Failed to load alarm rules', alarmHelp: 'Compare decoded raw values without scaling, offsets or display rounding. Show alarms while conditions match and clear when they recover. Log once per continuous alarm.', alarmInvalid: 'Select a point and enter a finite raw threshold.', alarmAdd: 'Add rule', alarmEdit: 'Edit rule', alarmPoint: 'Point', alarmChoose: 'Select a point', alarmOperator: 'Comparison', alarmThreshold: 'Raw threshold', alarmMessage: 'Alarm message (optional)', alarmMessageHint: 'Example: Temperature too high', alarmCancelEdit: 'Cancel editing', alarmConfirmDelete: 'Delete this alarm rule?',
     displayValueMode: 'Value display mode', pointDecimals: 'Physical value decimal places', pointDecimalsAuto: 'Automatic', displayColumns: 'Columns', displayColumnsHint: 'Raw and physical values share one column. Keep at least one value type. Saved in this browser.', displayColumnsConfigHint: 'Point settings remain visible while configuring; edit the type in point settings. Raw values above physical values.', displayColumnsCompact: 'Compact view', displayColumnsAll: 'Show all', livePhysicalHint: 'Plot raw value × factor + offset at full precision. Display precision affects text only; readings include engineering units.', mixedUnitsHint: 'These series use different engineering units on a shared axis. Select them separately, or compare trends using relative ranges in history.', exportRaw: 'Export raw values', physicalHistoryHint: 'Historical physical values use the current point factor and offset, not the configuration at sampling time.',
 
@@ -886,7 +888,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
   const [settingsReg, setSettingsReg] = useState<Register | null>(null)
-  const { rules: alarmRules, ready: alarmRulesReady, error: alarmRuleError } = useAlarmRules(device.id)
+  const { rules: alarmRules, ready: alarmRulesReady, error: alarmRuleError, reading: readingAlarmRules, retry: retryAlarmRules } = useAlarmRules(device.id)
   const [alarmReg, setAlarmReg] = useState<Register | null>(null)
   const [configuring, setConfiguring] = useState(false)
   const [columns, setColumns] = useDisplayColumns(device.id)
@@ -951,7 +953,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
         <div className="seg"><button className={!configuring ? 'selected' : ''} aria-pressed={!configuring} onClick={() => setConfiguring(false)}>{t('observe')}</button><button className={configuring ? 'selected' : ''} aria-pressed={configuring} onClick={() => setConfiguring(true)}>{t('configure')}</button></div>
         <ColumnControl t={t} columns={columns} configuring={configuring} onChange={setColumns} />
       </div>
-      <LivePointFilters search={search} source={activeSource} sources={sources} mode={pointFilter} counts={filteredPoints.counts} rulesReady={alarmRulesReady} ruleError={!!alarmRuleError} onSearch={setSearch} onSource={setSourceFilter} onMode={setPointFilter} onClear={() => { setSearch(''); setSourceFilter(''); setPointFilter('all') }} english={t('cancel') === 'Cancel'} />
+      <LivePointFilters search={search} source={activeSource} sources={sources} mode={pointFilter} counts={filteredPoints.counts} rulesReady={alarmRulesReady} ruleError={!!alarmRuleError} readingRules={readingAlarmRules} onRetryRules={retryAlarmRules} onSearch={setSearch} onSource={setSourceFilter} onMode={setPointFilter} onClear={() => { setSearch(''); setSourceFilter(''); setPointFilter('all') }} english={t('cancel') === 'Cancel'} />
       {configuring && <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
         <button className="btn" disabled={operation.busy} onClick={() => bookInputRef.current?.click()}>⬆ {t('importPointBook')}</button>

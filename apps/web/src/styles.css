@@ -950,3 +950,7 @@ table.reg th, .btn { white-space: nowrap; }
 .query-memory-entry { border: 1px solid var(--border-2); border-radius: 6px; padding: 10px; min-width: 0; overflow-wrap: anywhere; }
 .query-memory-entry p { margin: 6px 0; }
 .query-memory-entry ul { padding-left: 22px; }
+.alarm-rule-read-status { padding: 10px; margin: 8px 0; border: 1px solid var(--border-2); border-radius: 6px; overflow-wrap: anywhere; }
+.alarm-rule-read-status p { margin: 4px 0; }
+.alarm-rule-read-status small { display: block; margin-top: 6px; }
+.alarm-rule-refresh { min-height: 1.5em; margin: 4px 0; font-size: 12px; color: var(--text-3); }

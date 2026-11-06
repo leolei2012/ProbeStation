@@ -105,7 +105,7 @@ assert.deepEqual([...livePointFilterResult([largeGroup], largeStates, 'id:10000'
 let actions = 0
 const render = (rulesReady = true, ruleError = false, english = false) => renderToStaticMarkup(createElement(LivePointFilters, { search: '<search>', source: '2', sources: ['1', '2', '?'], mode: 'alarm', counts: all.counts, rulesReady, ruleError, english, onSearch() { actions++ }, onSource() { actions++ }, onMode() { actions++ }, onClear() { actions++ } }))
 assert.match(render(), /已触发告警/); assert.match(render(), /&lt;search&gt;/); assert.match(render(), /aria-pressed="true"/)
-assert.match(render(false), /规则尚未载入/); assert.match(render(true, true), /数量为0不代表无告警/)
+assert.match(render(false), /规则尚未核实/); assert.match(render(true, true), /数量为0不代表无告警/)
 assert.match(render(true, false, true), /Triggered alarms/)
 assert.match(render(), /临时展开匹配分组/); assert.equal(actions, 0)
 console.log('LIVE POINT FILTER OK: fresh alarm regression, loaded-rule unknown states, source/device/area and coherent 32/64-bit checks, pause/fault/recovery, scoped counts/search/IDs, placeholders, 10000 points, immutable input and SSR; no hardware, database, API or network')
