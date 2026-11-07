@@ -1,5 +1,7 @@
 # @probebench/config
 
+日志记录类型与已有schema对齐：level/source/message可为NULL，ts仍为NOT NULL文本；只调整TypeScript声明，不修改schema、默认值、日志生成/保留或listLogs返回。消费者应保留NULL与空文本的区别，见[兼容修复](../../docs/develop/54-日志NULL字段兼容.md)。
+
 设备 / 寄存器组 / 寄存器 的**元数据存储**（配置层），基于 Node 24 内置 `node:sqlite`（同步 API）。
 提供 `ctx.config`。
 

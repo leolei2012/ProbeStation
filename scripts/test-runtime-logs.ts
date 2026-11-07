@@ -46,7 +46,7 @@ try {
 } finally { reader.cancel(); (cfg as any).db.close() }
 
 const row = { id: 2, ts: '', level: '', source: '', message: '' }
-for (const input of [null, {}, [null], [{ ...row, id: 0 }], [{ ...row, id: 1.5 }], [{ ...row, source: null }], [row, row], [{ ...row, id: 1 }, row]]) assert.throws(() => parseRuntimeLogs(input), InvalidRuntimeLogs)
+for (const input of [null, {}, [null], [{ ...row, id: 0 }], [{ ...row, id: 1.5 }], [{ ...row, source: 0 }], [row, row], [{ ...row, id: 1 }, row]]) assert.throws(() => parseRuntimeLogs(input), InvalidRuntimeLogs)
 const input = [{ ...row, privateField: 'PRIVATE' }], parsed = parseRuntimeLogs(input); input[0].message = 'changed'; assert.equal(parsed[0].message, ''); assert(!JSON.stringify(parsed).includes('PRIVATE')); assert.equal(filterRuntimeLogs(parsed, '', '').length, 1)
 const lifecycle = new RuntimeLogsRead(), old = deferred<unknown>(), next = deferred<unknown>(); let requests = 0, firstSignal: AbortSignal | undefined
 const fetch = async (_url: string, signal: AbortSignal) => { requests++; if (requests === 1) { firstSignal = signal; return old.promise }; return next.promise }

@@ -34,7 +34,7 @@ export interface DeviceRecord { id: number; name: string; ip: string; port: numb
 export interface GroupRecord { id: number; objectId: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; mode: string; isActive: number }
 export interface RegisterRecord { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; quantity: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null; decimalPlaces: number | null }
 export interface RuleRecord { id: number; registerId: number; operator: string; threshold: number; message: string | null }
-export interface LogRecord { id: number; ts: string; level: string; source: string | null; message: string | null }
+export interface LogRecord { id: number; ts: string; level: string | null; source: string | null; message: string | null }
 export interface FirmwareRecord { id: number; name: string; version: string | null; size: number; crc32: number; filePath: string | null; createdAt: string | null }
 export interface PointBookImportReport { groups: number; registers: number; errors: string[]; warnings: string[] }
 
