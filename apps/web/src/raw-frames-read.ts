@@ -34,6 +34,7 @@ export class RawFramesRead {
   subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn) } }
   private set(state: RawFramesState) { this.state = Object.freeze(state); this.listeners.forEach(fn => fn()) }
   cancel() { this.owner.cancel(); this.active = undefined; if (this.state.phase === 'loading') this.set({ ...this.state, phase: 'idle' }) }
+  invalidate() { this.cancel(); this.set({ phase: 'idle' }) }
   async refresh(get: (url: string, signal: AbortSignal) => Promise<unknown>, timeoutMs = 10000) {
     if (!this.scope || this.active) return
     const scope = this.scope, active = Symbol(); this.active = active; this.set({ ...this.state, phase: 'loading', error: undefined })

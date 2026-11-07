@@ -1,5 +1,7 @@
 # @probebench/web
 
+原始报文页用`DiagnosticsCleanupButton`和本页单例`DiagnosticsCleanupFlow`管理安全预览/一次确认；只对当前完整targetKey匹配的目标提交一次token，写不设abort或业务超时，不回退frames/clear。结果与来源不符/断线/500标未知，关闭重开保留，显式新预览才能再次确认。成功仅使同目标当前原始记录快照失效、通信统计收起，随后按既有读取策略重读，采集不停止；暂停时仍能查看状态。范围与手测见[说明](../../docs/develop/60-通信诊断清空确认与结果隔离.md)。
+
 `RawDataView`采用独立`RawFramesRead`：原1秒调度继续，但在途请求合并、10秒超时，暂停立即取消等待并保留上次不可变快照。设备连接字段/从站默认值/显示上限变化换reader，旧结果不能跨上下文发布；`RawFramesStatus`区分读取中、失败旧结果、空记录及旧身份不足，不修改采集或旧清空写入契约，见[说明](../../docs/develop/59-原始捕获慢读取与暂停隔离.md)。
 
 `CommunicationSummary`接入原始报文页，默认收起不读取；展开及手动重读仅GET既有diagnostics。`CommunicationSummaryRead`合并在途读取、超时/取消和迟到结果隔离；解析核对设备/共享通道身份，NULL/零与旧结果不冒充正常。无后台轮询、探测、模型或清空能力，RTU共享及累计边界见[说明](../../docs/develop/58-只读通信统计快照.md)。

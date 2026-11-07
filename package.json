@@ -21,6 +21,7 @@
     "preview:live-snapshot": "tsx scripts/preview-register-picker.ts --live-snapshot",
     "preview:communication": "tsx scripts/preview-register-picker.ts --communication",
     "preview:raw-frames": "tsx scripts/preview-register-picker.ts --raw-frames",
+    "preview:diagnostics-cleanup": "tsx scripts/preview-register-picker.ts --diagnostics-cleanup",
     "preview:markdown": "tsx scripts/preview-register-picker.ts --markdown",
     "preview:curve-selection": "tsx scripts/preview-register-picker.ts --curve-selection",
     "preview:history-context": "tsx scripts/preview-register-picker.ts --history-context",

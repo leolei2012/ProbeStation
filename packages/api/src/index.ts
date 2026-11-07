@@ -20,6 +20,7 @@ import { registerConfigBackup } from './config-backup.ts'
 import { registerSerialPorts } from './serial-ports.ts'
 import { registerHistoryExport } from './history-export.ts'
 import { registerPointDiagnostics } from './point-diagnostics.ts'
+import { registerDiagnosticsCleanup } from './diagnostics-cleanup.ts'
 import { registerPointsImport } from './points-import.ts'
 import { registerPointSettings } from './point-settings.ts'
 import { registerDeviceSettings } from './device-settings.ts'
@@ -134,6 +135,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     // ── Modbus diagnostics ─────────────────────────────────
+    registerDiagnosticsCleanup(fastify, poller)
     fastify.get('/api/monitor_objects/:id/diagnostics', async (req: any) =>
       poller.getDeviceDiagnostics(Number((req.params as any).id)))
     fastify.get('/api/monitor_objects/:id/frames', async (req: any) => {

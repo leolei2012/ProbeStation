@@ -1,5 +1,7 @@
 # @probebench/api
 
+诊断清空新增`GET /api/monitor_objects/:id/diagnostics/cleanup-preview`（no-store）与`POST /api/monitor_objects/:id/diagnostics/cleanup`，POST仅`{token}`、16KiB，并要求x-probestation-config:1及Origin若提供需Host匹配。预览503拒绝不支持目标；POST格式400/头403/条件409，其他500表示未知。预览绑定当前连接、配置库及driver；重复已完成token仅回原结果，不再次清空。不是前缀删除，预览后新增也在确认时清空；旧frames/clear仍无条件兼容，新UI不回退。字段与剩余限制见[说明](../../docs/develop/60-通信诊断清空确认与结果隔离.md)。
+
 日志条件清理新增只读`GET /api/logs/cleanup-preview`（no-store）和`POST /api/logs/cleanup`，body为`{expected:{version:1,throughId,count,revision}}`。POST要求x-probestation-config:1，Origin若提供需Host匹配；这不是鉴权。仅删除预览截止ID范围，返回deleted/alreadyRemoved/remaining；来源/条件不符409，非法400、来源头403，错误500不冒充未执行。原/api/logs/clear保持兼容，新UI不回退，见[精确契约](../../docs/develop/55-预览范围日志清理.md)。
 
 `POST /api/registers/:id/write`明确要求value为非空数值文本或有限数字，拒绝null、缺失、布尔、数组、对象及非有限值（HTTP400，写回调/成功日志均不执行）。int64/uint64数字输入必须为安全整数，大整数使用整数字符串；hex/bin仍遵循其原始进制与无符号范围。0和coil的数值0/1可用，不能以布尔值替代。端点路径/方法选择/来源参数/成功形状不变；没有改变codec舍入/截断/饱和或新增权限机制，见[契约及限制](../../docs/develop/50-寄存器写值输入校验.md)。

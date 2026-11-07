@@ -3,6 +3,8 @@ import z from 'schemastery'
 import { areaForFunction, planReadChunks, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
 import { randomUUID } from 'node:crypto'
 import { captureAcquisitionOrigin } from '../../core/src/acquisition-origin.ts'
+import { diagnosticsCleanupTarget } from '../../core/src/diagnostics-cleanup.ts'
+import { DiagnosticsCleanup } from './diagnostics-cleanup.ts'
 
 export const name = 'poller'
 export const inject = ['config', 'modbus', 'store']
@@ -31,6 +33,17 @@ export const Config: z<Config> = z.object({
  * - 写操作走独立通道：写期间暂停该通道（设备/串口）的读取，避免半双工总线冲突。
  */
 class PollingEngine {
+  private readonly diagnosticsCleanup = new DiagnosticsCleanup(id => {
+    const object = this.ctx.config.getObject(id), scope = this.ctx.config.getRecordingIntervalScope?.()
+    if (!object || typeof scope !== 'symbol') return null
+    const driver = this.drivers.get(this.driverKey(object))
+    if (!driver || typeof driver.getDiagnostics !== 'function' || typeof driver.clearDiagnostics !== 'function') return null
+    let target
+    try { target = diagnosticsCleanupTarget(object) } catch { return null }
+    return { target, identity: this.connectionSignature(object), configurationScope: scope, driver }
+  })
+  previewDiagnosticsCleanup(id: number) { return this.diagnosticsCleanup.preview(id) }
+  clearReviewedDiagnostics(id: number, token: string) { return this.diagnosticsCleanup.confirm(id, token) }
   private drivers = new Map<string, any>()
   private rtuLocks = new Map<string, Promise<void>>()
   private paused = new Set<number>()

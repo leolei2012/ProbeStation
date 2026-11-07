@@ -41,6 +41,7 @@ import { DeviceSlaveStatus } from './DeviceSlaveStatus'
 import { CommunicationSummary } from './CommunicationSummary'
 import { RawFramesRead, clampFrameLimit } from './raw-frames-read'
 import { RawFramesStatus } from './RawFramesStatus'
+import { DiagnosticsCleanupButton } from './DiagnosticsCleanupDialog'
 import { ColumnControl, ValueModeControl, useDisplayColumns, useValueMode } from './DataDisplayControls'
 import { AlarmPanel, useAlarmRules } from './AlarmPanel'
 import { ValueReading } from './ValueReading'
@@ -1658,6 +1659,7 @@ function ChartBody({ queryContextKey, pointLabels, valueMode, t, registers, sele
 }
 
 function RawDataView({ t, device }: { t: T; device: Device | null }) {
+  const [clearedToken, setClearedToken] = useState('')
   const [limit, setLimit] = useState(200)
   const [paused, setPaused] = useState(false)
   const pausedRef = useRef(false)
@@ -1681,13 +1683,12 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
     reader.cancel()
     setPaused(pausedRef.current)
   }
-  const clear = async () => { if (!device) return; try { await api.post('/api/monitor_objects/' + device.id + '/frames/clear', {}); if (mounted.current && readerRef.current === reader) { reader.cancel(); await load() } } catch { /* Existing clear behavior; write-result handling remains a separate task. */ } }
   const dir = (d: string) => d === 'tx' ? 'TX' : 'RX'
   if (!device) return <div className="db-view"><div className="hist-empty">{t('emptyHint')}</div></div>
   return (
     <div>
       <div className="db-head"><div><div className="db-title">{t('tabRaw')}</div><div className="kv">{device.name} · {device.transport === 'rtu' ? device.serialPath : device.ip + ':' + device.port}</div></div></div>
-      <CommunicationSummary device={device} english={t('cancel') === 'Cancel'} />
+      <CommunicationSummary key={clearedToken} device={device} english={t('cancel') === 'Cancel'} />
       <div className="toolbar">
         <span className="kv" role="status">{paused ? '已暂停刷新 · 设备采集继续' : '串口/TCP 原始报文（自动刷新 1s）'}</span>
         <label className="kv">显示帧数
@@ -1699,7 +1700,7 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
         <div style={{ flex: 1 }} />
         <button className={'btn' + (paused ? ' selected' : '')} aria-pressed={paused} onClick={togglePause}>{paused ? '继续' : '暂停'}</button>
         <button className="btn" onClick={() => void load()} disabled={busy || paused}>{busy ? '…' : '刷新'}</button>
-        <button className="btn" disabled={paused} onClick={() => void clear()}>清空</button>
+        <DiagnosticsCleanupButton device={device} disabled={paused} english={t('cancel') === 'Cancel'} onCleared={result => { setClearedToken(result.token); if (mounted.current && readerRef.current === reader) { reader.invalidate(); void load() } }} />
       </div>
       <RawFramesStatus state={state} paused={paused} english={t('cancel') === 'Cancel'} />
       <div style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, maxHeight: '60vh', overflow: 'auto', background: 'var(--surface)', color: 'var(--text-1, #eee)', borderRadius: 6, padding: 8 }}>

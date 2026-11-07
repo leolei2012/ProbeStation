@@ -1,5 +1,7 @@
 # @probebench/poller
 
+`previewDiagnosticsCleanup(id)`/`clearReviewedDiagnostics(id,token)`只操作已有driver的本地诊断内存，不创建/连接/采样。条件绑定公开完整目标、原driver引用、连接签名及ConfigStore生命周期Symbol；10分钟、最多100条本实例条件，过期惰性清理。拒绝/未知条件不重放，完成条件返原结果；只支持明确同步清空/读回归零的内建诊断契约。原clearDeviceDiagnostics保留无条件兼容，RTU共享影响与测试边界见[说明](../../docs/develop/60-通信诊断清空确认与结果隔离.md)。
+
 Modbus 轮询引擎。注入 `config` + `modbus` + `store`，提供 `ctx.poller`。
 
 ## 依赖
