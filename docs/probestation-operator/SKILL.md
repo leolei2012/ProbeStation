@@ -204,3 +204,7 @@ AI 助手不设工具次数/轮数、请求超时、输入/响应长度、附件
 ### 录制容量与部分结果
 
 录制默认单段20万、服务实例保留总量50万个原始样本；开始返回sample_storage，容量已满时先list_recordings核对并经用户意图删除完成录制，不能为了重试静默删数据。读取结果必须检查completionReason/quotaTruncated/discardedSamples；done只表示停止，不能声称完成时长或完整触发窗口。discardedSamples仅为最后事件已知未保留数，不含未来未录数据；最后事件可能截断多字，不能补零或跨批。configuration-changed表示旧配置会话已终结，新设备不可继承其样本。未新增硬件写或提高限额参数，见[容量保护说明](../develop/41-录制样本容量与提前结束说明.md)。
+
+### 分页读取录制结果
+
+先list_recordings确认状态；已结束大段结果优先get_recording_page，默认200/最多1000条。首读offset=0，后续保留同一recording_id和原snapshot_id，使用nextOffset，不猜起点。活动录制拒绝时查看进度，不为了分页擅自停止；删除/淘汰404时报告不可用，不重录/换ID补齐。hasMore=false不证明此前页或请求时长完整，仍检查完成原因、容量截断、来源与多字批次。configurationScopeCurrent为false时不得用当前同编号点表解释，为true也不证明点表未变。旧get_recording仍全量，不能假称自动分页。snapshotId仅用于分页，采样批次仍取各样本batchId，不得跨时间/批次拼值。见[分页读取说明](../develop/42-录制结果稳定分页读取.md)。

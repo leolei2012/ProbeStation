@@ -11,6 +11,8 @@ const areas = ['coil', 'discrete-input', 'holding-register', 'input-register']
 const operators = ['>', '<', '>=', '<=', '==', '!=', 'changed']
 const MAX_TIMEOUT_MS = 2 ** 31 - 1
 export const DEFAULT_RECORDING_SAMPLE_LIMITS = Object.freeze({ maxSamplesPerSession: 200000, maxTotalSamples: 500000 })
+export const DEFAULT_RECORDING_PAGE_SIZE = 200
+export const MAX_RECORDING_PAGE_SIZE = 1000
 export type RecordingCompletionReason = 'duration' | 'trigger-window' | 'trigger-timeout' | 'stopped' | 'deleted' | 'sample-limit' | 'storage-limit' | 'configuration-changed'
 export interface RecordingSampleLimits { maxSamplesPerSession: number; maxTotalSamples: number }
 
@@ -87,6 +89,7 @@ export class Recorder {
   private static readonly MAX_INTERVAL_NOTICES = 100
   private readonly sampleLimits: RecordingSampleLimits
   private retainedSamples = 0
+  private pageSnapshots = new WeakMap<RecordingSession, string>()
 
   constructor(private readonly ctx: any, private readonly cfg: any, limits: Partial<RecordingSampleLimits> = {}) {
     if (!limits || typeof limits !== 'object' || Array.isArray(limits) || Object.keys(limits).some(key => !['maxSamplesPerSession', 'maxTotalSamples'].includes(key))) throw new Error('invalid recording sample limits')
@@ -237,6 +240,24 @@ export class Recorder {
     return this.sessions.get(id) ?? null
   }
   getSampleStorageStatus() { return Object.freeze({ ...this.sampleLimits, retainedSamples: this.retainedSamples, remainingSamples: this.sampleLimits.maxTotalSamples - this.retainedSamples }) }
+  /** Completed samples never roll/prune. Bind continuation to this retained session; no full-array copy. */
+  getRecordingPage(id: string, offset = 0, limit = DEFAULT_RECORDING_PAGE_SIZE, snapshotId?: string) {
+    const reject = (statusCode: number, code: string, message: string): never => { throw Object.assign(new Error(message), { statusCode, code }) }
+    if (typeof id !== 'string' || !id.trim() || !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RECORDING_PAGE_SIZE || snapshotId !== undefined && (typeof snapshotId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(snapshotId))) return reject(400, 'RECORDING_PAGE_INPUT_INVALID', '分页参数无效：起点须非负整数，每页1..1000条，快照须为原snapshotId。')
+    const session = this.getRecording(id)
+    if (!session) return reject(404, 'RECORDING_NOT_FOUND', '录制不存在或已被删除/淘汰；不会重新开始或改读其他录制。')
+    if (session.status !== 'done' || session.finishedAt === null) return reject(409, 'RECORDING_NOT_FINISHED', '录制仍在进行；请用list_recordings查看进度，结束后再分页。不会为读取自动停止录制。')
+    if (offset > session.samples.length) return reject(400, 'RECORDING_PAGE_INPUT_INVALID', '分页起点超出保留样本范围，请核对原页信息。')
+    if (offset > 0 && snapshotId === undefined) return reject(428, 'RECORDING_PAGE_SNAPSHOT_REQUIRED', '续页必须携带首个分页返回的snapshotId；请从offset=0开始核对。')
+    let snapshot = this.pageSnapshots.get(session)
+    if (snapshotId !== undefined && snapshotId !== snapshot) return reject(409, 'RECORDING_PAGE_SNAPSHOT_MISMATCH', '快照不属于这段录制，未返回样本；请核对原recording_id及snapshotId。')
+    if (!snapshot) { snapshot = randomUUID(); this.pageSnapshots.set(session, snapshot) }
+    const { samples: all, ...rest } = session
+    const samples = Object.freeze(all.slice(offset, offset + limit).map(sample => Object.freeze({ ...sample })))
+    const metadata = Object.freeze({ ...rest, addresses: rest.addresses && Object.freeze(rest.addresses.map(address => Object.freeze({ ...address }))), trigger: rest.trigger && Object.freeze({ ...rest.trigger }), triggeredBy: rest.triggeredBy && Object.freeze({ ...rest.triggeredBy }), warnings: Object.freeze([...rest.warnings]) })
+    const next = offset + samples.length
+    return Object.freeze({ recording: metadata, snapshotId: snapshot, configurationScopeCurrent: this.sessionScopes.get(session) === this.intervalScope, coverage: 'retained-samples-only' as const, totalSamples: all.length, offset, limit, returnedSamples: samples.length, hasMore: next < all.length, nextOffset: next < all.length ? next : null, samples })
+  }
 
   /** Read-only current metadata plus bounded completion notices, independent of sample deletion/eviction. */
   getRecordingIntervalStatus(deviceId: number): RecordingIntervalStatus {

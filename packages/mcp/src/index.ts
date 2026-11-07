@@ -12,7 +12,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z as zz } from 'zod'
 import { areaForFunction, encodeRegister, invertSemantic, parseEnum, registerWidth, resolveSemantic, smartParseCsv, type ModbusArea } from '@probebench/core'
-import { Recorder } from './recorder.ts'
+import { Recorder, MAX_RECORDING_PAGE_SIZE } from './recorder.ts'
 import { registerConfigEditTools } from './config-edit.ts'
 import { configEditRegistrar } from './config-edit-registry.ts'
 
@@ -587,7 +587,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     server.registerTool('get_recording', {
-      title: 'Get recording', description: '取录制保留的原始16位字、slaveId/batchId 与触发证据 triggeredBy。检查completionReason/quotaTruncated/discardedSamples；done不是请求时长或触发窗口完整的证明。多字消费需自行验证同来源/area/采样时间/完整批次及质量；sourceVerified 仅表示来源元数据存在，不能当自动 PASS/FAIL。NULL 来源不推断。',
+      title: 'Get recording', description: '旧兼容全量读取，仍返回全部保留样本；大段/新调用优先get_recording_page分页，活动进度用list_recordings。取录制保留的原始16位字、slaveId/batchId 与触发证据 triggeredBy。检查completionReason/quotaTruncated/discardedSamples；done不是请求时长或触发窗口完整的证明。多字消费需自行验证同来源/area/采样时间/完整批次及质量；sourceVerified 仅表示来源元数据存在，不能当自动 PASS/FAIL。NULL 来源不推断。',
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
       const rec = recorder.getRecording(args.recording_id)
@@ -595,12 +595,24 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(rec) }] }
     })
 
+    server.registerTool('get_recording_page', {
+      title: 'Read a completed recording page', description: '只读分页已结束录制，默认200、最多1000个保留原始样本。从offset=0开始，续页必须携带原snapshot_id并使用nextOffset；当前配置活动录制拒绝，不为分页停止；配置重开沿用旧会话终结规则。hasMore=false仅表示当前页之后无保留样本，不证明此前页已读或录制完整；须检查recording.completionReason/quotaTruncated及来源/批次质量；snapshotId用于分页身份，采样批次仍取各样本batchId。configurationScopeCurrent仅表示打开配置scope；不证明点表/连接未编辑，为false时属于此前配置。删除/淘汰返回错误，不降级全量读取、不重录。',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: { recording_id: zz.string().min(1), offset: zz.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(), limit: zz.number().int().min(1).max(MAX_RECORDING_PAGE_SIZE).optional(), snapshot_id: zz.string().uuid().optional() },
+    }, async args => {
+      try { return { content: [{ type: 'text', text: JSON.stringify(recorder.getRecordingPage(args.recording_id, args.offset, args.limit, args.snapshot_id)) }] } }
+      catch (error: any) {
+        const known = [400, 404, 409, 428].includes(error?.statusCode)
+        return { content: [{ type: 'text', text: JSON.stringify({ status: known ? error.statusCode : 500, code: known ? error.code : 'RECORDING_PAGE_READ_FAILED', error: known ? error.message : '录制分页读取失败，请核对后重读。' }) }], isError: true }
+      }
+    })
+
     server.registerTool('get_recording_interval_status', { title: 'Review recording intervals', description: '只读当前设备间隔、活动录制及本进程最近保留的未恢复/待核对记录；删除/淘汰样本仍保留核对记录。current是本次配置读取，不代表硬件实测频率；不恢复间隔。核对后通过现有设备编辑有条件修改，禁止盲目写回原值。', annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { device_id: zz.number().int().positive().max(Number.MAX_SAFE_INTEGER) } }, async args => {
       try { return { content: [{ type: 'text', text: JSON.stringify(recorder.getRecordingIntervalStatus(args.device_id)) }] } } catch { return { content: [{ type: 'text', text: '录制间隔状态未核实，请重新读取。' }], isError: true } }
     })
 
     server.registerTool('list_recordings', {
-      title: 'List recordings', description: '列出录制会话（不含 samples，用 get_recording 取详情）',
+      title: 'List recordings', description: '列出录制会话和完成原因（不含samples）；大段已结束结果优先get_recording_page分页，旧get_recording保持全量。',
       inputSchema: {},
     }, async () => ({ content: [{ type: 'text', text: JSON.stringify(recorder.listRecordings()) }] }))
 
