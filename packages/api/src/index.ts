@@ -2,6 +2,7 @@ import { registerRecordingAttention } from './recording-attention.ts'
 import { registerAlarmSettings } from './alarm-settings.ts'
 import { registerPersistenceStatus } from './persistence-status.ts'
 import { registerRegisterWrite } from './register-write.ts'
+import { registerLogCleanup } from './log-cleanup.ts'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import type { Context } from 'cordis'
 import z from 'schemastery'
@@ -212,6 +213,7 @@ export function apply(ctx: Context, config: Config): void {
 
     // ── Logs ───────────────────────────────────────────────
     fastify.get('/api/logs', async (req: any) => cfg.listLogs(Number((req.query as any).limit ?? 100)))
+    registerLogCleanup(fastify, cfg)
     fastify.post('/api/logs/clear', async () => { cfg.clearLogs(); return { ok: true } })
 
     // ── Alarm rules ────────────────────────────────────────

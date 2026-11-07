@@ -1,5 +1,7 @@
 # @probebench/api
 
+日志条件清理新增只读`GET /api/logs/cleanup-preview`（no-store）和`POST /api/logs/cleanup`，body为`{expected:{version:1,throughId,count,revision}}`。POST要求x-probestation-config:1，Origin若提供需Host匹配；这不是鉴权。仅删除预览截止ID范围，返回deleted/alreadyRemoved/remaining；来源/条件不符409，非法400、来源头403，错误500不冒充未执行。原/api/logs/clear保持兼容，新UI不回退，见[精确契约](../../docs/develop/55-预览范围日志清理.md)。
+
 `POST /api/registers/:id/write`明确要求value为非空数值文本或有限数字，拒绝null、缺失、布尔、数组、对象及非有限值（HTTP400，写回调/成功日志均不执行）。int64/uint64数字输入必须为安全整数，大整数使用整数字符串；hex/bin仍遵循其原始进制与无符号范围。0和coil的数值0/1可用，不能以布尔值替代。端点路径/方法选择/来源参数/成功形状不变；没有改变codec舍入/截断/饱和或新增权限机制，见[契约及限制](../../docs/develop/50-寄存器写值输入校验.md)。
 
 `GET /api/monitor_objects/:id/stats`的retention新增`policy:{version:1,objectId,source:'global'|'device'|'unverified',seconds:number|null}`；原retention_seconds仍是全局默认，不能直接作为设备实际时长。0永久，NULL设备覆盖继承全局；未知/不合法策略不猜测。全局`GET /api/stats`及保留设置读写接口契约不变，本轮仅扩展原只读统计返回，未改清理/写入行为，见[说明](../../docs/develop/48-设备保留策略准确显示.md)。

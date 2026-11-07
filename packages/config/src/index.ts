@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import net from 'node:net'
 import type { Context } from 'cordis'
 import z from 'schemastery'
@@ -20,6 +20,7 @@ import { captureGroupEditGraph, groupDeletionAcknowledged, groupEditInvalid, par
 import { RecordingIntervals, type RecordingIntervalLease, type RecordingSourceGuard } from './recording-interval.ts'
 import { alarmRuleMatches, parseAlarmEdit, invalidAlarmEdit } from '../../core/src/alarm-settings-edit.ts'
 import { captureAlarmContext, alarmContextMatches, parseAlarmContext, type AlarmContext } from '../../core/src/alarm-settings-context.ts'
+import { parseLogCleanupPreview, parseLogCleanupRequest, type LogCleanupPreview, type LogCleanupResult } from '../../core/src/log-cleanup.ts'
 
 export const name = 'config'
 
@@ -48,6 +49,8 @@ const REGISTER_MAP: Record<string, string> = { alias: 'alias', functionCode: 'fu
 
 export class ConfigStore {
   private restoring = false
+  private logCleanupScope = randomUUID()
+  private logCleanupBlocked = false
   private db: DatabaseSync
   private dbPath: string
   private recordingIntervals = new RecordingIntervals(() => this.db, id => this.getObject(id), (id, intervalMs) => this.update('monitor_objects', id, { pollIntervalMs: intervalMs }, OBJECT_MAP), () => this.restoring, id => this.notify('object', id))
@@ -115,10 +118,12 @@ export class ConfigStore {
 
   /** 切换工作区：关闭旧库、打开新库（幂等，CREATE TABLE IF NOT EXISTS）。 */
   reopen(dbPath: string): void {
+    this.logCleanupScope = randomUUID()
     this.recordingIntervals.reset()
     this.db.close()
     this.dbPath = dbPath
     this.db = this.open(dbPath)
+    this.logCleanupBlocked = false
   }
 
   private schema(): string {
@@ -613,6 +618,39 @@ export class ConfigStore {
   }
   listLogs(limit = 100): LogRecord[] { return this.db.prepare('SELECT id, ts, level, source, message FROM logs ORDER BY id DESC LIMIT ?').all(limit) as unknown as LogRecord[] }
   clearLogs(): void { this.db.prepare('DELETE FROM logs').run() }
+
+  private logCleanupRevision(throughId: number, count: number) { return 'v1:' + createHash('sha256').update(JSON.stringify([this.logCleanupScope, throughId, count])).digest('hex') }
+  private assertLogCleanupIds() {
+    const sql = (this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'logs'").get() as any)?.sql
+    if (typeof sql !== 'string' || !/\bid\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b/i.test(sql)) throw Object.assign(new Error('日志表递增ID契约尚未核实，本次未清理。'), { statusCode: 409 })
+  }
+  previewLogCleanup(): LogCleanupPreview {
+    if (this.logCleanupBlocked) throw new Error('上次日志清理结果未确认，需要人工排查。')
+    this.assertLogCleanupIds()
+    const row = this.db.prepare('SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS throughId FROM logs').get() as any
+    const throughId = Number(row.throughId), count = Number(row.count)
+    return parseLogCleanupPreview({ version: 1, throughId, count, revision: this.logCleanupRevision(throughId, count) })
+  }
+  /** Append-only log IDs: delete only the reviewed prefix, preserving subsequent records. */
+  cleanupReviewedLogs(request: unknown): LogCleanupResult {
+    const expected = parseLogCleanupRequest(request)
+    if (this.restoring || this.logCleanupBlocked || expected.revision !== this.logCleanupRevision(expected.throughId, expected.count)) throw Object.assign(new Error('日志来源或清理条件已变化，本次未清理；请重新预览。'), { statusCode: 409 })
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      this.assertLogCleanupIds()
+      const current = Number((this.db.prepare('SELECT COUNT(*) AS count FROM logs WHERE id <= ?').get(expected.throughId) as any).count)
+      if (!Number.isSafeInteger(current) || current < 0 || current > expected.count) throw Object.assign(new Error('预览范围内日志已变化，本次未清理；请重新预览。'), { statusCode: 409 })
+      const deleted = Number(this.db.prepare('DELETE FROM logs WHERE id <= ?').run(expected.throughId).changes)
+      const remaining = Number((this.db.prepare('SELECT COUNT(*) AS count FROM logs').get() as any).count)
+      const oldRemaining = Number((this.db.prepare('SELECT COUNT(*) AS count FROM logs WHERE id <= ?').get(expected.throughId) as any).count)
+      if (deleted !== current || oldRemaining !== 0 || !Number.isSafeInteger(remaining) || remaining < 0) throw new Error('日志清理读回不一致')
+      this.db.exec('COMMIT')
+      return Object.freeze({ ok: true, throughId: expected.throughId, revision: expected.revision, deleted, alreadyRemoved: expected.count - deleted, remaining })
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) { this.logCleanupScope = randomUUID(); this.logCleanupBlocked = true; throw new AggregateError([error, rollback], '日志清理回滚失败，结果待核实，勿自动重试。') }
+      throw error
+    }
+  }
 
   listFirmwares(): FirmwareRecord[] { return this.db.prepare('SELECT id, name, version, size, crc32, file_path AS filePath, created_at AS createdAt FROM firmwares ORDER BY id DESC').all() as unknown as FirmwareRecord[] }
   getFirmware(id: number): FirmwareRecord | undefined { return this.db.prepare('SELECT id, name, version, size, crc32, file_path AS filePath, created_at AS createdAt FROM firmwares WHERE id = ?').get(id) as unknown as FirmwareRecord | undefined }

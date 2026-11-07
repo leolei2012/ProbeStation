@@ -5,6 +5,8 @@ import { RealtimeFallbackRead } from './realtime-fallback'
 import { registerWritePayloadValue } from '../../../packages/core/src/register-write-value'
 import { bindUiTheme, readUiLanguage, readUiTheme, readSidebarCollapsed, saveUiLanguage, saveSidebarCollapsed } from './ui-preferences'
 import { RuntimeLogs } from './RuntimeLogs'
+import { LogCleanupDialog } from './LogCleanupDialog'
+import { logCleanupFlow } from './log-cleanup-flow'
 import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
@@ -49,7 +51,7 @@ import { HistoryExportModal } from './HistoryExportModal'
 import { captureHistoryExport, fetchHistoryExport, saveHistoryExport, type HistoryExportRequest } from './history-export'
 import { VirtualTableBody } from './VirtualTableBody'
 import { DeviceIssues, type DataTarget } from './DeviceIssues'
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { showOperationNotice } from './OperationNotifications'
 import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
@@ -1824,8 +1826,10 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose, initialSect
   const [retention, setRetention] = useState<number>(2592000)
   const [customRetention, setCustomRetention] = useState('')
   const [showLogs, setShowLogs] = useState(false), [logRevision, setLogRevision] = useState(0)
+  const [showLogCleanup, setShowLogCleanup] = useState(false)
+  const cleanupState = useSyncExternalStore(logCleanupFlow.subscribe, logCleanupFlow.snapshot, logCleanupFlow.snapshot)
+  useEffect(() => { if (['completed', 'uncertain'].includes(cleanupState.phase)) setLogRevision(value => value + 1) }, [cleanupState])
   useEffect(() => { api.get('/api/retention').then((r: any) => setRetention(r.retention_seconds)).catch(() => {}) }, [])
-  const clearLogs = async () => { await api.post('/api/logs/clear'); setMsg(t('logsCleared')); setLogRevision(value => value + 1) }
   const retentionPresets: Array<[string, number]> = [
     ['1h', 3600], ['6h', 21600], ['24h', 86400], ['7d', 604800], ['30d', 2592000], ['90d', 7776000], [t('retentionForever'), 0],
   ]
@@ -1874,8 +1878,9 @@ function SettingsModal({ t, theme, setTheme, lang, setLang, onClose, initialSect
               setCustomRetention(''); void applyRetention(Number(e.target.value))
             }}>{retentionPresets.map(([label, s]) => <option key={s} value={s}>{label}</option>)}<option value="custom">自定义 / Custom</option></select></div>
             {(customRetention !== '' || !retentionPresets.some(([, s]) => s === retention)) && <div className="settings-line"><label htmlFor="settings-retention">{lang === 'zh' ? '自定义时长（秒）' : 'Custom duration (seconds)'}</label><div className="settings-inline"><input id="settings-retention" type="number" min="0" step="1" value={customRetention} onChange={e => setCustomRetention(e.target.value)} /><button className="btn" onClick={saveCustomRetention}>{lang === 'zh' ? '保存' : 'Save'}</button></div></div>}
-            <div className="settings-line"><div><strong>{t('runLogs')}</strong><p>{lang === 'zh' ? '查看近期全服务运行日志，或清理日志；不影响历史采样数据。' : 'View recent service-wide logs or clear logs; sample history is unaffected.'}</p></div><div className="settings-inline"><button type="button" className="btn" aria-expanded={showLogs} onClick={() => setShowLogs(value => !value)}>{lang === 'zh' ? showLogs ? '收起日志' : '查看近期日志' : showLogs ? 'Hide logs' : 'View recent logs'}</button><button className="btn" onClick={clearLogs}>{t('clearLogs')}</button></div></div>
+            <div className="settings-line"><div><strong>{t('runLogs')}</strong><p>{lang === 'zh' ? '查看近期全服务运行日志，或先预览再确认清理；预览后新增日志会保留。' : 'View recent service-wide logs or preview cleanup first; later logs are preserved.'}</p></div><div className="settings-inline"><button type="button" className="btn" aria-expanded={showLogs} onClick={() => setShowLogs(value => !value)}>{lang === 'zh' ? showLogs ? '收起日志' : '查看近期日志' : showLogs ? 'Hide logs' : 'View recent logs'}</button><button type="button" className="btn" onClick={() => setShowLogCleanup(true)}>{lang === 'zh' ? '预览日志清理' : 'Preview log cleanup'}</button></div></div>
             {showLogs && <RuntimeLogs english={lang === 'en'} reloadToken={logRevision} />}
+            {showLogCleanup && <LogCleanupDialog english={lang === 'en'} onClose={() => setShowLogCleanup(false)} />}
             {msg && <p className="settings-feedback" role="status">{msg}</p>}
           </>}
           {section === 'about' && <>
