@@ -1,4 +1,5 @@
 import type { Context } from 'cordis'
+import { randomUUID } from 'node:crypto'
 import z from 'schemastery'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 import { localTs, areaForFunction, registerWidth, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
@@ -48,6 +49,14 @@ export interface PollPoint {
   slaveId?: number | null
 }
 
+/** In-memory identity only; not serializable ownership, a data snapshot or a configuration revision. */
+export interface ExportReadHandle { readonly version: 1; readonly storeScope: string }
+export class ExportReadHandleError extends Error {
+  readonly code = 'EXPORT_READ_HANDLE_INVALID'
+  constructor() { super('时序库导出读取句柄已失效或尚未就绪。'); this.name = 'ExportReadHandleError' }
+}
+interface OwnedExportRead { ready: Promise<DuckDBConnection>; validate: () => void }
+
 /**
  * Columnar time-series store (DuckDB) with an in-memory hot buffer.
  * The hot tier serves latest snapshots without touching disk; the cold tier
@@ -67,6 +76,9 @@ export class DuckDBStore {
   private persistenceError: unknown = null
   private initError: unknown = null
   private switching = false
+  private exportReadScope = randomUUID()
+  private exportReadBlocked = false
+  private exportReadHandles = new WeakMap<ExportReadHandle, { scope: string; ready: Promise<DuckDBConnection> }>()
   private initialization: 'opening' | 'ready' | 'failed' = 'opening'
   private flushing = false
   private lastCommitAt: string | null = null
@@ -133,6 +145,7 @@ export class DuckDBStore {
   /** 切换工作区：冲刷旧缓冲、关闭旧连接，重开新库并清空热层。 */
   async reopen(dbPath: string): Promise<void> {
     if (this.switching) throw new Error('Store is already reopening')
+    this.exportReadBlocked = true; this.exportReadScope = randomUUID(); this.exportReadHandles = new WeakMap()
     this.switching = true
     try {
       await this.flush()
@@ -147,6 +160,7 @@ export class DuckDBStore {
       this.initialization = 'opening'; this.lastCommitAt = this.lastFailureAt = null
       this.ready = this.init()
       await this.ready
+      this.exportReadBlocked = false
     } finally { this.switching = false }
     this.background(this.cleanup())
   }
@@ -297,28 +311,58 @@ export class DuckDBStore {
     return this.readObjectRows(objectId, start, end, HISTORY_EXPORT_RAW_LIMIT + 1, ranges)
   }
 
-  private async readObjectRows(objectId: number, start: string, end: string, limit: number, ranges?: readonly HistoryExportReadRange[]): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>> {
-    await this.mutations
-    const conn = await this.ready
-    const startUtc = this.normalizeToUtc(start)
-    const endUtc = this.normalizeToUtc(end)
-    const params: Record<string, string | number | null> = { objectId, start: startUtc, end: endUtc, limit }
-    const scopes = ranges?.map((range, i) => {
-      params[`exportArea${i}`] = range.area; params[`exportStart${i}`] = range.startAddress; params[`exportEnd${i}`] = range.endAddress; params[`exportSlave${i}`] = range.slaveId ?? null
-      return `($exportArea${i}, $exportStart${i}, $exportEnd${i}, CAST($exportSlave${i} AS INTEGER))`
-    })
-    const selected = scopes?.length ? `AND EXISTS (SELECT 1 FROM (VALUES ${scopes.join(',')}) AS export_scope(area, lo, hi, slave_id)
+  private assertExportReadReady() {
+    if (this.switching || this.exportReadBlocked || this.initialization !== 'ready' || this.initError) throw new ExportReadHandleError()
+  }
+  captureExportReadHandle(): ExportReadHandle {
+    this.assertExportReadReady()
+    const handle = Object.freeze({ version: 1 as const, storeScope: this.exportReadScope })
+    this.exportReadHandles.set(handle, { scope: this.exportReadScope, ready: this.ready }); return handle
+  }
+  private exportReadOwner(handle: ExportReadHandle) {
+    this.assertExportReadReady()
+    const owner = handle && typeof handle === 'object' ? this.exportReadHandles.get(handle) : undefined
+    if (!owner || owner.scope !== this.exportReadScope || owner.ready !== this.ready) throw new ExportReadHandleError()
+    return owner
+  }
+  /** Optional guarded path. Existing export callers keep their original semantics. */
+  async queryObjectForExportWithHandle(handle: ExportReadHandle, objectId: number, start: string, end: string, ranges?: readonly HistoryExportReadRange[]) {
+    const owner = this.exportReadOwner(handle)
+    if (ranges?.length === 0) return []
+    const captured = ranges && Object.freeze(ranges.map(range => Object.freeze({ ...range })))
+    return this.readObjectRows(objectId, start, end, HISTORY_EXPORT_RAW_LIMIT + 1, captured, { ready: owner.ready, validate: () => { this.exportReadOwner(handle) } })
+  }
+
+  private async readObjectRows(objectId: number, start: string, end: string, limit: number, ranges?: readonly HistoryExportReadRange[], owned?: OwnedExportRead): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>> {
+    try {
+      owned?.validate()
+      await this.mutations
+      owned?.validate()
+      const conn = await (owned?.ready ?? this.ready)
+      owned?.validate()
+      const startUtc = this.normalizeToUtc(start)
+      const endUtc = this.normalizeToUtc(end)
+      const params: Record<string, string | number | null> = { objectId, start: startUtc, end: endUtc, limit }
+      const scopes = ranges?.map((range, i) => {
+        params[`exportArea${i}`] = range.area; params[`exportStart${i}`] = range.startAddress; params[`exportEnd${i}`] = range.endAddress; params[`exportSlave${i}`] = range.slaveId ?? null
+        return `($exportArea${i}, $exportStart${i}, $exportEnd${i}, CAST($exportSlave${i} AS INTEGER))`
+      })
+      const selected = scopes?.length ? `AND EXISTS (SELECT 1 FROM (VALUES ${scopes.join(',')}) AS export_scope(area, lo, hi, slave_id)
       WHERE export_scope.area = poll_data.area AND poll_data.address BETWEEN export_scope.lo AND export_scope.hi AND (export_scope.slave_id IS NULL OR poll_data.slave_id = export_scope.slave_id OR poll_data.slave_id IS NULL))` : ''
-    const reader = await conn.runAndReadAll(
-      `SELECT ts, area, address, raw_value, quality, batch_id, slave_id FROM poll_data
+      owned?.validate()
+      const reader = await conn.runAndReadAll(
+        `SELECT ts, area, address, raw_value, quality, batch_id, slave_id FROM poll_data
        WHERE object_id = $objectId AND ts >= $start AND ts <= $end
        ${selected}
        ORDER BY ts
        LIMIT $limit`,
-      params,
-    )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
-    return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }))
+        params,
+      )
+      owned?.validate()
+      const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
+      const result = rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }))
+      owned?.validate(); return result
+    } catch (error) { owned?.validate(); throw error }
   }
 
   /** 全局快照主键为 objectId:slave:slaveId:area:address；旧别名仅单一已观测来源保留。timestamp 输出为服务器本地时间。 */

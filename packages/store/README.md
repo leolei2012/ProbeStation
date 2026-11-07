@@ -1,5 +1,7 @@
 # @probebench/store
 
+可选的 `captureExportReadHandle()` / `queryObjectForExportWithHandle(handle, objectId, start, end, ranges?)` 仅用于后续条件导出的内部基础：句柄必须是本实例创建的原对象，复制或反序列化无效；库重开即撤销，旧等待/SQL迟到结果拒绝返回。范围参数在调用时复制，旧查询仍保留原语义。未接入Sink/API，不证明配置库配对、数据已提交/完整或物理身份，见[读取句柄](../../docs/develop/70-导出时序库读取句柄隔离.md)。
+
 `statsByObject(id).retention`保留原`retention_seconds`全局默认字段，并新增`policy:{version:1,objectId,source,seconds}`描述该ID的配置时长。source为global/device/unverified，seconds为非负安全整数（0永久）或未核实null；NULL设备设置继承全局，显式0是设备永久，不按真值回退。无当前设备覆盖/无config服务时沿用现有清理的全局默认语义，不能据此验证设备存在。只读读取listObjects，不触发清理；配置查询失败不伪造策略。详见[保留策略显示](../../docs/develop/48-设备保留策略准确显示.md)。
 
 采样落盘状态新增`getSamplePersistenceStatus(objectId?)`，同步读取本实例内存元数据：初始化/切换/ready/失败/阻止、原始待写行数/全服务行数、提交中及最近批次提交/失败时间。状态始终是全服务共享，设备参数只过滤队列数；不包含错误原文，不做SQL/flush/cleanup/reopen，旧getPersistenceStatus诊断返回保持。statsByObject.bufferPending现按设备计数；全局stats保持全服务数。ready不等于所有数据已保存或历史完整；范围和内存回归见[落盘说明](../../docs/develop/47-采样落盘状态与设备缓冲计数.md)。
