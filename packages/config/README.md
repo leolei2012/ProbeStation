@@ -1,5 +1,7 @@
 # @probebench/config
 
+内部新增 `getHistoryExportConfiguration(objectId)`：单次只读事务获取设备、全部分组/点位的冻结副本，返回结构版本1与本实例配置库打开周期scope。scope不随普通字段修改变化，不是内容版本或工作区/时序库租约；尚无REST入口，现有导出不调用。读取回滚不明时仅阻止此能力，成功重开后恢复，无schema迁移；见[快照契约与临时库验收](../../docs/develop/69-导出配置只读事务快照.md)。
+
 日志新增previewLogCleanup/cleanupReviewedLogs：内存连接范围绑定预览，BEGIN IMMEDIATE事务内仅删除id<=throughId；AUTOINCREMENT契约未核实则拒绝，无schema迁移。新增记录保留、重复范围可无新增删除、已有移除单独计数；回滚结果不明阻止该清理能力直到显式成功重开。原clearLogs全删行为及日志生成/保留策略未变，见[边界](../../docs/develop/55-预览范围日志清理.md)。
 
 日志记录类型与已有schema对齐：level/source/message可为NULL，ts仍为NOT NULL文本；只调整TypeScript声明，不修改schema、默认值、日志生成/保留或listLogs返回。消费者应保留NULL与空文本的区别，见[兼容修复](../../docs/develop/54-日志NULL字段兼容.md)。
@@ -28,6 +30,7 @@ class ConfigStore {
   listGroups(objectId) / getGroup(id) / createGroup(objectId, name, functionCode, startAddress, quantity, mode?, slaveId?, pollIntervalMs?) / updateGroup(id, fields) / deleteGroup(id) / toggleGroup(id)
   // Registers（寄存器）
   listRegisters(groupId) / listRegistersByObject(objectId) / getRegister(id)
+  getHistoryExportConfiguration(objectId): HistoryExportConfigurationSnapshot // 只读；尚未接入导出API
   createRegister(groupId, objectId, alias, functionCode, startAddress, dataType?, extra?)
   updateRegister(id, fields) / deleteRegister(id)
   // 告警规则 + 日志

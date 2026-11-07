@@ -34,6 +34,13 @@ export const Config: z<Config> = z.object({ dbPath: z.string() })
 export interface DeviceRecord { id: number; name: string; ip: string; port: number; mode: string; isActive: number; transport: string; serialPath: string | null; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number; dataRetainSeconds: number | null }
 export interface GroupRecord { id: number; objectId: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; mode: string; isActive: number }
 export interface RegisterRecord { id: number; groupId: number; objectId: number; alias: string | null; functionCode: number; startAddress: number; quantity: number; dataType: string; unit: string | null; factor: number; offset: number; enumJson: string | null; decimalPlaces: number | null }
+/** Configuration only: not a content revision, workspace/store lease or history snapshot. */
+export interface HistoryExportConfigurationSnapshot {
+  readonly version: 1; readonly configurationScope: string
+  readonly device: Readonly<DeviceRecord>
+  readonly groups: readonly Readonly<GroupRecord>[]
+  readonly registers: readonly Readonly<RegisterRecord>[]
+}
 export interface RuleRecord { id: number; registerId: number; operator: string; threshold: number; message: string | null }
 export interface LogRecord { id: number; ts: string; level: string | null; source: string | null; message: string | null }
 export interface FirmwareRecord { id: number; name: string; version: string | null; size: number; crc32: number; filePath: string | null; createdAt: string | null }
@@ -51,6 +58,8 @@ export class ConfigStore {
   private restoring = false
   private logCleanupScope = randomUUID()
   private logCleanupBlocked = false
+  private exportSnapshotScope = randomUUID()
+  private exportSnapshotBlocked = false
   private db: DatabaseSync
   private dbPath: string
   private recordingIntervals = new RecordingIntervals(() => this.db, id => this.getObject(id), (id, intervalMs) => this.update('monitor_objects', id, { pollIntervalMs: intervalMs }, OBJECT_MAP), () => this.restoring, id => this.notify('object', id))
@@ -118,12 +127,14 @@ export class ConfigStore {
 
   /** 切换工作区：关闭旧库、打开新库（幂等，CREATE TABLE IF NOT EXISTS）。 */
   reopen(dbPath: string): void {
+    this.exportSnapshotScope = randomUUID(); this.exportSnapshotBlocked = true
     this.logCleanupScope = randomUUID()
     this.recordingIntervals.reset()
     this.db.close()
     this.dbPath = dbPath
     this.db = this.open(dbPath)
     this.logCleanupBlocked = false
+    this.exportSnapshotBlocked = false
   }
 
   private schema(): string {
@@ -351,6 +362,27 @@ export class ConfigStore {
   listRegisters(groupId: number): RegisterRecord[] { return this.db.prepare(REGISTER_SELECT + ' WHERE group_id = ? ORDER BY start_address').all(groupId) as unknown as RegisterRecord[] }
   /** All points of a device, across all of its groups. */
   listRegistersByObject(objectId: number): RegisterRecord[] { return this.db.prepare(REGISTER_SELECT + ' WHERE object_id = ? ORDER BY start_address').all(objectId) as unknown as RegisterRecord[] }
+  /** One bounded read transaction; no raw history reads, notifications or runtime hooks. */
+  getHistoryExportConfiguration(objectId: number): HistoryExportConfigurationSnapshot {
+    if (!Number.isSafeInteger(objectId) || objectId < 1) throw Object.assign(new Error('导出配置设备编号无效。'), { statusCode: 400 })
+    if (this.restoring || this.exportSnapshotBlocked) throw Object.assign(new Error('导出配置快照暂不可用，请核对配置状态。'), { statusCode: 409 })
+    this.db.exec('BEGIN')
+    try {
+      // Fixed SELECT projections exclude unrelated tables/extra fields. No inferred source or validation repair.
+      const device = this.db.prepare(OBJECT_SELECT + ' WHERE id = ?').get(objectId) as unknown as DeviceRecord | undefined
+      if (!device) throw Object.assign(new Error('导出配置设备不存在。'), { statusCode: 404 })
+      const groups = this.db.prepare(GROUP_SELECT + ' WHERE object_id = ? ORDER BY id').all(objectId) as unknown as GroupRecord[]
+      const registers = this.db.prepare(REGISTER_SELECT + ' WHERE object_id = ? ORDER BY start_address').all(objectId) as unknown as RegisterRecord[]
+      const snapshot = Object.freeze({ version: 1 as const, configurationScope: this.exportSnapshotScope, device: Object.freeze({ ...device }), groups: Object.freeze(groups.map(row => Object.freeze({ ...row }))), registers: Object.freeze(registers.map(row => Object.freeze({ ...row }))) })
+      this.db.exec('COMMIT'); return snapshot
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) {
+        this.exportSnapshotScope = randomUUID(); this.exportSnapshotBlocked = true
+        throw new AggregateError([error, rollback], '导出配置读取回滚失败，已停止提供快照。')
+      }
+      throw error
+    }
+  }
   getRegister(id: number): RegisterRecord | undefined { return this.db.prepare(REGISTER_SELECT + ' WHERE id = ?').get(id) as unknown as RegisterRecord | undefined }
 
   /** Add file windows atomically; no existing devices/groups/registers/rules are changed. */
