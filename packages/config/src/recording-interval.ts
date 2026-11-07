@@ -46,7 +46,7 @@ export class RecordingIntervals {
   }
   sourceMatches(guard: RecordingSourceGuard, row?: DeviceRecord) {
     const expected = this.sourceGuards.get(guard)
-    return !!expected && expected.scope === this.identity && expected.revision === this.sourceRevisions.get(guard.deviceId) && sourceSignature(row ?? this.read(guard.deviceId)) === expected.signature
+    return !!expected && expected.scope === this.identity && expected.revision === this.sourceRevisions.get(guard.deviceId) && sourceSignature(this.read(guard.deviceId)) === expected.signature && (row === undefined || sourceSignature(row) === expected.signature)
   }
   revoke(lease: RecordingIntervalLease) { this.leases.delete(lease) }
   private version() {

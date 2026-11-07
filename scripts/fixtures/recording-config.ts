@@ -11,7 +11,11 @@ export function withMockRecordingIntervals<T extends { getObject(id: number): an
   return Object.assign(cfg, {
     getRecordingIntervalScope: () => scope,
     captureRecordingSource(id: number) { const guard = Object.freeze({ deviceId: id }); sources.set(guard, source(id)); return guard },
-    recordingSourceMatches(guard: RecordingSourceGuard) { return sources.has(guard) && sources.get(guard) === source(guard.deviceId) },
+    recordingSourceMatches(guard: RecordingSourceGuard, snapshot?: any) {
+      if (!sources.has(guard) || sources.get(guard) !== source(guard.deviceId)) return false
+      if (snapshot === undefined) return true
+      return sources.get(guard) === JSON.stringify(['mode', 'transport', 'slaveId', ...(snapshot.transport === 'rtu' ? ['serialPath', 'baudRate', 'parity', 'stopBits', 'dataBits', 'flowControl'] : ['ip', 'port'])].map(key => snapshot[key]))
+    },
     revokeRecordingInterval(lease: RecordingIntervalLease) { leases.delete(lease) },
     acquireRecordingInterval(id: number, intervalMs: number, expected?: RecordingSourceGuard) {
       if (expected && (!sources.has(expected) || sources.get(expected) !== source(id))) throw Object.assign(new Error('mock source conflict'), { statusCode: 409 })

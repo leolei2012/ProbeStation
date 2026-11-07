@@ -51,7 +51,8 @@ export class ConfigStore {
   private recordingIntervals = new RecordingIntervals(() => this.db, id => this.getObject(id), (id, intervalMs) => this.update('monitor_objects', id, { pollIntervalMs: intervalMs }, OBJECT_MAP), () => this.restoring, id => this.notify('object', id))
   acquireRecordingInterval(id: number, intervalMs: number, expectedSource?: RecordingSourceGuard) { return this.recordingIntervals.acquire(id, intervalMs, expectedSource) }
   captureRecordingSource(id: number) { return this.recordingIntervals.captureSource(id) }
-  recordingSourceMatches(guard: RecordingSourceGuard) { return this.recordingIntervals.sourceMatches(guard) }
+  // Producers may also bind the guard to the exact configuration snapshot used before I/O.
+  recordingSourceMatches(guard: RecordingSourceGuard, snapshot?: DeviceRecord) { return this.recordingIntervals.sourceMatches(guard, snapshot) }
   revokeRecordingInterval(lease: RecordingIntervalLease) { this.recordingIntervals.revoke(lease) }
   recordingIntervalLeaseValid(lease: RecordingIntervalLease) { return this.recordingIntervals.valid(lease) }
   restoreRecordingInterval(lease: RecordingIntervalLease) { return this.recordingIntervals.restore(lease) }

@@ -2,6 +2,7 @@ import type { Context } from 'cordis'
 import z from 'schemastery'
 import { areaForFunction, planReadChunks, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
 import { randomUUID } from 'node:crypto'
+import { captureAcquisitionOrigin } from '../../core/src/acquisition-origin.ts'
 
 export const name = 'poller'
 export const inject = ['config', 'modbus', 'store']
@@ -9,6 +10,8 @@ export const inject = ['config', 'modbus', 'store']
 export interface RegisterGroup { id: number; functionCode: number; startAddress: number; quantity: number; slaveId?: number }
 export interface Device { id: number; host: string; port: number; groups: RegisterGroup[] }
 type ReadWord = { address: number; rawValue: number; timestamp: string; batchId: string; slaveId: number }
+class StaleAcquisition extends Error { constructor() { super('采集来源或生命周期已变化，本次结果已丢弃。') } }
+const assertCurrent = (valid: () => boolean) => { if (!valid()) throw new StaleAcquisition() }
 
 export interface Config { pollIntervalMs: number; connectRetryMs: number; watchdogTimeoutMs: number; autoResetFailThreshold: number; autoResetCooldownMs: number }
 export const Config: z<Config> = z.object({
@@ -48,6 +51,10 @@ class PollingEngine {
   private nextAt = new Map<number, number>() // deviceId -> 下次到期时间（epoch ms）
   private writeLocks = new Set<string>() // driverKey 正在写（写时停读）
   private inflight = new Map<string, number>() // driverKey -> 在途读计数
+  private lifecycle = Symbol()
+  private driverSlots = new Map<string, symbol>()
+  private driverBindings = new WeakMap<object, string>()
+  private pollJobs = new Map<number, symbol>()
 
   constructor(private readonly ctx: any, private readonly config: Config) {
     // 配置变更时刷新内存缓存（避免每 tick 查 SQLite）
@@ -56,17 +63,27 @@ class PollingEngine {
 
   /** 一次性轮询（测试/手动）：忽略扫描间隔，读所有组。 */
   async pollOnce(device: Device): Promise<void> {
+    const lifecycle = this.lifecycle, scope = this.ctx.config.getRecordingIntervalScope()
+    const row = this.ctx.config.getObject(device.id)
+    const readOrigin = row ? this.ctx.config.captureRecordingSource(device.id) : undefined
+    const snapshot = row && { ...row, mode: 'master', transport: 'tcp', ip: device.host, port: device.port }
+    const valid = () => {
+      try { return lifecycle === this.lifecycle && (readOrigin ? this.ctx.config.recordingSourceMatches(readOrigin, snapshot) : scope === this.ctx.config.getRecordingIntervalScope() && !this.ctx.config.getObject(device.id)) } catch { return false }
+    }
+    assertCurrent(valid)
     const driver = this.ctx.modbus.createDriver()
-    await driver.connect({ ip: device.host, port: device.port })
     try {
+      await driver.connect({ ip: device.host, port: device.port }); assertCurrent(valid)
       const points: Array<Record<string, unknown>> = []
       for (const g of device.groups) {
         const gapMs = (device as any).pollIntervalMs ?? 0
-        const values = await this.readGroup(driver, g, gapMs, (device as any).timeoutMs)
+        const values = await this.readGroup(driver, g, gapMs, (device as any).timeoutMs, valid)
         const area = areaForFunction(g.functionCode as ModbusFunctionCode)
         for (const word of values) points.push({ objectId: device.id, area, ...word, quality: 'good' })
       }
-      this.ctx.emit('poller/result', { objectId: device.id, points })
+      assertCurrent(valid)
+      this.ctx.emit('poller/result', { objectId: device.id, points, readOrigin: captureAcquisitionOrigin(device.id, valid) })
+      assertCurrent(valid)
       this.ctx.store.write(points)
       await this.ctx.store.flush()
     } finally { await driver.disconnect() }
@@ -88,6 +105,8 @@ class PollingEngine {
 
   async stopAll(): Promise<void> {
     this.running = false
+    this.lifecycle = Symbol(); this.driverSlots.clear()
+    this.nextAt.clear(); this.pollJobs.clear()
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined }
     if (this.watchdogTimer) { clearInterval(this.watchdogTimer); this.watchdogTimer = undefined }
     const drivers = [...this.drivers.values()]
@@ -171,37 +190,54 @@ class PollingEngine {
     if (!gs || gs.length === 0) return
     const idx = this.cursor.get(d.id) ?? 0
     const g = gs[idx % gs.length]
+    const lifecycle = this.lifecycle
+    const deferInvalid = () => {
+      if (lifecycle === this.lifecycle && this.nextAt.get(d.id) !== Infinity) this.nextAt.set(d.id, Date.now() + Math.max(1, d.pollIntervalMs ?? this.config.pollIntervalMs))
+    }
+    let readOrigin: any
+    try { readOrigin = this.ctx.config.captureRecordingSource(d.id) } catch { deferInvalid(); return }
+    const sourceCurrent = () => {
+      try { return lifecycle === this.lifecycle && this.ctx.config.recordingSourceMatches(readOrigin, d) && this.ctx.config.getObject(d.id)?.isActive === 1 && d.mode !== 'slave' } catch { return false }
+    }
+    if (!sourceCurrent()) { deferInvalid(); return }
+    const job = Symbol(); this.pollJobs.set(d.id, job)
     this.cursor.set(d.id, (idx + 1) % gs.length)
     this.nextAt.set(d.id, Infinity) // 在途标记：Infinity 会被 schedule() 自然跳过
     const key = this.driverKey(d)
     this.inflight.set(key, (this.inflight.get(key) ?? 0) + 1)
 
     const run = async () => {
-      if (this.ctx.config.getObject(d.id)?.mode === 'slave') return
+      if (!sourceCurrent()) return
       let driver: any
       try {
-        driver = await this.getDriver(d)
+        driver = await this.getDriver(d, sourceCurrent)
+        assertCurrent(sourceCurrent)
         this.connectCooldown.delete(key)
       } catch (e) {
+        if (e instanceof StaleAcquisition || !sourceCurrent()) return
         this.connectCooldown.set(key, Date.now())
         this.setGroupError(d.id, g.id, this.errMsg(e))
         return
       }
       try {
+        const current = () => sourceCurrent() && this.drivers.get(key) === driver
         const gapMs = d.pollIntervalMs ?? this.config.pollIntervalMs ?? 0
-        const values = await this.readGroup(driver, g, gapMs, d.timeoutMs)
-        if (this.ctx.config.getObject(d.id)?.mode === 'slave') return
+        const values = await this.readGroup(driver, g, gapMs, d.timeoutMs, current)
+        assertCurrent(current)
         const area = areaForFunction(g.functionCode as ModbusFunctionCode)
         this.clearGroupError(d.id, g.id)
         this.readFailCount.delete(key) // 一次成功说明串口链路当前可用，清零该串口的连续失败
         const points: Array<Record<string, unknown>> = []
         for (const word of values) points.push({ objectId: d.id, area, ...word, quality: 'good' })
         if (points.length > 0) {
-          this.ctx.emit('poller/result', { objectId: d.id, points })
+          assertCurrent(current)
+          this.ctx.emit('poller/result', { objectId: d.id, points, readOrigin: captureAcquisitionOrigin(d.id, current) })
+          assertCurrent(current)
           this.ctx.store.write(points)
           this.lastOutcomeAt.set(d.id, Date.now())
         }
       } catch (e) {
+        if (e instanceof StaleAcquisition || !sourceCurrent() || this.drivers.get(key) !== driver) return
         this.setGroupError(d.id, g.id, this.errMsg(e))
         this.autoResetOnRepeatedFailures(key, d)
       }
@@ -213,8 +249,12 @@ class PollingEngine {
     } finally {
       this.inflight.set(key, (this.inflight.get(key) ?? 1) - 1)
       if ((this.inflight.get(key) ?? 0) <= 0) this.inflight.delete(key)
-      this.nextAt.set(d.id, Date.now() + Math.max(1, d.pollIntervalMs ?? this.config.pollIntervalMs))
-      if (this.running) this.schedule()
+      if (lifecycle === this.lifecycle && this.pollJobs.get(d.id) === job) {
+        this.pollJobs.delete(d.id)
+        const fresh = this.ctx.config.getObject(d.id)
+        if (fresh && fresh.mode !== 'slave') this.nextAt.set(d.id, Date.now() + Math.max(1, fresh.pollIntervalMs ?? this.config.pollIntervalMs))
+        if (this.running) this.schedule()
+      }
     }
   }
 
@@ -345,7 +385,7 @@ class PollingEngine {
    * 相邻两批之间暂停 gapMs（扫描间隔；A 方案：为了不过度挤压自/串口从站）再发下一批。
    * 点位不跨响应拆分；每个响应保留独立 batchId 和统一时间戳。
    */
-  private async readGroup(driver: any, group: any, gapMs = 0, timeoutMs?: number): Promise<ReadWord[]> {
+  private async readGroup(driver: any, group: any, gapMs = 0, timeoutMs?: number, current: () => boolean = () => true): Promise<ReadWord[]> {
     const slaveId = group.slaveId ?? 1
     const fc = group.functionCode
     const perChunk = (fc === 1 || fc === 2) ? 2000 : (fc === 3 || fc === 4 ? 125 : 1)
@@ -362,9 +402,12 @@ class PollingEngine {
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)))
     const out: ReadWord[] = []
     for (const chunk of chunks) {
+      assertCurrent(current)
       // 除第一批外，每批前先停一个扫描间隔（A 方案）
       if (out.length > 0 && gapMs > 0) await sleep(gapMs)
+      assertCurrent(current)
       const part = await single(chunk.start, chunk.quantity)
+      assertCurrent(current)
       if (part.length !== chunk.quantity) throw new Error('Incomplete Modbus response')
       const timestamp = new Date().toISOString(), batchId = randomUUID()
       out.push(...part.map((rawValue, index) => ({ address: chunk.start + index, rawValue: Number(rawValue), timestamp, batchId, slaveId })))
@@ -423,6 +466,7 @@ class PollingEngine {
     const obj = this.ctx.config.getObject(id)
     if (!obj) return
     const key = this.driverKey(obj)
+    this.driverSlots.delete(key)
     this.connectCooldown.delete(key)
     const d = this.drivers.get(key)
     if (d) { this.drivers.delete(key); await Promise.resolve(d.disconnect()).catch(() => {}) }
@@ -449,6 +493,7 @@ class PollingEngine {
     this.lastAutoResetAt.set(key, now)
     const driver = this.drivers.get(key)
     if (driver) {
+      this.driverSlots.delete(key)
       this.drivers.delete(key)
       void Promise.resolve(driver.disconnect()).catch(() => {})
       this.ctx.logger('poller').warn(
@@ -465,6 +510,7 @@ class PollingEngine {
     if (obj) this.connectCooldown.delete(this.driverKey(obj))
     {
       const key = 'tcp:' + objectId
+      this.driverSlots.delete(key)
       const d = this.drivers.get(key)
       if (d) { this.drivers.delete(key); void d.disconnect() }
     }
@@ -480,6 +526,7 @@ class PollingEngine {
       if (!key.startsWith('rtu:')) continue
       const serialPath = key.slice(4)
       if (this.isRtuPortInUse(serialPath)) continue
+      this.driverSlots.delete(key)
       const d = this.drivers.get(key)
       if (d) { this.drivers.delete(key); void d.disconnect() }
     }
@@ -496,22 +543,52 @@ class PollingEngine {
     return run
   }
 
-  private async getDriver(obj: any): Promise<any> {
+  private connectionSignature(obj: any) {
+    return JSON.stringify(obj.transport === 'rtu' ? ['rtu', obj.serialPath, obj.baudRate, obj.parity, obj.stopBits, obj.dataBits, obj.flowControl] : ['tcp', obj.ip, obj.port])
+  }
+
+  private async getDriver(obj: any, current: () => boolean = () => true): Promise<any> {
     const fresh = this.ctx.config.getObject(obj.id) ?? obj
     if (fresh.mode === 'slave') throw new Error('从站不使用主站连接')
     const key = this.driverKey(fresh)
+    assertCurrent(current)
+    const binding = this.connectionSignature(fresh), lifecycle = this.lifecycle
     let driver = this.drivers.get(key)
+    if (driver && (this.driverBindings.get(driver) !== binding || !driver.isConnected())) {
+      this.drivers.delete(key); this.driverSlots.delete(key)
+      await Promise.resolve(driver.disconnect()).catch(() => {})
+      assertCurrent(() => lifecycle === this.lifecycle && current() && binding === this.connectionSignature(this.ctx.config.getObject(obj.id) ?? {}))
+      driver = undefined
+    }
     if (!driver || !driver.isConnected()) {
+      const slot = Symbol(); this.driverSlots.set(key, slot)
       const transport = fresh.transport === 'rtu' ? 'rtu' : 'tcp'
       const identity = transport === 'rtu'
         ? { channelKey: key }
         : { deviceId: fresh.id, channelKey: key }
       driver = this.ctx.modbus.createDriver(transport, identity)
-      await driver.connect(fresh)
+      try {
+        await driver.connect(fresh)
+        if (lifecycle !== this.lifecycle || this.driverSlots.get(key) !== slot || binding !== this.connectionSignature(this.ctx.config.getObject(obj.id) ?? {})) throw new StaleAcquisition()
+        assertCurrent(current)
+      } catch (error) {
+        let obsolete = true
+        try { obsolete = lifecycle !== this.lifecycle || this.driverSlots.get(key) !== slot || !current() || binding !== this.connectionSignature(this.ctx.config.getObject(obj.id) ?? {}) } catch {}
+        if (this.driverSlots.get(key) === slot) this.driverSlots.delete(key)
+        await Promise.resolve(driver.disconnect()).catch(() => {})
+        if (obsolete) throw new StaleAcquisition()
+        throw error
+      }
+      this.driverBindings.set(driver, binding)
       this.drivers.set(key, driver)
     }
     return driver
   }
 }
 
-export function apply(ctx: Context, config: Config): void { ctx.provide('poller', new PollingEngine(ctx, config)) }
+export function apply(ctx: Context, config: Config): void {
+  const engine = new PollingEngine(ctx, config)
+  ctx.provide('poller', engine)
+  // Invalidate old in-flight work when Cordis disposes this producer.
+  ctx.effect?.(() => () => engine.stopAll())
+}

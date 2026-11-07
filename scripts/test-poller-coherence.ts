@@ -4,21 +4,23 @@ import { decodeHistorySeries } from '../apps/web/src/history-curve.ts'
 import { encodeRegister, decodeRegister } from '../packages/core/src/codec.ts'
 import { DuckDBStore } from '../packages/store/src/index.ts'
 import { apply as applyRules } from '../packages/rule/src/index.ts'
+import { withMockRecordingIntervals } from './fixtures/recording-config.ts'
 
 // No runtime bootstrap or driver imports: every protocol response is an in-process array.
 const group = { id: 1, objectId: 1, functionCode: 3, startAddress: 0, quantity: 4, isActive: 1 }
-const device = { id: 1, mode: 'master', transport: 'tcp', pollIntervalMs: 0 }
+const device = { id: 1, mode: 'master', transport: 'tcp', isActive: 1, pollIntervalMs: 0 }
 let engine: any
 const captured: any[] = []
-const driver = { isConnected: () => true, readHoldingRegisters: async () => [1, 2, 3, 4] }
+const driver = { isConnected: () => true, connect: async () => {}, readHoldingRegisters: async () => [1, 2, 3, 4] }
 const ctx: any = {
   on: () => {}, provide: (_name: string, value: any) => { engine = value },
-  config: { getObject: () => device },
+  config: withMockRecordingIntervals({ getObject: () => device, updateObject: () => {} }),
+  modbus: { createDriver: () => driver },
   store: { write: (points: any[]) => captured.push(...points) },
   emit: () => {},
 }
 apply(ctx, { pollIntervalMs: 0, connectRetryMs: 0, watchdogTimeoutMs: 30000, autoResetFailThreshold: 0, autoResetCooldownMs: 0 })
-engine.drivers.set('tcp:1', driver); engine.groupsByDevice.set(1, [group])
+engine.groupsByDevice.set(1, [group])
 const RealDate = Date
 let tick = 0
 const base = Date.parse('2026-10-28T00:00:00Z')
@@ -64,7 +66,7 @@ for (const fc of [3, 4]) for (const type of ['uint32', 'uint32-LE', 'uint64', 'u
   const context: any = {
     on: (name: string, fn: any) => { if (name === 'poller/result') handler = fn },
     provide: (name: string, service: any) => { if (name === 'poller') once = service },
-    config: { listRules: () => [{ id: 1, registerId: overlapRegister.id, operator: '>', threshold: 65535 }], listRegistersByObject: () => [overlapRegister], getGroup: (id: number) => ({ ...group, id, slaveId: 1 }), log: () => {} },
+    config: withMockRecordingIntervals({ getObject: () => undefined, updateObject: () => {}, listRules: () => [{ id: 1, registerId: overlapRegister.id, operator: '>', threshold: 65535 }], listRegistersByObject: () => [overlapRegister], getGroup: (id: number) => ({ ...group, id, slaveId: 1 }), log: () => {} }),
     store: { write: () => {}, flush: async () => {} },
     modbus: { createDriver: () => ({ connect: async () => {}, disconnect: async () => { disconnects++ }, readHoldingRegisters: read, readInputRegisters: read }) },
     emit: (name: string, event: any) => {

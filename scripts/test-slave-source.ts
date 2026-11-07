@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { apply as applyPoller } from '../packages/poller/src/index.ts'
 import { apply as applyRules } from '../packages/rule/src/index.ts'
 import { encodeRegister } from '../packages/core/src/codec.ts'
+import { withMockRecordingIntervals } from './fixtures/recording-config.ts'
 
 for (const fc of [1, 2, 3, 4]) for (const dataType of fc <= 2 ? ['uint16'] : ['uint32', 'uint32-LE', 'uint64', 'uint64-LE']) {
   const wide = dataType.includes('64'), threshold = fc <= 2 ? 0 : 65535
@@ -12,13 +13,14 @@ for (const fc of [1, 2, 3, 4]) for (const dataType of fc <= 2 ? ['uint16'] : ['u
   const events: any[] = [], alarms: any[] = [], requests: number[] = []
   const read = async (_address: number, _quantity: number, slaveId: number) => { requests.push(slaveId); const raw = slaveId === 1 ? low : high; return fc <= 2 ? raw.map(Boolean) : raw }
   const driver = { isConnected: () => true, connect: async () => {}, disconnect: async () => {}, readHoldingRegisters: read, readInputRegisters: read, readCoils: read, readDiscreteInputs: read }
+  const device = { id: 1, mode: 'master', slaveId: 1, transport: 'tcp', ip: 'mock.invalid', port: 1502, isActive: 1, pollIntervalMs: 0 }
   const context: any = {
-    config: {
-      getObject: () => ({ id: 1, mode: 'master', slaveId: 1 }),
+    config: withMockRecordingIntervals({
+      getObject: () => device, updateObject: () => {},
       getGroup: (id: number) => groups.find(g => g.id === id), listGroups: () => groups,
       listRegistersByObject: () => registers,
       listRules: () => registers.map(r => ({ id: r.id, registerId: r.id, operator: '>', threshold })), log: () => {},
-    },
+    }),
     on: (name: string, handler: any) => { if (name === 'poller/result') evaluate = handler },
     provide: (name: string, service: any) => { if (name === 'poller') poller = service },
     emit: (name: string, event: any) => {
@@ -35,9 +37,9 @@ for (const fc of [1, 2, 3, 4]) for (const dataType of fc <= 2 ? ['uint16'] : ['u
   assert.deepEqual(requests, [1, 2], 'source metadata must describe the original requests without extra reads')
   assert.deepEqual(events[0].points.map((p: any) => p.slaveId), [...low.map(() => 1), ...high.map(() => 2)])
   assert.equal(alarms[0].slaveId, 2, 'alarm provenance must describe the actual response')
-  poller.drivers.set('tcp:1', driver); poller.groupsByDevice.set(1, groups)
-  await poller.pollNextGroup({ id: 1, transport: 'tcp', pollIntervalMs: 0 })
-  await poller.pollNextGroup({ id: 1, transport: 'tcp', pollIntervalMs: 0 })
+  poller.groupsByDevice.set(1, groups)
+  await poller.pollNextGroup(device)
+  await poller.pollNextGroup(device)
   assert.ok(events[1].points.every((p: any) => p.slaveId === 1))
   assert.ok(events[2].points.every((p: any) => p.slaveId === 2))
   assert.equal(alarms.length, 1, 'round-robin slave 1 must not clear and replay slave 2 alarm')

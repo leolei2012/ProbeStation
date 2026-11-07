@@ -1,9 +1,11 @@
 import { ModbusSlave, type SlaveOptions } from './index.ts'
 import { areaForFunction, registerWidth } from '../../core/src/index.ts'
 import type { SlaveArea } from './protocol.ts'
+import type { RecordingSourceGuard } from '../../config/src/recording-interval.ts'
+import { captureAcquisitionOrigin } from '../../core/src/acquisition-origin.ts'
 /** One listener and memory per configured slave device. Reconciliation is serialized. */
 export class DeviceSlaves {
-  private entries = new Map<number, { server: ModbusSlave; signature: string; transport: 'tcp' | 'rtu'; error: string; retryAt: number; published: number }>()
+  private entries = new Map<number, { server: ModbusSlave; signature: string; transport: 'tcp' | 'rtu'; error: string; retryAt: number; published: number; source?: RecordingSourceGuard }>()
   private chain: Promise<void> = Promise.resolve()
   private timer?: ReturnType<typeof setTimeout>
   private closed = false
@@ -13,7 +15,7 @@ export class DeviceSlaves {
     this.groupStates.set(groupId, error)
     this.emit(error ? 'poller/group-error' : 'poller/group-ok', { objectId, groupId, ...(error ? { error } : {}) })
   }
-  constructor(private cfg: any, private store: any, private emit: (event: string, payload: any) => void, private portCtor?: any) {}
+  constructor(private cfg: any, private store: any, private emit: (event: string, payload: any) => void, private portCtor?: any, private createServer = (port: number) => new ModbusSlave({ port, holdingSize: 65536 }, portCtor)) {}
   start() { const tick = async () => { if (this.closed) return; await this.sync(); if (!this.closed) this.timer = setTimeout(tick, 250) }; void tick() }
   sync() { this.chain = this.chain.catch(() => {}).then(() => this.reconcile()); return this.chain }
   private async reconcile() {
@@ -24,28 +26,39 @@ export class DeviceSlaves {
     for (const groupId of this.groupStates.keys()) if (!groups.has(groupId)) this.groupStates.delete(groupId)
     for (const [id, entry] of this.entries) if (!ids.has(id)) { await entry.server.stop(entry.transport); this.entries.delete(id); this.emit('device/status', { objectId: id, connected: false }) }
     for (const device of devices) {
+      let source: RecordingSourceGuard
+      try { source = this.cfg.captureRecordingSource(device.id); if (!this.cfg.recordingSourceMatches(source, device)) continue } catch { continue }
       let entry = this.entries.get(device.id)
-      if (!entry) { entry = { server: new ModbusSlave({ port: device.port, holdingSize: 65536 }, this.portCtor), signature: '', transport: device.transport, error: '', retryAt: 0, published: 0 }; this.entries.set(device.id, entry) }
+      if (!entry) { entry = { server: this.createServer(device.port), signature: '', transport: device.transport, error: '', retryAt: 0, published: 0 }; this.entries.set(device.id, entry) }
       const options: SlaveOptions = { host: device.ip || '0.0.0.0', port: device.port, unitId: device.slaveId, serialPath: device.serialPath || '', baudRate: device.baudRate, parity: device.parity, dataBits: device.dataBits, stopBits: device.stopBits, flowControl: device.flowControl }
       const signature = JSON.stringify([device.transport, options, device.isActive])
       let running = entry.server.status()[entry.transport].running
       if (entry.signature !== signature || device.isActive && !running && Date.now() >= entry.retryAt) {
         await entry.server.stop(entry.transport)
+        if (this.closed || !this.sourceCurrent(source, device)) continue
         entry.transport = device.transport; entry.signature = signature; entry.error = ''
         if (device.isActive) {
           try {
             if (device.transport === 'rtu' && this.cfg.listObjects().some((d: any) => d.id !== device.id && d.isActive && d.transport === 'rtu' && (d.serialPath || '').trim().toLowerCase() === options.serialPath.trim().toLowerCase())) throw new Error('串口已被其他启用的设备使用，请停用后再启动从站')
             await entry.server.start(entry.transport, options)
-          } catch (e: any) { entry.error = e.message; entry.retryAt = Date.now() + 5000 }
+          } catch (e: any) { if (!this.sourceCurrent(source, device)) continue; entry.error = e.message; entry.retryAt = Date.now() + 5000 }
         }
         running = entry.server.status()[entry.transport].running
+        if (this.closed || !this.sourceCurrent(source, device)) continue
         this.emit('device/status', { objectId: device.id, connected: running, error: entry.error })
       }
+      entry.source = source
       if (running && Date.now() - entry.published >= Math.max(100, device.pollIntervalMs || 1000)) this.publish(device, entry)
       else if (!running) for (const group of this.cfg.listGroups(device.id).filter((g: any) => g.isActive)) this.groupState(device.id, group.id, entry.error || '从站已停止')
     }
   }
+  private sourceCurrent(source: RecordingSourceGuard | undefined, device: any) {
+    try { return !this.closed && !!source && this.cfg.recordingSourceMatches(source, device) && this.cfg.getObject(device.id)?.mode === 'slave' } catch { return false }
+  }
   private publish(device: any, entry: any) {
+    const source = entry.source
+    const current = () => this.sourceCurrent(source, device) && !!this.cfg.getObject(device.id)?.isActive
+    if (!current()) return
     const points: any[] = [], seen = new Set<string>(), timestamp = new Date().toISOString()
     for (const group of this.cfg.listGroups(device.id).filter((g: any) => g.isActive)) {
       try {
@@ -59,7 +72,7 @@ export class DeviceSlaves {
         this.groupState(device.id, group.id, '')
       } catch (e: any) { this.groupState(device.id, group.id, e.message) }
     }
-    if (points.length) { this.store.write(points); this.emit('poller/result', { objectId: device.id, points }) }
+    if (points.length && current()) { this.store.write(points); this.emit('poller/result', { objectId: device.id, points, readOrigin: captureAcquisitionOrigin(device.id, current) }) }
     entry.published = Date.now()
   }
   status(id: number) {
@@ -77,6 +90,7 @@ export class DeviceSlaves {
     const entry = this.entries.get(id), device = this.cfg.getObject(id)
     if (!entry || !device || device.mode !== 'slave') throw new Error('从站设备不存在')
     if (!this.connected(id)) throw new Error(entry.error || '请先启动从站')
+    if (!this.sourceCurrent(entry.source, device)) throw new Error('从站来源已变化，请核对当前配置后重试')
     entry.server.write(area, address, values); this.publish(device, entry)
   }
   async stop() { this.closed = true; if (this.timer) clearTimeout(this.timer); await this.chain; for (const entry of this.entries.values()) await entry.server.stop(entry.transport); this.entries.clear() }

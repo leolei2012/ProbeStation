@@ -15,6 +15,7 @@ import { registerCurve } from '../packages/api/src/curve.ts'
 import { registerHistoryExport } from '../packages/api/src/history-export.ts'
 import { apply as applyPoller } from '../packages/poller/src/index.ts'
 import { DeviceSlaves } from '../packages/slave/src/devices.ts'
+import { withMockRecordingIntervals } from './fixtures/recording-config.ts'
 
 const start = '2026-11-06T00:00:00Z', base = Date.parse(start), end = new Date(base + 300000).toISOString()
 const groups = [1, 2].map(id => ({ id, slaveId: id, functionCode: 3, startAddress: 0, quantity: 4 }))
@@ -145,7 +146,8 @@ try {
     connect: async (target: any) => assert.equal(target.ip, 'mock.invalid'), disconnect: async () => {},
     readHoldingRegisters: async (_address: number, _count: number, slaveId: number) => { requested.push(slaveId); return [0, slaveId === 1 ? 5 : 100, 0, 0] },
   }
-  const context = { config: cfg, store, modbus: { createDriver: () => driver }, on: () => {}, provide: (_name: string, service: any) => { poller = service }, emit: (_name: string, event: any) => { wire = JSON.parse(JSON.stringify(event)) } }
+  const onceCfg = withMockRecordingIntervals({ getObject: () => undefined, updateObject: () => {}, listRegisters: () => [] })
+  const context = { config: onceCfg, store, modbus: { createDriver: () => driver }, on: () => {}, provide: (_name: string, service: any) => { poller = service }, emit: (_name: string, event: any) => { wire = JSON.parse(JSON.stringify(event)) } }
   applyPoller(context as any, { pollIntervalMs: 0, connectRetryMs: 0, watchdogTimeoutMs: 30000, autoResetFailThreshold: 0, autoResetCooldownMs: 0 })
   const from = new Date(Date.now() - 1000).toISOString()
   await poller.pollOnce({ id: 9, host: 'mock.invalid', port: 1502, groups })
@@ -156,8 +158,10 @@ try {
   assert.deepEqual((await store.queryRegisterCurve(9, from, to, regs())).series.map(s => s.samples[0][1]), [5, 100])
   assert.equal(sourceSample(store.getLatest(), 9, 'holding-register', 1, 1)?.rawValue, 5)
   // Call only the pure publish path, with a fake memory reader; never reconcile/start a listener.
-  const local = new DeviceSlaves({ listGroups: () => [{ ...groups[0], isActive: 1 }], listRegisters: () => [definitions[0]] }, store, (_event, payload) => { if (payload.points) wire = payload })
-  ;(local as any).publish({ id: 10, slaveId: 7 }, { server: { read: () => [0, 77] } })
+  const localDevice = { id: 10, mode: 'slave', transport: 'tcp', slaveId: 7, isActive: 1 }
+  const localCfg = withMockRecordingIntervals({ getObject: () => localDevice, updateObject: () => {}, listGroups: () => [{ ...groups[0], isActive: 1 }], listRegisters: () => [definitions[0]] })
+  const local = new DeviceSlaves(localCfg, store, (_event, payload) => { if (payload.points) wire = payload })
+  ;(local as any).publish(localDevice, { source: localCfg.captureRecordingSource(10), server: { read: () => [0, 77] } })
   await store.flush()
   assert.ok(wire.points.every((p: any) => p.slaveId === 7 && p.batchId === undefined), 'local slave memory retains its own source without inventing a response identity')
   const localHistory = await store.queryRegisterCurve(10, from, new Date(Date.now() + 1000).toISOString(), [{ ...regs()[0], slaveId: 7, sourceAmbiguous: false }])

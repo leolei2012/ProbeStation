@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { acquisitionOriginMatches, type AcquisitionOrigin } from '../../core/src/acquisition-origin.ts'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import { areaForFunction, type ModbusFunctionCode } from '../../core/src/protocol.ts'
 import type { RecordingIntervalLease, RecordingSourceGuard } from '../../config/src/recording-interval.ts'
@@ -97,7 +98,7 @@ export class Recorder {
     this.sampleLimits = Object.freeze({ maxSamplesPerSession: limits.maxSamplesPerSession === undefined ? DEFAULT_RECORDING_SAMPLE_LIMITS.maxSamplesPerSession : limits.maxSamplesPerSession, maxTotalSamples: limits.maxTotalSamples === undefined ? DEFAULT_RECORDING_SAMPLE_LIMITS.maxTotalSamples : limits.maxTotalSamples })
     if (Object.values(this.sampleLimits).some(value => !Number.isSafeInteger(value) || value < 1)) throw new Error('invalid recording sample limits')
     this.intervalScope = cfg.getRecordingIntervalScope()
-    ctx.on('poller/result', ({ objectId, points }: any) => this.onResult(objectId, points))
+    ctx.on('poller/result', ({ objectId, points, readOrigin }: any) => this.onResult(objectId, points, readOrigin))
     ctx.on('config/changed', (payload: any) => { if (payload?.scope === 'object') this.inspectSources(Number.isSafeInteger(payload.id) && payload.id > 0 ? payload.id : undefined) })
   }
 
@@ -303,9 +304,11 @@ export class Recorder {
   private sample(p: InputSample): RecordingSample {
     return { ts: p.timestamp, area: p.area, address: p.address, rawValue: p.rawValue, quality: p.quality, slaveId: p.slaveId ?? null, batchId: p.batchId ?? null, sourceVerified: validSlaveId(p.slaveId) }
   }
-  private onResult(objectId: number, points: InputSample[]): void {
+  private onResult(objectId: number, points: InputSample[], readOrigin?: AcquisitionOrigin): void {
     this.syncIntervalScope()
     this.inspectSources(objectId)
+    // A prior synchronous listener can edit/restart recording during this same emit.
+    if (readOrigin !== undefined && !acquisitionOriginMatches(readOrigin, objectId)) return
     for (const s of this.sessions.values()) {
       if (s.status !== 'recording' || s.deviceId !== objectId) continue
       const attributable = points.filter(p => (p.objectId === undefined || p.objectId === objectId) && (p.slaveId == null || validSlaveId(p.slaveId)))
