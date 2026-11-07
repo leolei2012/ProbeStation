@@ -32,6 +32,7 @@
     "scripts/fixtures/config-backup-preview.tsx",
     "scripts/fixtures/live-point-filter-preview.tsx",
     "scripts/fixtures/live-snapshot-preview.tsx",
+    "scripts/fixtures/communication-summary-preview.tsx",
     "scripts/fixtures/assistant-markdown-preview.tsx",
     "scripts/fixtures/history-time-range-preview.tsx",
     "scripts/fixtures/history-query-memory-preview.tsx",

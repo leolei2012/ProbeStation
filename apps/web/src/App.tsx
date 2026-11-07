@@ -38,6 +38,7 @@ import { fullGroupForEditing } from './group-settings-save'
 import type { DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { saveGuardedDeviceSettings } from './device-settings-save'
 import { DeviceSlaveStatus } from './DeviceSlaveStatus'
+import { CommunicationSummary } from './CommunicationSummary'
 import { ColumnControl, ValueModeControl, useDisplayColumns, useValueMode } from './DataDisplayControls'
 import { AlarmPanel, useAlarmRules } from './AlarmPanel'
 import { ValueReading } from './ValueReading'
@@ -1692,6 +1693,7 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
   return (
     <div>
       <div className="db-head"><div><div className="db-title">{t('tabRaw')}</div><div className="kv">{device.name} · {device.transport === 'rtu' ? device.serialPath : device.ip + ':' + device.port}</div></div></div>
+      <CommunicationSummary device={device} english={t('cancel') === 'Cancel'} />
       <div className="toolbar">
         <span className="kv" role="status">{paused ? '已暂停刷新 · 设备采集继续' : '串口/TCP 原始报文（自动刷新 1s）'}</span>
         <label className="kv">显示帧数

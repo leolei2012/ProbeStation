@@ -1,5 +1,7 @@
 # @probebench/web
 
+`CommunicationSummary`接入原始报文页，默认收起不读取；展开及手动重读仅GET既有diagnostics。`CommunicationSummaryRead`合并在途读取、超时/取消和迟到结果隔离；解析核对设备/共享通道身份，NULL/零与旧结果不冒充正常。无后台轮询、探测、模型或清空能力，RTU共享及累计边界见[说明](../../docs/develop/58-只读通信统计快照.md)。
+
 `PointSettingsEditor`用固定的打开时字段文本与`pointEnumChanged`识别本地草稿，`PointDraftCloseGuard`同步管理主动关闭/确认/继续，`PointDraftDiscard`提供明确放弃入口；保存中不关闭、不取消写，成功直接关闭。只涉及点位窗口的×/取消/内部Escape，不做浏览器刷新、外部导航或其他编辑器的全局草稿保护，见[说明与手测](../../docs/develop/57-点位草稿关闭保护.md)。
 
 `LiveTable`的“冻结当前筛选结果”使用纯`captureLiveSnapshot`复制当前逻辑匹配点位、显示文本与已知来源原始字；`LiveSnapshotPanel`独立分页预览并本地下载JSON。采集/新读数/筛选变化不会改写副本，切换设备或卸载后不保留；无请求、模型或配置写入。精确值/NULL/异常、时间边界及手测限制见[说明](../../docs/develop/56-实时观测快照冻结与下载.md)。
