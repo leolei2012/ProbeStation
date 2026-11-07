@@ -151,3 +151,7 @@ export_points_xlsx会分配合法唯一页签，B1保留原组名，告警G可�
 ## 稳定分页读取录制
 
 新调用优先get_recording_page：从offset=0开始，续页传同一recording_id、snapshot_id=首个响应snapshotId及上一页nextOffset。仅已结束录制，活动返回409、不为读取停止；缺条件428、错快照409、删除/淘汰404，没有重录或全量回退。hasMore=false只说明当前页后没有保留样本，需检查此前页是否连续及recording.completionReason/quotaTruncated、来源/批次质量。configurationScopeCurrent仅为当前打开配置scope，不能证明设备/点表未编辑。旧get_recording仍全量兼容，详情见[契约及SDK验证](../../docs/develop/42-录制结果稳定分页读取.md)。
+
+## 活动录制的连接来源条件
+
+连接配置有效字段改变后，旧录制以source-changed结束；读取条件失败为source-unverified。保留已有样本、不再追加或触发，撤销旧间隔句柄，不自动归还周期；检查warnings及intervalRestore，必要时通过有条件设备编辑核对当前来源/周期。首次获取间隔的事务核对发现准备期变化时返回409，不启动/不改周期；获取后通知或共享加入阶段变化会返回已结束会话及原因。工具参数不变，周期/名称/闲置传输字段仍可兼容修改；有效值相同不因整表保存而直接终止。不是物理身份认证，也未给poller增加读时来源证明，详见[修复与剩余边界](../../docs/develop/43-录制连接来源条件保护.md)。

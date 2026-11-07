@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import { areaForFunction, type ModbusFunctionCode } from '../../core/src/protocol.ts'
-import type { RecordingIntervalLease } from '../../config/src/recording-interval.ts'
+import type { RecordingIntervalLease, RecordingSourceGuard } from '../../config/src/recording-interval.ts'
 import { parseRecordingIntervalStatus, type RecordingIntervalNotice, type RecordingIntervalStatus } from '../../core/src/recording-attention.ts'
 
 export interface RecordingAddress { area: string; address: number; slaveId?: number }
@@ -13,7 +13,7 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1
 export const DEFAULT_RECORDING_SAMPLE_LIMITS = Object.freeze({ maxSamplesPerSession: 200000, maxTotalSamples: 500000 })
 export const DEFAULT_RECORDING_PAGE_SIZE = 200
 export const MAX_RECORDING_PAGE_SIZE = 1000
-export type RecordingCompletionReason = 'duration' | 'trigger-window' | 'trigger-timeout' | 'stopped' | 'deleted' | 'sample-limit' | 'storage-limit' | 'configuration-changed'
+export type RecordingCompletionReason = 'duration' | 'trigger-window' | 'trigger-timeout' | 'stopped' | 'deleted' | 'sample-limit' | 'storage-limit' | 'configuration-changed' | 'source-changed' | 'source-unverified'
 export interface RecordingSampleLimits { maxSamplesPerSession: number; maxTotalSamples: number }
 
 /** 一条采样（原始 16 位字 + 时间戳 + 质量）。 */
@@ -86,6 +86,7 @@ export class Recorder {
   private droppedNotices = 0
   private intervalScope: unknown
   private sessionScopes = new WeakMap<RecordingSession, unknown>()
+  private sessionSources = new WeakMap<RecordingSession, RecordingSourceGuard>()
   private static readonly MAX_INTERVAL_NOTICES = 100
   private readonly sampleLimits: RecordingSampleLimits
   private retainedSamples = 0
@@ -97,6 +98,7 @@ export class Recorder {
     if (Object.values(this.sampleLimits).some(value => !Number.isSafeInteger(value) || value < 1)) throw new Error('invalid recording sample limits')
     this.intervalScope = cfg.getRecordingIntervalScope()
     ctx.on('poller/result', ({ objectId, points }: any) => this.onResult(objectId, points))
+    ctx.on('config/changed', (payload: any) => { if (payload?.scope === 'object') this.inspectSources(Number.isSafeInteger(payload.id) && payload.id > 0 ? payload.id : undefined) })
   }
 
   private checkSlave(slaveId?: number) {
@@ -130,6 +132,7 @@ export class Recorder {
   private prepare(deviceId: number, intervalMs: number) {
     this.syncIntervalScope()
     if (this.changingInterval.has(deviceId)) throw new Error('recording interval operation is already in progress')
+    this.inspectSources(deviceId)
     const obj = this.cfg.getObject(deviceId)
     if (!obj) throw new Error('device ' + deviceId + ' not found')
     this.checkTime(intervalMs, 'intervalMs', 1)
@@ -138,14 +141,15 @@ export class Recorder {
     if (active.length && (!this.intervalLeases.has(deviceId) || !this.cfg.recordingIntervalLeaseValid(this.intervalLeases.get(deviceId)))) throw new Error('active recording interval ownership/configuration changed; do not join or overwrite it')
     if (this.sessions.size >= Recorder.MAX_SESSIONS && ![...this.sessions.values()].some(s => s.status === 'done')) throw new Error('too many active recordings')
     if (this.retainedSamples >= this.sampleLimits.maxTotalSamples) throw new Error(`录制样本容量已满（${this.retainedSamples}/${this.sampleLimits.maxTotalSamples}）；请先list_recordings核对并删除已结束录制后重试，不会自动删除样本。`)
-    return { originalPollInterval: active[0]?.originalPollInterval ?? obj.pollIntervalMs ?? 1000, active: active.length > 0 }
+    return { originalPollInterval: active[0]?.originalPollInterval ?? obj.pollIntervalMs ?? 1000, active: active.length > 0, source: active[0] ? this.sessionSources.get(active[0])! : this.cfg.captureRecordingSource(deviceId) as RecordingSourceGuard }
   }
-  private addSession(session: RecordingSession, alreadyRecording: boolean): void {
+  private addSession(session: RecordingSession, alreadyRecording: boolean, source: RecordingSourceGuard): void {
     this.sessionScopes.set(session, this.cfg.getRecordingIntervalScope())
+    this.sessionSources.set(session, source)
     if (!alreadyRecording) {
       this.changingInterval.add(session.deviceId)
       try {
-        const result = this.cfg.acquireRecordingInterval(session.deviceId, session.intervalMs)
+        const result = this.cfg.acquireRecordingInterval(session.deviceId, session.intervalMs, source)
         this.intervalLeases.set(session.deviceId, result.lease)
         session.originalPollInterval = result.lease.originalPollInterval
         session.warnings.push(...result.warnings)
@@ -159,6 +163,7 @@ export class Recorder {
       this.sessions.delete(oldest.id)
     }
     this.syncIntervalScope()
+    this.inspectSources(session.deviceId)
   }
 
   /** 删除一段录制（含仍在录制中的，会先结束）。 */
@@ -196,7 +201,7 @@ export class Recorder {
       lastTriggerTimestamp: null,
       triggeredBy: null,
     }
-    this.addSession(session, prepared.active)
+    this.addSession(session, prepared.active, prepared.source)
     if (session.status === 'recording') this.timers.set(session.id, setTimeout(() => this.finish(session.id, 'duration'), durationMs))
     return session.id
   }
@@ -229,7 +234,7 @@ export class Recorder {
       lastTriggerTimestamp: null,
       triggeredBy: null,
     }
-    this.addSession(session, prepared.active)
+    this.addSession(session, prepared.active, prepared.source)
     // 安全上限：10 分钟仍不触发则结束，避免无限录制
     if (session.status === 'recording') this.timers.set(session.id, setTimeout(() => this.finish(session.id, 'trigger-timeout'), 10 * 60 * 1000))
     return session.id
@@ -300,6 +305,7 @@ export class Recorder {
   }
   private onResult(objectId: number, points: InputSample[]): void {
     this.syncIntervalScope()
+    this.inspectSources(objectId)
     for (const s of this.sessions.values()) {
       if (s.status !== 'recording' || s.deviceId !== objectId) continue
       const attributable = points.filter(p => (p.objectId === undefined || p.objectId === objectId) && (p.slaveId == null || validSlaveId(p.slaveId)))
@@ -358,21 +364,31 @@ export class Recorder {
     this.syncIntervalScope()
     const s = this.sessions.get(id)
     if (!s || s.status !== 'recording') return
+    if (reason !== 'source-changed' && reason !== 'source-unverified') {
+      this.inspectSources(s.deviceId)
+      if (s.status !== 'recording') return
+    }
     s.status = 'done'
     s.completionReason = reason
     s.finishedAt = Date.now()
     const t = this.timers.get(id)
     if (t) clearTimeout(t)
     this.timers.delete(id)
+    const sourceEnded = reason === 'source-changed' || reason === 'source-unverified'
     const otherActive = [...this.sessions.values()].some(other => other.id !== id && other.deviceId === s.deviceId && other.status === 'recording')
-    if (otherActive) { s.intervalRestore = 'shared'; return }
+    if (!sourceEnded && otherActive) { s.intervalRestore = 'shared'; return }
     const lease = this.intervalLeases.get(s.deviceId)
     this.intervalLeases.delete(s.deviceId)
     this.changingInterval.add(s.deviceId)
     try {
-      if (!lease) throw new Error('missing recording interval ownership')
-      const result = this.cfg.restoreRecordingInterval(lease)
-      s.intervalRestore = result.state; s.warnings.push(...result.warnings)
+      if (sourceEnded) {
+        if (lease) this.cfg.revokeRecordingInterval(lease)
+        s.intervalRestore = 'preserved'; s.warnings.push('设备连接来源条件已变化或无法核实，录制已结束并保留已有数据；未自动归还间隔，请核对当前来源和周期。')
+      } else {
+        if (!lease) throw new Error('missing recording interval ownership')
+        const result = this.cfg.restoreRecordingInterval(lease)
+        s.intervalRestore = result.state; s.warnings.push(...result.warnings)
+      }
     } catch { s.intervalRestore = 'uncertain'; s.warnings.push('录制已结束，但恢复间隔结果待核实；请人工核对当前采样周期，勿自动重复恢复。') }
     finally { this.changingInterval.delete(s.deviceId) }
     if (s.intervalRestore === 'preserved' || s.intervalRestore === 'uncertain') {
@@ -382,6 +398,20 @@ export class Recorder {
       catch { s.warnings.push('间隔核对日志未保存；本次运行仍可查看核对记录。') }
       this.intervalNotices.unshift(Object.freeze({ recordingId: s.id, deviceId: s.deviceId, state: s.intervalRestore, originalIntervalMs: s.originalPollInterval, recordingIntervalMs: s.intervalMs, finishedAt: s.finishedAt!, warnings: Object.freeze([...s.warnings]) }))
       if (this.intervalNotices.length > Recorder.MAX_INTERVAL_NOTICES) { this.intervalNotices.pop(); this.droppedNotices++ }
+    }
+  }
+  private inspectSources(deviceId?: number) {
+    this.syncIntervalScope()
+    const checked = new Map<RecordingSourceGuard, RecordingCompletionReason | null>()
+    for (const session of this.sessions.values()) {
+      if (session.status !== 'recording' || deviceId !== undefined && session.deviceId !== deviceId) continue
+      const guard = this.sessionSources.get(session)
+      let reason: RecordingCompletionReason | null = guard ? checked.get(guard) ?? null : 'source-unverified'
+      if (guard && !checked.has(guard)) {
+        try { reason = this.cfg.recordingSourceMatches(guard) ? null : 'source-changed' } catch { reason = 'source-unverified' }
+        checked.set(guard, reason)
+      }
+      if (reason) this.finish(session.id, reason)
     }
   }
 }

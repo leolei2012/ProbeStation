@@ -3,7 +3,15 @@ import { captureDeviceEditBaseline, deviceEditMatches, type DeviceEditBaseline }
 import type { DeviceRecord } from './index.ts'
 
 export interface RecordingIntervalLease { readonly deviceId: number; readonly intervalMs: number; readonly originalPollInterval: number }
+export interface RecordingSourceGuard { readonly deviceId: number }
 interface Guard { expected: DeviceEditBaseline; revision: symbol; dataVersion: number }
+const sourceKeys = ['mode', 'transport', 'slaveId', 'ip', 'port', 'serialPath', 'baudRate', 'parity', 'stopBits', 'dataBits', 'flowControl'] as const
+function sourceSignature(row: DeviceRecord | undefined): string | null {
+  if (!row || !['master', 'slave'].includes(row.mode) || !['tcp', 'rtu'].includes(row.transport) || !Number.isFinite(row.slaveId)) return null
+  const values = row.transport === 'tcp' ? [row.ip, row.port] : [row.serialPath, row.baudRate, row.parity, row.stopBits, row.dataBits, row.flowControl]
+  if (row.transport === 'tcp' ? typeof row.ip !== 'string' || !Number.isFinite(row.port) : row.serialPath !== null && typeof row.serialPath !== 'string' || ![row.baudRate, row.stopBits, row.dataBits].every(Number.isFinite) || typeof row.parity !== 'string' || typeof row.flowControl !== 'string') return null
+  return JSON.stringify([row.id, row.mode, row.transport, row.slaveId, ...values])
+}
 const invalid = (): never => { throw Object.assign(new Error('录制间隔参数无效。'), { statusCode: 400 }) }
 const rate = (value: number) => Number.isSafeInteger(value) && value > 0 && value <= 2147483647
 
@@ -12,12 +20,35 @@ export class RecordingIntervals {
   private revisions = new Map<number, symbol>()
   private leases = new WeakMap<RecordingIntervalLease, Guard>()
   private identity = Symbol()
+  private sourceRevisions = new Map<number, symbol>()
+  private sourceGuards = new WeakMap<RecordingSourceGuard, { scope: symbol; revision: symbol; signature: string }>()
   scope() { return this.identity }
   constructor(private db: () => DatabaseSync, private read: (id: number) => DeviceRecord | undefined, private write: (id: number, rate: number) => void, private restoring: () => boolean, private notify: (id: number) => void) {}
   /** Called for every supported poll-interval write, including same-value writes and rolled-back attempts. */
   changed(id: number) { if (this.revisions.has(id)) this.revisions.set(id, Symbol()) }
-  deleted(id: number) { this.revisions.delete(id) }
-  reset() { this.revisions.clear(); this.leases = new WeakMap(); this.identity = Symbol() }
+  deleted(id: number) { this.revisions.delete(id); this.sourceRevisions.delete(id) }
+  reset() { this.revisions.clear(); this.leases = new WeakMap(); this.identity = Symbol(); this.sourceRevisions.clear(); this.sourceGuards = new WeakMap() }
+  sourceChanged(id: number, fields: Record<string, unknown>) {
+    if (!this.sourceRevisions.has(id) || !sourceKeys.some(key => fields[key] !== undefined)) return
+    const before = this.read(id), next = { ...before, ...Object.fromEntries(sourceKeys.filter(key => fields[key] !== undefined).map(key => [key, fields[key]])) } as DeviceRecord
+    const a = sourceSignature(before), b = sourceSignature(next)
+    if (a === null || b === null || a !== b) this.sourceRevisions.set(id, Symbol())
+  }
+  captureSource(id: number): RecordingSourceGuard {
+    if (!Number.isSafeInteger(id) || id < 1) return invalid()
+    const row = this.read(id)
+    if (!row) throw Object.assign(new Error('录制设备不存在。'), { statusCode: 404 })
+    const signature = sourceSignature(row)
+    if (signature === null) throw Object.assign(new Error('设备来源配置无法核对，本次未开始录制。'), { statusCode: 400 })
+    if (!this.sourceRevisions.has(id)) this.sourceRevisions.set(id, Symbol())
+    const guard = Object.freeze({ deviceId: id })
+    this.sourceGuards.set(guard, { scope: this.identity, revision: this.sourceRevisions.get(id)!, signature }); return guard
+  }
+  sourceMatches(guard: RecordingSourceGuard, row?: DeviceRecord) {
+    const expected = this.sourceGuards.get(guard)
+    return !!expected && expected.scope === this.identity && expected.revision === this.sourceRevisions.get(guard.deviceId) && sourceSignature(row ?? this.read(guard.deviceId)) === expected.signature
+  }
+  revoke(lease: RecordingIntervalLease) { this.leases.delete(lease) }
   private version() {
     const value = this.db().prepare('PRAGMA data_version').get()?.data_version
     if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new Error('无法核对配置数据库写入身份。')
@@ -39,11 +70,12 @@ export class RecordingIntervals {
     try { this.notify(id) } catch { warnings.push('采样间隔已保存，但变更通知失败；请核对运行状态，勿重复操作。') }
     return warnings
   }
-  acquire(id: number, intervalMs: number) {
+  acquire(id: number, intervalMs: number, expectedSource?: RecordingSourceGuard) {
     if (!Number.isSafeInteger(id) || id < 1 || !rate(intervalMs)) return invalid()
     const lease = this.transaction(() => {
       const before = this.read(id)
       if (!before) throw Object.assign(new Error('录制设备不存在。'), { statusCode: 404 })
+      if (expectedSource !== undefined && (!this.sourceMatches(expectedSource, before) || expectedSource.deviceId !== id)) throw Object.assign(new Error('录制准备期间设备来源已变化，本次未开始；请重新核对。'), { statusCode: 409 })
       if (!rate(before.pollIntervalMs)) return invalid()
       const expected = captureDeviceEditBaseline({ ...before, pollIntervalMs: intervalMs })
       if (!this.revisions.has(id)) this.revisions.set(id, Symbol())

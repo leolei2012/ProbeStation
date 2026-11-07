@@ -14,7 +14,7 @@ const groups = [1, 2].map(id => ({ id, slaveId: id, functionCode: 3, startAddres
 const updates: number[] = []
 const cfg = withMockRecordingIntervals({ getObject: (id: number) => id === 1 ? device : undefined, listGroups: () => groups, updateObject: (_id: number, fields: any) => { updates.push(fields.pollIntervalMs); Object.assign(device, fields) } })
 
-const recorder = new Recorder({ on: (_event: string, fn: any) => { callback = fn } }, cfg)
+const recorder = new Recorder({ on: (event: string, fn: any) => { if (event === 'poller/result') callback = fn } }, cfg)
 const point = (slaveId: number | null | undefined, rawValue: number, extra: any = {}) => ({ objectId: 1, area: 'holding-register', address: 0, timestamp: new Date(now).toISOString(), rawValue, quality: 'good', slaveId, batchId: 'response-' + slaveId, ...extra })
 const send = (points: any[], objectId = 1) => callback(JSON.parse(JSON.stringify({ objectId, points })))
 const get = (id: string) => recorder.getRecording(id)!

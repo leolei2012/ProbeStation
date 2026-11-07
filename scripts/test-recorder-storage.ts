@@ -11,7 +11,7 @@ const point = (rawValue: number, address = 0, slaveId: number | null = 1, timest
 function scenario(limits: Partial<RecordingSampleLimits>, run: (cfg: ConfigStore, recorder: Recorder, id: number, send: (points: any[], deviceId?: number) => void) => void) {
   const cfg = new ConfigStore({ dbPath: ':memory:' }), device = cfg.createObject('synthetic storage', 'mock.invalid', 502)
   let receive: (event: any) => void = () => {}
-  const recorder = new Recorder({ on(_event: string, fn: any) { receive = fn } }, cfg, limits)
+  const recorder = new Recorder({ on(event: string, fn: any) { if (event === 'poller/result') receive = fn } }, cfg, limits)
   try { run(cfg, recorder, device.id, (points, deviceId = device.id) => receive({ objectId: deviceId, points })) }
   finally {
     for (const session of recorder.listRecordings()) recorder.deleteRecording(session.id)
@@ -123,7 +123,7 @@ try {
   deleting = new ConfigStore({ dbPath: ':memory:' }, () => { if (deleteOnNotify) { deleteOnNotify = false; owner.deleteRecording(currentId) } })
   const deletionDevice = deleting.createObject('reentrant delete', 'mock.invalid', 502)
   let deletionEvent: (event: any) => void = () => {}
-  owner = new Recorder({ on(_event: string, fn: any) { deletionEvent = fn } }, deleting, { maxSamplesPerSession: 4, maxTotalSamples: 8 })
+  owner = new Recorder({ on(event: string, fn: any) { if (event === 'poller/result') deletionEvent = fn } }, deleting, { maxSamplesPerSession: 4, maxTotalSamples: 8 })
   try {
     currentId = start(owner, deletionDevice.id); deletionEvent({ objectId: deletionDevice.id, points: [point(1)] })
     deleteOnNotify = true; owner.deleteRecording(currentId)

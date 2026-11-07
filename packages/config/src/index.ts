@@ -17,7 +17,7 @@ import { semanticPointFields, type SemanticPointUpdate } from '../../core/src/se
 import { capturePointEditBaseline, parsePointEditRequest, pointEditMatches } from '../../core/src/point-settings-edit.ts'
 import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest } from '../../core/src/device-settings-edit.ts'
 import { captureGroupEditGraph, groupDeletionAcknowledged, groupEditInvalid, parseGroupEditChanges, planGroupResize, type GroupEditSnapshot } from '../../core/src/group-settings-edit.ts'
-import { RecordingIntervals, type RecordingIntervalLease } from './recording-interval.ts'
+import { RecordingIntervals, type RecordingIntervalLease, type RecordingSourceGuard } from './recording-interval.ts'
 
 export const name = 'config'
 
@@ -49,7 +49,10 @@ export class ConfigStore {
   private db: DatabaseSync
   private dbPath: string
   private recordingIntervals = new RecordingIntervals(() => this.db, id => this.getObject(id), (id, intervalMs) => this.update('monitor_objects', id, { pollIntervalMs: intervalMs }, OBJECT_MAP), () => this.restoring, id => this.notify('object', id))
-  acquireRecordingInterval(id: number, intervalMs: number) { return this.recordingIntervals.acquire(id, intervalMs) }
+  acquireRecordingInterval(id: number, intervalMs: number, expectedSource?: RecordingSourceGuard) { return this.recordingIntervals.acquire(id, intervalMs, expectedSource) }
+  captureRecordingSource(id: number) { return this.recordingIntervals.captureSource(id) }
+  recordingSourceMatches(guard: RecordingSourceGuard) { return this.recordingIntervals.sourceMatches(guard) }
+  revokeRecordingInterval(lease: RecordingIntervalLease) { this.recordingIntervals.revoke(lease) }
   recordingIntervalLeaseValid(lease: RecordingIntervalLease) { return this.recordingIntervals.valid(lease) }
   restoreRecordingInterval(lease: RecordingIntervalLease) { return this.recordingIntervals.restore(lease) }
   getRecordingIntervalScope() { return this.recordingIntervals.scope() }
@@ -619,6 +622,7 @@ export class ConfigStore {
     }
     if (cols.length === 0) return
     if (table === 'monitor_objects' && fields.pollIntervalMs !== undefined) this.recordingIntervals.changed(id)
+    if (table === 'monitor_objects') this.recordingIntervals.sourceChanged(id, fields)
     vals.push(id)
     this.db.prepare(`UPDATE ${table} SET ${cols.join(', ')} WHERE id = ?`).run(...vals)
   }

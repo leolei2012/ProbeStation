@@ -14,7 +14,7 @@ globalThis.setTimeout = ((fn: () => void) => { const id = ++nextTimer; timers.se
 globalThis.clearTimeout = ((id: number) => { timers.delete(id) }) as any
 const cfg = new ConfigStore({ dbPath: ':memory:' }), device = cfg.createObject('synthetic pages', 'mock.invalid', 502)
 let emit: (event: any) => void = () => {}
-const recorder = new Recorder({ on(_event: string, fn: any) { emit = fn } }, cfg)
+const recorder = new Recorder({ on(event: string, fn: any) { if (event === 'poller/result') emit = fn } }, cfg)
 const point = (value: number) => ({ area: 'holding-register', address: value % 4, timestamp: new Date().toISOString(), rawValue: value, quality: value % 11 ? 'good' : 'bad', slaveId: value % 5 ? 1 : null, batchId: value % 7 ? 'batch-' + value : null })
 const status = (code: number) => (error: any) => error?.statusCode === code
 try {
@@ -54,7 +54,7 @@ try {
   assert.equal(afterReopen.configurationScopeCurrent, false); assert.deepEqual(afterReopen.samples, oldPage.samples)
   for (let index = 0; index < 51; index++) { const next = recorder.startRecording(device.id, 10, 60000); recorder.stopRecording(next) }
   assert.throws(() => recorder.getRecordingPage(old, 0, 1, oldPage.snapshotId), status(404), 'retention cannot silently substitute another dataset')
-  const limited = new Recorder({ on(_event: string, fn: any) { emit = fn } }, cfg, { maxSamplesPerSession: 2, maxTotalSamples: 3 })
+  const limited = new Recorder({ on(event: string, fn: any) { if (event === 'poller/result') emit = fn } }, cfg, { maxSamplesPerSession: 2, maxTotalSamples: 3 })
   const partial = limited.startRecording(device.id, 10, 60000)
   emit({ objectId: device.id, points: [point(1), point(2), point(3)] })
   const partialPage = limited.getRecordingPage(partial)
