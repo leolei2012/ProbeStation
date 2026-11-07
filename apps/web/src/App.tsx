@@ -50,7 +50,7 @@ import { HistoryQualitySummary } from './HistoryQualitySummary'
 import { HistoryQueryTimeoutError } from './history-query'
 import { historyQueryPlan, startHistoryQuery, type HistoryQueryTask } from './history-query-task'
 import { HistoryExportModal } from './HistoryExportModal'
-import { captureHistoryExport, fetchHistoryExport, saveHistoryExport, type HistoryExportRequest } from './history-export'
+import { captureHistoryExport, downloadHistoryExport, historyExportContextMatches, type HistoryExportRequest } from './history-export'
 import { VirtualTableBody } from './VirtualTableBody'
 import { DeviceIssues, type DataTarget } from './DeviceIssues'
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -93,6 +93,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
     histExportTooLarge: '超过 {n} 条原始行，导出会被截断，已停止生成文件。请取消并减少点位或缩小时间范围后重试。', histExportPreparing: '正在生成完整导出，可取消…', histExportTimeout: '导出超过 30 秒，已取消等待。请缩小时间范围后重试。',
     histExportFull: '导出完整时间范围', histExportViewport: '导出当前缩放区间', histExportSelected: '{n} 个已选点位 · 原始历史（含批次状态）', histExportHint: '按所示时间范围导出，不受图例显隐、Y 轴范围或降采样影响。只读取已选点位所需的数据区和原始字，每次最多 20 万条；超过时请减少点位或缩小时间范围。上限不是导出表格的行数。',
+    histExportContextChanged: '页面配置已变化或尚未核实，已停止此导出。请关闭弹窗，刷新配置后重新打开。', histExportDefinitionNote: '时间和点位ID已固定。文件按下载发起时的后台配置生成；页面发现配置变化会停止导出，尚未同步到页面的后台变更仍需核对。',
     histCancel: '取消查询', histCancelled: '查询已取消，可点击“查询”重新加载。', histTimeout: '查询超过 30 秒，请缩小时间范围后重试。',
     histCoverage: '当前视窗完整区间：{source} 个采样，显示 {shown} 个读数', histSampled: '峰谷保留降采样，放大自动加载细节', histOriginal: '原始采样',
     alarmDelete: '删除', alarmClose: '关闭',
@@ -167,6 +168,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
     histExportTooLarge: 'More than {n} raw rows: exporting would truncate the data, so no file was generated. Cancel, select fewer points or narrow the time range and retry.', histExportPreparing: 'Preparing a complete export. You can cancel…', histExportTimeout: 'Export exceeded 30 seconds. Narrow the time range and retry.',
     histExportFull: 'Export full time range', histExportViewport: 'Export zoomed time range', histExportSelected: '{n} selected points · Raw history with batch status', histExportHint: 'Export the stated time range regardless of legend visibility, Y-axis limits or downsampling. Read only the raw words required by selected points, up to 200,000 rows. Select fewer points or narrow the range if exceeded. This is not the number of spreadsheet rows.',
+    histExportContextChanged: 'Page configuration changed or is unverified. This export was stopped. Close, refresh configuration and reopen the dialog.', histExportDefinitionNote: 'Time and point IDs are fixed. The file uses backend definitions at download start. Observed page changes stop export; backend changes not yet received by this page still need verification.',
     histCancel: 'Cancel query', histCancelled: 'Query cancelled. Click Query to reload.', histTimeout: 'Query exceeded 30 seconds. Narrow the time range and retry.',
     histCoverage: 'Full visible range: {source} samples, {shown} displayed', histSampled: 'Extrema preserved; zoom reloads detail', histOriginal: 'Original samples',
     alarmDelete: 'Delete', alarmClose: 'Close',
@@ -1193,6 +1195,8 @@ function HistoryView({ navigation, memory, configurationReady, target, t, device
   const { start: startMs, end: endMs, valid } = useMemo(() => resolveHistoryTimeRange(range), [range])
   const memoryContext = useMemo(() => queryMemoryContext(device, registers), [registers, device.id, device.mode, device.transport, device.ip, device.port, device.serialPath, device.slaveId, device.baudRate, device.parity, device.stopBits, device.dataBits, device.flowControl])
   const contextKey = useMemo(() => historyReadContextKey(device, groups, registers), [groups, registers, device.id, device.mode, device.slaveId])
+  const exportContext = useMemo(() => configurationReady && contextKey !== null && memoryContext.deviceKey !== null ? { definitions: contextKey, device: memoryContext.deviceKey } : null, [configurationReady, contextKey, memoryContext.deviceKey])
+  const exportContextRef = useRef(exportContext); exportContextRef.current = exportContext
   useEffect(() => { setPage(0); if (!configurationReady || contextKey === null) setCurveRange(null) }, [contextKey, configurationReady])
   const { start: queryStart, end: queryEnd } = historyQueryRange(mode === 'chart' && curveRange ? curveRange : { start: startMs, end: endMs })
   const selectionKey = [...selected].sort((a, b) => a - b).join(',')
@@ -1219,10 +1223,10 @@ function HistoryView({ navigation, memory, configurationReady, target, t, device
   }
   const rows = useMemo(() => deriveHistoryRows(data?.points ?? [], registers, selectedRegisters, valueMode), [data, registers, selected, valueMode])
   const beginExport = (scope: HistoryExportRequest['scope']) => {
-    if (!configurationReady || contextKey === null || !valid || !selectedRegisters.length) return
+    if (!exportContext || !valid || !selectedRegisters.length) return
     const exportRange = scope === 'viewport' ? (mode === 'chart' ? curveRange : null) : { start: startMs, end: endMs }
     if (!exportRange) return
-    setExportRequest(captureHistoryExport(device.id, exportRange, selectedRegisters.map(r => r.id), localTzOffsetMin(), scope))
+    setExportRequest(captureHistoryExport(device.id, exportRange, selectedRegisters.map(r => r.id), localTzOffsetMin(), scope, exportContext))
   }
   const errorText = error instanceof HistoryQueryTimeoutError ? t('histTimeout') : error instanceof Error ? error.message : error == null ? null : String(error)
   return <div className="history-view">
@@ -1231,8 +1235,8 @@ function HistoryView({ navigation, memory, configurationReady, target, t, device
       <ValueModeControl t={t} value={valueMode} onChange={setValueMode} />
       <RegisterSelectButton t={t} groups={groups} deviceSlaveId={device.mode === 'slave' ? device.slaveId : undefined} selected={selected} onApply={ids => { cancelNavigation(); setSelected(ids) }} />
       <div style={{ flex: 1 }} />
-      <button className="btn" disabled={!configurationReady || contextKey === null || !valid || selected.size === 0 || currentStatus === 'loading'} onClick={() => beginExport('full')}>{t('histExportFull')}</button>
-      {mode === 'chart' && <button className="btn" disabled={!configurationReady || contextKey === null || !valid || selected.size === 0 || !curveRange || currentStatus !== 'done'} onClick={() => beginExport('viewport')}>{t('histExportViewport')}</button>}
+      <button className="btn" disabled={!exportContext || !valid || selected.size === 0 || currentStatus === 'loading'} onClick={() => beginExport('full')}>{t('histExportFull')}</button>
+      {mode === 'chart' && <button className="btn" disabled={!exportContext || !valid || selected.size === 0 || !curveRange || currentStatus !== 'done'} onClick={() => beginExport('viewport')}>{t('histExportViewport')}</button>}
     </div>
     <p className="chart-hint" role="note">{t('histIntegrityHint')}</p>
     <HistoryReadNotice reason={!configurationReady ? 'waiting' : contextKey === null ? 'invalid' : contextChanged ? 'changed' : null} english={t('cancel') === 'Cancel'} />
@@ -1264,7 +1268,7 @@ function HistoryView({ navigation, memory, configurationReady, target, t, device
       {currentStatus === 'loading' && <div className="hist-empty" role="status">{t('histLoading')}</div>}
       <HistoryTableBody pointLabels={pointLabels} t={t} rows={rows} selectedRegisters={selectedRegisters} status={currentStatus} error={errorText} page={page} total={data?.total ?? 0} pageSize={200} onPageChange={setPage} />
     </>}
-    {exportRequest && <HistoryExportModal request={exportRequest} t={t} onClose={() => setExportRequest(null)} onPick={async (format, signal) => { const blob = await fetchHistoryExport(format, exportRequest, signal); if (!signal.aborted) saveHistoryExport(blob, format, exportRequest) }} />}
+    {exportRequest && <HistoryExportModal request={exportRequest} t={t} contextCurrent={historyExportContextMatches(exportRequest, exportContext)} onClose={() => setExportRequest(null)} onPick={(format, signal) => downloadHistoryExport(format, exportRequest, signal, () => exportContextRef.current)} />}
   </div>
 }
 

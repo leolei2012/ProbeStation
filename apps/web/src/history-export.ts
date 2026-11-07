@@ -1,6 +1,8 @@
 import { historyQueryRange } from './history-curve'
 import { HistoryExportLimitError } from '../../../packages/core/src/history-export-policy'
 
+export interface HistoryExportContext { readonly definitions: string; readonly device: string }
+export class HistoryExportContextChangedError extends Error { constructor() { super('Export configuration changed'); this.name = 'HistoryExportContextChangedError' } }
 export interface HistoryExportRequest {
   readonly objectId: number
   readonly start: string
@@ -8,14 +10,29 @@ export interface HistoryExportRequest {
   readonly registerIds: readonly number[]
   readonly timezoneOffsetMin: number
   readonly scope: 'full' | 'viewport'
+  readonly context?: Readonly<HistoryExportContext>
 }
 
 /** Capture the exact range and selection at the moment the export dialog opens. */
-export function captureHistoryExport(objectId: number, range: { start: number; end: number }, registerIds: readonly number[], timezoneOffsetMin: number, scope: HistoryExportRequest['scope']): HistoryExportRequest {
+export function captureHistoryExport(objectId: number, range: { start: number; end: number }, registerIds: readonly number[], timezoneOffsetMin: number, scope: HistoryExportRequest['scope'], context?: HistoryExportContext): HistoryExportRequest {
   const { start, end } = historyQueryRange(range)
   if (!Number.isSafeInteger(objectId) || objectId < 1 || !Number.isFinite(start) || !Number.isFinite(end) || start >= end || !Number.isInteger(timezoneOffsetMin)) throw new Error('Invalid export range or device')
   if (!registerIds.length || registerIds.some(id => !Number.isSafeInteger(id) || id < 1)) throw new Error('Select points before exporting')
-  return Object.freeze({ objectId, start: new Date(start).toISOString(), end: new Date(end).toISOString(), registerIds: Object.freeze([...new Set(registerIds)].sort((a, b) => a - b)), timezoneOffsetMin, scope })
+  if (context !== undefined && (!context || typeof context.definitions !== 'string' || !context.definitions || typeof context.device !== 'string' || !context.device)) throw new HistoryExportContextChangedError()
+  return Object.freeze({ objectId, start: new Date(start).toISOString(), end: new Date(end).toISOString(), registerIds: Object.freeze([...new Set(registerIds)].sort((a, b) => a - b)), timezoneOffsetMin, scope, ...(context ? { context: Object.freeze({ definitions: context.definitions, device: context.device }) } : {}) })
+}
+
+/** Client-observed definitions only; no server revision or physical identity is inferred. */
+export function historyExportContextMatches(request: HistoryExportRequest, current: HistoryExportContext | null) {
+  return !!request.context && !!current && request.context.definitions === current.definitions && request.context.device === current.device
+}
+
+export async function downloadHistoryExport(format: 'csv' | 'xlsx', request: HistoryExportRequest, signal: AbortSignal, current: () => HistoryExportContext | null, fetcher: typeof fetch = fetch, save: typeof saveHistoryExport = saveHistoryExport) {
+  signal.throwIfAborted()
+  if (!historyExportContextMatches(request, current())) throw new HistoryExportContextChangedError()
+  const blob = await fetchHistoryExport(format, request, signal, fetcher)
+  if (!historyExportContextMatches(request, current())) throw new HistoryExportContextChangedError()
+  signal.throwIfAborted(); save(blob, format, request)
 }
 
 export function historyExportUrl(format: 'csv' | 'xlsx', request: HistoryExportRequest): string {
