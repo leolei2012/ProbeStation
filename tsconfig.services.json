@@ -26,6 +26,7 @@
     "packages/api/src/device-settings.ts",
     "packages/api/src/group-settings.ts",
     "scripts/audit-history-export-version.ts",
+    "scripts/audit-export-entry.ts",
     "scripts/diagnose-points.ts",
     "scripts/preview-register-picker.ts",
     "scripts/fixtures/register-picker-preview.tsx",
