@@ -18,6 +18,7 @@
     "preview:diagnostics": "tsx scripts/preview-register-picker.ts --diagnostics",
     "preview:backup": "tsx scripts/preview-register-picker.ts --backup",
     "preview:live-filter": "tsx scripts/preview-register-picker.ts --live-filter",
+    "preview:live-snapshot": "tsx scripts/preview-register-picker.ts --live-snapshot",
     "preview:markdown": "tsx scripts/preview-register-picker.ts --markdown",
     "preview:curve-selection": "tsx scripts/preview-register-picker.ts --curve-selection",
     "preview:history-context": "tsx scripts/preview-register-picker.ts --history-context",

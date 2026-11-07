@@ -1,5 +1,7 @@
 # @probebench/web
 
+`LiveTable`的“冻结当前筛选结果”使用纯`captureLiveSnapshot`复制当前逻辑匹配点位、显示文本与已知来源原始字；`LiveSnapshotPanel`独立分页预览并本地下载JSON。采集/新读数/筛选变化不会改写副本，切换设备或卸载后不保留；无请求、模型或配置写入。精确值/NULL/异常、时间边界及手测限制见[说明](../../docs/develop/56-实时观测快照冻结与下载.md)。
+
 日志清理使用`LogCleanupDialog`/`LogCleanupFlow`，打开仅GET预览，确认后只POST冻结范围；默认本页内存状态保留进行中/已完成/结果不明，关闭不取消写、不自动重试，不调用旧/api/logs/clear。清理结果到达后已展开日志查看器只读重读。独立Portal/焦点/Tab/Escape及状态验收限制见[说明](../../docs/develop/55-预览范围日志清理.md)。
 
 日志level/source/message按已有数据库可空契约保留null；NULL显示“未记录”、空串显示“空…”，级别的未记录选项与真实字符串missing/all/null互不冲突。搜索只匹配原字段，不把NULL自动变为文本null；时间、ID和异常字段校验不变，见[修复说明](../../docs/develop/54-日志NULL字段兼容.md)。

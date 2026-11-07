@@ -1001,3 +1001,7 @@ table.reg th, .btn { white-space: nowrap; }
 .runtime-logs-table th:nth-child(2) { width: 150px; }
 .runtime-logs-table th:nth-child(3), .runtime-logs-table th:nth-child(4) { width: 90px; }
 .runtime-log-message { white-space: pre-wrap; }
+.live-snapshot { border: 1px solid var(--border-2); border-radius: 10px; padding: 12px; margin: 12px 0; overflow-wrap: anywhere; }
+.snapshot-table { width: 100%; min-width: 680px; border-collapse: collapse; table-layout: fixed; }
+.snapshot-table th, .snapshot-table td { padding: 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border-1); overflow-wrap: anywhere; }
+.snapshot-table small { display: block; color: var(--text-2); line-height: 1.5; }
