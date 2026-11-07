@@ -37,6 +37,7 @@
     "scripts/fixtures/raw-frames-read-preview.tsx",
     "scripts/fixtures/diagnostics-cleanup-preview.tsx",
     "scripts/fixtures/settings-loading-preview.tsx",
+    "scripts/fixtures/global-retention-preview.tsx",
     "scripts/fixtures/assistant-markdown-preview.tsx",
     "scripts/fixtures/history-time-range-preview.tsx",
     "scripts/fixtures/history-query-memory-preview.tsx",

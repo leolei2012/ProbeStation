@@ -3,6 +3,8 @@
 面向嵌入式设备的**观测与测试平台**：监控是数据底座，AI 测试是大脑与核心卖点。
 用 DeepSeek Harness（DSH）「一切皆插件」的理念，以 TypeScript + Cordis 全量重写了旧 Monitor（Python FastAPI + Quasar）。
 
+全局保留设置修正失败假显示、迟到读取覆盖及空输入变永久：先读取实际值，选择只改草稿，明确确认才更新；未知结果保留本页状态且阻止重复写。后端旧接口跨用户并发限制仍在。`npm run preview:global-retention`可纯mock手测，见[读写状态回归](docs/develop/62-全局保留策略读写状态回归.md)。
+
 ## 📚 文档导航
 
 | 文档 | 内容 |

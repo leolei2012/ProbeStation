@@ -252,6 +252,7 @@ const api = {
   put: (url: string, body: unknown) => request(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   del: (url: string) => request(url, { method: 'DELETE' }),
 }
+const settingsApi = { get: (url: string, signal: AbortSignal) => request(url, { signal, cache: 'no-store' }), post: api.post }
 const fetchPointDiagnostics = (url: string, signal: AbortSignal) => request(url, { signal })
 const fetchRawFrames = (url: string, signal: AbortSignal) => request(url, { signal, cache: 'no-store' })
 
@@ -745,7 +746,7 @@ export default function App() {
 
       <AssistantPanel onNavigate={navigateData} configRevision={aiConfigRevision} onOpenSettings={() => { setSettingsSection('ai'); setShowSettings(true) }} key={selected?.id ?? 'all'} device={selected} onChanged={() => { refreshDevices(); if (selected) refreshRegisters(selected.id) }} />
       {showAdd && <DeviceModal t={t} initial={null} onClose={() => setShowAdd(false)} onSave={addDevice} />}
-      {showSettings && <DeferredSettingsModal api={api} initialSection={settingsSection} onAISaved={() => setAiConfigRevision(v => v + 1)} t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} onClose={() => setShowSettings(false)} />}
+      {showSettings && <DeferredSettingsModal api={settingsApi} initialSection={settingsSection} onAISaved={() => setAiConfigRevision(v => v + 1)} t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} onClose={() => setShowSettings(false)} />}
     </div>
   )
 }

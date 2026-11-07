@@ -1,3 +1,5 @@
+全局保留设置由按需模块`GlobalRetentionSettings`与`global-retention-state`管理：未读成功不猜默认值、预设不立即写、独立草稿与不可撤销清理确认、严格回执、慢写关闭重开不重发。未知结果只允许读取核对，本页不再写；不提供后端跨用户条件保护或清理成功证明。`npm run preview:global-retention`仅构建纯mock静态页，浏览器交互未验收，见[范围与限制](../../docs/develop/62-全局保留策略读写状态回归.md)。
+
 # @probebench/web
 
 `SettingsModal`独立按需模块，由`DeferredSettingsModal`复用DeferredResource，只有showSettings为真才加载；失败/超时提供关闭/显式代码重试，关闭不因代码迟到重新开窗，不重放保存/恢复/清理。API适配器仍由App传入，未建立业务模块到App的静态导入，设置正文/内部隐藏AI表单保持原结构，助手面板仍原样挂载。聚合启动预算、测量和手测边界见[说明](../../docs/develop/61-设置模块按需加载与首屏预算.md)。

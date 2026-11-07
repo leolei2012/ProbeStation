@@ -22,6 +22,7 @@
     "preview:communication": "tsx scripts/preview-register-picker.ts --communication",
     "preview:raw-frames": "tsx scripts/preview-register-picker.ts --raw-frames",
     "preview:diagnostics-cleanup": "tsx scripts/preview-register-picker.ts --diagnostics-cleanup",
+    "preview:global-retention": "tsx scripts/preview-register-picker.ts --global-retention",
     "preview:settings-loading": "tsx scripts/preview-register-picker.ts --settings-loading",
     "preview:markdown": "tsx scripts/preview-register-picker.ts --markdown",
     "preview:curve-selection": "tsx scripts/preview-register-picker.ts --curve-selection",

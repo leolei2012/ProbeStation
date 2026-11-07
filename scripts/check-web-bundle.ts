@@ -52,7 +52,7 @@ assert.ok(initialSize.bytes < 500000, 'Total statically required startup JS exce
 // Source-level guard: a tiny dynamic wrapper must not hide a static import of the heavy parser elsewhere.
 const graph = await build({ absWorkingDir: root, entryPoints: ['apps/web/src/main.tsx'], bundle: true, write: false, outdir: '.npm-cache/web-bundle-audit', format: 'esm', jsx: 'automatic', target: 'es2022', metafile: true, define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent' })
 const inputs = graph.metafile!.inputs, visited = new Set<string>()
-const deferredSettings = new Set(['SettingsModal', 'AssistantSettings', 'ConfigBackupSettings', 'RuntimeLogs', 'LogCleanupDialog'].map(name => 'apps/web/src/' + name + '.tsx'))
+const deferredSettings = new Set(['SettingsModal', 'GlobalRetentionSettings', 'AssistantSettings', 'ConfigBackupSettings', 'RuntimeLogs', 'LogCleanupDialog'].map(name => 'apps/web/src/' + name + '.tsx'))
 function walkSource(key: string) {
   if (visited.has(key)) return
   assert.ok(inputs[key], 'missing source dependency'); visited.add(key)

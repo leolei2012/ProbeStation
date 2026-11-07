@@ -4,35 +4,20 @@ import { LogCleanupDialog } from './LogCleanupDialog'
 import { logCleanupFlow } from './log-cleanup-flow'
 import { ConfigBackupSettings } from './ConfigBackupSettings'
 import { AssistantSettings } from './AssistantSettings'
+import { GlobalRetentionSettings } from './GlobalRetentionSettings'
 export interface SettingsModalProps {
   initialSection: 'general' | 'ai'; onAISaved: () => void
   t: (key: string) => string; theme: 'light' | 'dark' | 'system'; setTheme: (value: 'light' | 'dark' | 'system') => void
   lang: 'zh' | 'en'; setLang: (value: 'zh' | 'en') => void; onClose: () => void
-  api: { get: (url: string) => Promise<any>; post: (url: string, body?: unknown) => Promise<any> }
+  api: { get: (url: string, signal: AbortSignal) => Promise<any>; post: (url: string, body?: unknown) => Promise<any> }
 }
 type Theme = SettingsModalProps['theme']
 export function SettingsModal({ t, theme, setTheme, lang, setLang, onClose, initialSection, onAISaved, api }: SettingsModalProps) {
   const [section, setSection] = useState<'general' | 'ai' | 'data' | 'about'>(initialSection)
-  const [msg, setMsg] = useState('')
-  const [retention, setRetention] = useState<number>(2592000)
-  const [customRetention, setCustomRetention] = useState('')
   const [showLogs, setShowLogs] = useState(false), [logRevision, setLogRevision] = useState(0)
   const [showLogCleanup, setShowLogCleanup] = useState(false)
   const cleanupState = useSyncExternalStore(logCleanupFlow.subscribe, logCleanupFlow.snapshot, logCleanupFlow.snapshot)
   useEffect(() => { if (['completed', 'uncertain'].includes(cleanupState.phase)) setLogRevision(value => value + 1) }, [cleanupState])
-  useEffect(() => { api.get('/api/retention').then((r: any) => setRetention(r.retention_seconds)).catch(() => {}) }, [])
-  const retentionPresets: Array<[string, number]> = [
-    ['1h', 3600], ['6h', 21600], ['24h', 86400], ['7d', 604800], ['30d', 2592000], ['90d', 7776000], [t('retentionForever'), 0],
-  ]
-  const applyRetention = async (seconds: number) => {
-    setRetention(seconds)
-    try { await api.post('/api/retention', { retention_seconds: seconds }); setMsg(t('retentionSaved')) } catch { /* ignore */ }
-  }
-  const saveCustomRetention = async () => {
-    const s = Number(customRetention)
-    if (!Number.isInteger(s) || s < 0) return
-    await applyRetention(s)
-  }
   const items = [
     { id: 'general' as const, label: t('appearance'), icon: 'M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 0-4h-1a1.5 1.5 0 0 1 0-3h3a6 6 0 0 0 0-12Z' },
     { id: 'ai' as const, label: 'AI 助手', icon: 'm12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z' },
@@ -64,15 +49,10 @@ export function SettingsModal({ t, theme, setTheme, lang, setLang, onClose, init
           </>}
           {section === 'data' && <>
             <ConfigBackupSettings lang={lang} />
-            <div className="settings-line"><div><strong>{t('retentionLabel')}</strong><p>{lang === 'zh' ? '设置历史采样数据的保留时长。' : 'Set how long to retain historical samples.'}</p></div><select aria-label={t('retentionLabel')} value={customRetention !== '' || !retentionPresets.some(([, s]) => s === retention) ? 'custom' : String(retention)} onChange={e => {
-              if (e.target.value === 'custom') { setCustomRetention(String(retention)); return }
-              setCustomRetention(''); void applyRetention(Number(e.target.value))
-            }}>{retentionPresets.map(([label, s]) => <option key={s} value={s}>{label}</option>)}<option value="custom">自定义 / Custom</option></select></div>
-            {(customRetention !== '' || !retentionPresets.some(([, s]) => s === retention)) && <div className="settings-line"><label htmlFor="settings-retention">{lang === 'zh' ? '自定义时长（秒）' : 'Custom duration (seconds)'}</label><div className="settings-inline"><input id="settings-retention" type="number" min="0" step="1" value={customRetention} onChange={e => setCustomRetention(e.target.value)} /><button className="btn" onClick={saveCustomRetention}>{lang === 'zh' ? '保存' : 'Save'}</button></div></div>}
+            <GlobalRetentionSettings api={api} english={lang === 'en'} />
             <div className="settings-line"><div><strong>{t('runLogs')}</strong><p>{lang === 'zh' ? '查看近期全服务运行日志，或先预览再确认清理；预览后新增日志会保留。' : 'View recent service-wide logs or preview cleanup first; later logs are preserved.'}</p></div><div className="settings-inline"><button type="button" className="btn" aria-expanded={showLogs} onClick={() => setShowLogs(value => !value)}>{lang === 'zh' ? showLogs ? '收起日志' : '查看近期日志' : showLogs ? 'Hide logs' : 'View recent logs'}</button><button type="button" className="btn" onClick={() => setShowLogCleanup(true)}>{lang === 'zh' ? '预览日志清理' : 'Preview log cleanup'}</button></div></div>
             {showLogs && <RuntimeLogs english={lang === 'en'} reloadToken={logRevision} />}
             {showLogCleanup && <LogCleanupDialog english={lang === 'en'} onClose={() => setShowLogCleanup(false)} />}
-            {msg && <p className="settings-feedback" role="status">{msg}</p>}
           </>}
           {section === 'about' && <>
             <div className="settings-product"><div className="settings-product-mark">P</div><div><strong>ProbeStation</strong><p>{lang === 'zh' ? '设备观测与测试' : 'Device observation & testing'}</p></div></div>
