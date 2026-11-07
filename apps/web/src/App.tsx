@@ -2,6 +2,7 @@ import { RecordingIntervalNotice } from './RecordingIntervalNotice'
 import { PersistenceStatus } from './PersistenceStatus'
 import { RetentionSummary } from './RetentionSummary'
 import { RealtimeFallbackRead } from './realtime-fallback'
+import { registerWritePayloadValue } from '../../../packages/core/src/register-write-value'
 import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
@@ -55,7 +56,7 @@ import { decodeHistorySeries, historySampleStats, historyLineStarts, historyQuer
 import { sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, staleAfterMs, type Sample } from './observation'
 import { sameResponseBatch } from '../../../packages/core/src/sample-batch.ts'
-import { baseType, decodeRawByAddr, decodeRegister, formatNumber, formatRegisterValue, isBinType, isHexType, parseEnum, parseRawRegisterInput, registerWidth } from '../../../packages/core/src/codec.ts'
+import { decodeRawByAddr, decodeRegister, formatNumber, formatRegisterValue, isBinType, isHexType, parseEnum, registerWidth } from '../../../packages/core/src/codec.ts'
 
 const TYPE_GROUPS = [
   { key: 'grp16BE', types: ['int16', 'uint16', 'float16', 'hex16', 'bin16'] },
@@ -1070,15 +1071,12 @@ function WriteModal({ t, reg, deviceName, currentValue, local, onClose, onSaved 
   const [err, setErr] = useState<string | null>(null)
   const [ok, setOk] = useState(false)
   const width = registerWidth(reg.dataType)
-  const base = baseType(reg.dataType)
-  const is64 = base === 'int64' || base === 'uint64'
   const isRaw = isHexType(reg.dataType) || isBinType(reg.dataType)
   const write = async () => {
     if (value.trim() === '') { setErr(t('writeErrEmpty')); return }
     let num: string | number
     try {
-      const raw = isRaw ? parseRawRegisterInput(reg.dataType, value) : null
-      num = raw !== null ? (width === 4 ? (isHexType(reg.dataType) ? '0x' + raw.toString(16) : '0b' + raw.toString(2)) : Number(raw)) : is64 ? value : Number(value)
+      num = registerWritePayloadValue(reg.dataType, value)
     } catch (error) { setErr((error as Error).message); return }
     if (typeof num === 'number' && !Number.isFinite(num)) { setErr(t('writeErrNaN')); return }
     setBusy(true); setErr(null)

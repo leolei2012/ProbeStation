@@ -1,5 +1,7 @@
 # @probebench/api
 
+`POST /api/registers/:id/write`明确要求value为非空数值文本或有限数字，拒绝null、缺失、布尔、数组、对象及非有限值（HTTP400，写回调/成功日志均不执行）。int64/uint64数字输入必须为安全整数，大整数使用整数字符串；hex/bin仍遵循其原始进制与无符号范围。0和coil的数值0/1可用，不能以布尔值替代。端点路径/方法选择/来源参数/成功形状不变；没有改变codec舍入/截断/饱和或新增权限机制，见[契约及限制](../../docs/develop/50-寄存器写值输入校验.md)。
+
 `GET /api/monitor_objects/:id/stats`的retention新增`policy:{version:1,objectId,source:'global'|'device'|'unverified',seconds:number|null}`；原retention_seconds仍是全局默认，不能直接作为设备实际时长。0永久，NULL设备覆盖继承全局；未知/不合法策略不猜测。全局`GET /api/stats`及保留设置读写接口契约不变，本轮仅扩展原只读统计返回，未改清理/写入行为，见[说明](../../docs/develop/48-设备保留策略准确显示.md)。
 
 新增只读`GET /api/storage/persistence-status?object_id=正整数`（省略为全服务），Cache-Control:no-store。返回version/available/objectId；可用时包含stateScope=service、checkedAt、phase/failure、flushing、pendingRows/globalPendingRows、lastCommitAt/lastFailureAt，不含SQL/路径/错误原文。设备筛选不把共享写入故障改成设备专属故障；不存在当前配置的ID也仅表示该ID的缓冲计数，未验证配置身份。无服务能力时available=false；参数400、无法核实503。只读刷新不查询DuckDB或触发写/清理/重开，见[字段及限制](../../docs/develop/47-采样落盘状态与设备缓冲计数.md)。

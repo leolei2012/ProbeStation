@@ -1,6 +1,7 @@
 import { registerRecordingAttention } from './recording-attention.ts'
 import { registerAlarmSettings } from './alarm-settings.ts'
 import { registerPersistenceStatus } from './persistence-status.ts'
+import { registerRegisterWrite } from './register-write.ts'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import type { Context } from 'cordis'
 import z from 'schemastery'
@@ -10,7 +11,7 @@ import fastifyStatic from '@fastify/static'
 import compress from '@fastify/compress'
 import { existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { areaForFunction, baseType, encodeRegister, isHexType, isBinType, parseRawRegisterInput, registerWidth, type ModbusArea } from '@probebench/core'
+import { registerWidth } from '@probebench/core'
 import { registerSlave } from './slave.ts'
 import { registerAssistant } from './assistant.ts'
 import { registerCurve } from './curve.ts'
@@ -199,27 +200,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     // ── Write ───────────────────────────────────────────────
-    fastify.post('/api/registers/:id/write', async (req: any, reply: any) => {
-      const id = Number((req.params as any).id)
-      const reg = cfg.getRegister(id)
-      if (!reg) return { code: 404, error: 'register not found' }
-      const b = req.body as any
-      const base = baseType(reg.dataType ?? 'int16')
-      const is64 = base.endsWith('64') && base !== 'float64'
-      let value: number | bigint, words: number[]
-      try {
-        if ((isHexType(base) || isBinType(base)) && !['string', 'number', 'bigint'].includes(typeof b?.value)) throw new Error('请输入原始整数值')
-        value = isHexType(base) || isBinType(base) ? parseRawRegisterInput(reg.dataType, b.value) : is64 ? BigInt(String(b.value)) : Number(b.value)
-        words = encodeRegister(reg.dataType ?? 'int16', value)
-      } catch (error) { return reply.code(400).send({ error: (error as Error).message }) }
-      const requested = b.method === 'single' ? 'single' : 'multiple'
-      const method = words.length > 1 ? 'multiple' : requested
-      const grp = cfg.getGroup(reg.groupId)
-      const area = areaForFunction(reg.functionCode)
-      await poller.write(reg.objectId, reg.startAddress, words, method, grp?.slaveId ?? 1, area)
-      cfg.log('INFO', 'api', 'write register ' + id + ' = ' + String(value) + ' (' + reg.dataType + ', ' + words.length + ' word(s))')
-      return { register_id: id, value: String(value), dataType: reg.dataType, method, words }
-    })
+    registerRegisterWrite(fastify, cfg, poller)
 
     // ── Import ─────────────────────────────────────────────
     fastify.post('/api/monitor_objects/:id/import', async (req: any) => {
