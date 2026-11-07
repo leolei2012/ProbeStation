@@ -11,9 +11,10 @@ const root = fileURLToPath(new URL('../', import.meta.url)), dist = resolve(root
 let manifest: Record<string, any>
 try { manifest = JSON.parse(readFileSync(resolve(dist, '.vite/manifest.json'), 'utf8')) }
 catch { throw new Error('缺少有效前端构建清单，请先运行 npm run build:web。') }
-const renderer = 'src/AssistantMarkdown.tsx', entry = 'index.html'
+const renderer = 'src/AssistantMarkdown.tsx', settings = 'src/SettingsModal.tsx', entry = 'index.html'
 assert.equal(manifest[entry]?.isEntry, true, 'missing frontend entry; run npm run build:web')
 assert.equal(manifest[renderer]?.isDynamicEntry, true, 'Markdown must remain a separate deferred entry')
+assert.equal(manifest[settings]?.isDynamicEntry, true, 'Settings must remain a separate deferred entry')
 function closure(start: string) {
   const visited = new Set<string>()
   const walk = (key: string) => {
@@ -26,10 +27,13 @@ function closure(start: string) {
 }
 const startup = closure(entry)
 assert.ok(!startup.has(renderer), 'Markdown renderer entered the startup graph')
+assert.ok(!startup.has(settings), 'Settings entered the startup graph')
 assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(renderer)), 'renderer is not reachable through a dynamic import')
+assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(settings)), 'settings is not reachable through a dynamic import')
 const html = readFileSync(resolve(dist, 'index.html'), 'utf8')
 assert.ok(html.includes('src="/' + manifest[entry].file + '"'))
 assert.ok(!html.includes(manifest[renderer].file), 'HTML eagerly references the renderer')
+assert.ok(!html.includes(manifest[settings].file), 'HTML eagerly references settings')
 function asset(file: string) {
   assert.equal(typeof file, 'string'); const full = resolve(dist, file), inside = relative(dist, full)
   assert.ok(inside && !inside.startsWith('..') && !isAbsolute(inside) && /\.(js|css)$/.test(file), 'asset must stay inside frontend dist')
@@ -42,15 +46,19 @@ function sizes(keys: Set<string>) {
   return { bytes, gzip }
 }
 const deferred = new Set([...closure(renderer)].filter(key => !startup.has(key))), initialSize = sizes(startup), deferredSize = sizes(deferred)
+const settingsSize = sizes(new Set([...closure(settings)].filter(key => !startup.has(key))))
+assert.ok(initialSize.bytes < 500000, 'Total statically required startup JS exceeds the 500 kB budget; splitting filenames alone is not sufficient')
 
 // Source-level guard: a tiny dynamic wrapper must not hide a static import of the heavy parser elsewhere.
 const graph = await build({ absWorkingDir: root, entryPoints: ['apps/web/src/main.tsx'], bundle: true, write: false, outdir: '.npm-cache/web-bundle-audit', format: 'esm', jsx: 'automatic', target: 'es2022', metafile: true, define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent' })
 const inputs = graph.metafile!.inputs, visited = new Set<string>()
+const deferredSettings = new Set(['SettingsModal', 'AssistantSettings', 'ConfigBackupSettings', 'RuntimeLogs', 'LogCleanupDialog'].map(name => 'apps/web/src/' + name + '.tsx'))
 function walkSource(key: string) {
   if (visited.has(key)) return
   assert.ok(inputs[key], 'missing source dependency'); visited.add(key)
+  assert.ok(!deferredSettings.has(key.replaceAll('\\', '/')), 'Settings-only implementation is statically reachable from startup: ' + key)
   assert.ok(!/node_modules\/(react-markdown|remark-gfm)\//.test(key.replaceAll('\\', '/')), 'Markdown parser is statically reachable from startup')
   for (const dependency of inputs[key].imports) if (!dependency.external && dependency.kind !== 'dynamic-import') walkSource(dependency.path)
 }
 walkSource('apps/web/src/main.tsx')
-console.log(`WEB BUNDLE OK: startup JS ${initialSize.bytes} bytes (${initialSize.gzip} gzip); deferred Markdown ${deferredSize.bytes} bytes (${deferredSize.gzip} gzip); source/manifest/HTML keep parser out of startup. Build sizes, not measured browser latency.`)
+console.log(`WEB BUNDLE OK: startup JS ${initialSize.bytes} bytes (${initialSize.gzip} gzip); deferred settings ${settingsSize.bytes} bytes (${settingsSize.gzip} gzip); deferred Markdown ${deferredSize.bytes} bytes (${deferredSize.gzip} gzip); source/manifest/HTML keep settings and parser out of startup; aggregate startup stays below 500 kB. Build sizes, not measured browser latency.`)

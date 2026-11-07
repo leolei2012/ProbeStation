@@ -1,5 +1,7 @@
 # @probebench/web
 
+`SettingsModal`独立按需模块，由`DeferredSettingsModal`复用DeferredResource，只有showSettings为真才加载；失败/超时提供关闭/显式代码重试，关闭不因代码迟到重新开窗，不重放保存/恢复/清理。API适配器仍由App传入，未建立业务模块到App的静态导入，设置正文/内部隐藏AI表单保持原结构，助手面板仍原样挂载。聚合启动预算、测量和手测边界见[说明](../../docs/develop/61-设置模块按需加载与首屏预算.md)。
+
 原始报文页用`DiagnosticsCleanupButton`和本页单例`DiagnosticsCleanupFlow`管理安全预览/一次确认；只对当前完整targetKey匹配的目标提交一次token，写不设abort或业务超时，不回退frames/clear。结果与来源不符/断线/500标未知，关闭重开保留，显式新预览才能再次确认。成功仅使同目标当前原始记录快照失效、通信统计收起，随后按既有读取策略重读，采集不停止；暂停时仍能查看状态。范围与手测见[说明](../../docs/develop/60-通信诊断清空确认与结果隔离.md)。
 
 `RawDataView`采用独立`RawFramesRead`：原1秒调度继续，但在途请求合并、10秒超时，暂停立即取消等待并保留上次不可变快照。设备连接字段/从站默认值/显示上限变化换reader，旧结果不能跨上下文发布；`RawFramesStatus`区分读取中、失败旧结果、空记录及旧身份不足，不修改采集或旧清空写入契约，见[说明](../../docs/develop/59-原始捕获慢读取与暂停隔离.md)。
