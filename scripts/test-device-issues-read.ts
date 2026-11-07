@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep, basename } from 'node:path'
 import Fastify from 'fastify'
@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { registerAssistant } from '../packages/api/src/assistant.ts'
 import { parseDeviceIssues, DeviceIssuesRead } from '../apps/web/src/device-issues-read.ts'
 import { DeviceIssues, DeviceIssuesView } from '../apps/web/src/DeviceIssues.tsx'
+import ts from 'typescript'
 
 // Only a newly-created empty temporary data directory; no real assistant configuration is read.
 const dir = mkdtempSync(join(tmpdir(), 'probestation-issues-')), app = Fastify(); let effects = 0
@@ -57,4 +58,53 @@ for (const english of [false, true]) {
   assert(render({ phase: 'error', error: 'request', value: parseDeviceIssues({ issues: [] }) }).includes(english ? 'previous snapshot had no reminders' : '上次汇总没有提醒'))
 }
 renderToStaticMarkup(createElement(DeviceIssues, { onNavigate() { callbacks++ }, get: async () => { callbacks++; return sample } })); assert.equal(callbacks, 0)
-console.log('DEVICE ISSUES READ OK: real injected read-only summary route, duplicate device reminders, source fields/legacy time and malformed array rejection, immutable snapshots, single-flight timeout/recovery/cancel/late-finalizer/unsubscribe, stale/empty distinction and bilingual SSR; no actual service, model, hardware, real data or DOM automation')
+
+// Execute the actual small navigation callbacks and tab declaration, not App or its
+// mounted components. This covers their contract together without DOM or service I/O.
+const navFile = ts.createSourceFile('App.tsx', readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+function collect(root: ts.Node, predicate: (node: ts.Node) => boolean) {
+  const out: ts.Node[] = []; const walk = (node: ts.Node) => { if (predicate(node)) out.push(node); ts.forEachChild(node, walk) }; walk(root); return out
+}
+const deviceView = navFile.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'DeviceView')!
+assert(deviceView)
+const property = (root: ts.Node, object: string, key: string) => collect(root, node => ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === object && node.name.text === key).length > 0
+const viewEffects = collect(deviceView, node => ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'useEffect') as ts.CallExpression[]
+const navEffects = viewEffects.filter(call => property(call.arguments[0], 'target', 'view') || property(call.arguments[0], 'device', 'mode'))
+assert.equal(navEffects.length, 2, 'review the navigation harness when callback boundaries change')
+const tabs = collect(deviceView, node => ts.isJsxAttribute(node) && node.name.getText(navFile) === 'tabs' && (ts.isJsxSelfClosingElement(node.parent.parent) || ts.isJsxOpeningElement(node.parent.parent)) && node.parent.parent.tagName.getText(navFile) === 'TabBar')[0] as ts.JsxAttribute
+assert(tabs && tabs.initializer && ts.isJsxExpression(tabs.initializer) && tabs.initializer.expression)
+const evaluate = (expression: ts.Node, names: string[], values: unknown[]) => new Function(...names, ts.transpileModule('const result = ' + expression.getText(navFile) + '; return result', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(...values)
+const offered = (mode: string) => evaluate((tabs.initializer as ts.JsxExpression).expression!, ['device', 't'], [{ mode }, (key: string) => key]).map((tab: { id: number }) => tab.id) as number[]
+function navigation(initial = 0) {
+  let tab = initial; const previous = new Map<ts.Node, unknown[]>()
+  return { choose(value: number) { tab = value }, render(mode: string, target: unknown) {
+    const names = ['device', 'target', 'setTab'], values = [{ mode }, target, (next: number | ((current: number) => number)) => { tab = typeof next === 'function' ? next(tab) : next }]
+    for (const effect of navEffects) {
+      const deps = evaluate(effect.arguments[1], names, values) as unknown[], old = previous.get(effect)
+      if (!old || deps.length !== old.length || deps.some((value, index) => !Object.is(value, old[index]))) { previous.set(effect, deps); evaluate(effect.arguments[0], names, values)() }
+    }
+    assert(offered(mode).includes(tab), 'navigation must select an offered tab'); return tab
+  } }
+}
+const navigate = collect(navFile, node => ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'navigateData')[0] as ts.VariableDeclaration
+assert(navigate?.initializer)
+let selectedDevice = 0, selectedView = '', target: any
+const sequence = { current: 0 }, emitTarget = evaluate(navigate.initializer, ['setSelectedId', 'setView', 'setDataTarget', 'navigationSequence'], [(id: number) => { selectedDevice = id }, (view: string) => { selectedView = view }, (value: unknown) => { target = value }, sequence])
+const targetAttribute = collect(navFile, node => ts.isJsxAttribute(node) && node.name.getText(navFile) === 'target' && ts.isJsxSelfClosingElement(node.parent.parent) && node.parent.parent.tagName.getText(navFile) === 'DeviceView')[0] as ts.JsxAttribute
+assert(targetAttribute?.initializer && ts.isJsxExpression(targetAttribute.initializer) && targetAttribute.initializer.expression)
+for (const issue of actual.issues) {
+  const mode = devices.find(device => device.id === issue.deviceId)!.mode, view = navigation(1), before = JSON.stringify(issue)
+  view.render(mode, null); emitTarget(issue)
+  assert.equal(selectedDevice, issue.deviceId); assert.equal(selectedView, 'monitor'); assert.equal(JSON.stringify(issue), before)
+  assert.equal(view.render(mode, target), issue.view === 'diagnostics' && mode !== 'slave' ? 3 : 0)
+  emitTarget(issue); assert.equal(view.render(mode, target), issue.view === 'diagnostics' && mode !== 'slave' ? 3 : 0, 'repeat navigation while device mode is unchanged')
+  assert.equal(evaluate((targetAttribute.initializer as ts.JsxExpression).expression!, ['dataTarget', 'selected'], [target, { id: issue.deviceId }]), target)
+  assert.equal(evaluate((targetAttribute.initializer as ts.JsxExpression).expression!, ['dataTarget', 'selected'], [target, { id: 999 }]), null, 'another device must not receive this target')
+}
+const history = navigation(1), historyTarget = { ...value.issues[0], token: 999 }
+emitTarget(historyTarget); assert.notEqual(target.token, 999); assert.equal(target.registerId, 9); assert.equal(target.start, '2026-11-07T00:00:00.123Z'); assert.equal(target.end, '2026-11-07T00:00:01.456Z'); assert.equal(target.valueMode, 'raw')
+assert.equal(history.render('slave', target), 2); history.choose(1); assert.equal(history.render('slave', target), 1, 'ordinary re-render must not replay a consumed navigation'); emitTarget(historyTarget); assert.equal(history.render('slave', target), 2)
+const roleChange = navigation(); const diagnosticTarget = { deviceId: 1, view: 'diagnostics', token: 100 }
+assert.equal(roleChange.render('master', diagnosticTarget), 3); assert.equal(roleChange.render('slave', diagnosticTarget), 0); roleChange.choose(1); assert.equal(roleChange.render('master', diagnosticTarget), 1, 'role change must not replay the old target'); assert.equal(roleChange.render('master', { ...diagnosticTarget, token: 101 }), 3)
+for (const mode of ['master', 'slave']) { const none = navigation(1); assert.equal(none.render(mode, null), 1) }
+console.log('DEVICE ISSUES READ OK: actual injected summary route through App navigation callbacks/offered tabs, repeated slave/master targets, one-shot navigation/role changes/device scope/exact history fields, immutable single-flight reads and timeout/late recovery, bilingual SSR; no actual service, model, hardware, real data or DOM automation')

@@ -845,7 +845,7 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
   const [tab, setTab] = useState(0)
   const queryMemory = useRef<HistoryQueryMemory>()
   if (!queryMemory.current) queryMemory.current = new HistoryQueryMemory(device.id)
-  useEffect(() => { if (target) setTab(target.view === 'history' ? 2 : target.view === 'diagnostics' ? 3 : 0) }, [target?.token])
+  useEffect(() => { if (target) setTab(target.view === 'history' ? 2 : target.view === 'diagnostics' && device.mode !== 'slave' ? 3 : 0) }, [target?.token])
   const [showEdit, setShowEdit] = useState(false)
   const registers = useMemo(() => withRegisterSources(groups.flatMap(g => g.registers), groups, device), [groups, device.mode, device.slaveId])
   useEffect(() => { if (device.mode === 'slave') setTab(current => current === 3 || current === 4 ? 0 : current) }, [device.mode])
