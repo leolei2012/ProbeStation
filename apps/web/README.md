@@ -1,5 +1,7 @@
 # @probebench/web
 
+`ui-preferences.ts`仅处理ps-theme/ps-lang/ps-collapsed：受支持枚举、原默认值、存储属性/getItem/setItem异常降级；主题effect不因保存失败而中断系统主题订阅。读取不写、不清空其他key，保存失败时React当前状态仍可用，刷新后能否保留取决于浏览器存储；见[范围与验证](../../docs/develop/52-启动偏好存储容错.md)。
+
 助手本地附件读取由`assistant-attachment-read.ts`管理：全批元数据预检、原子追加、取消/失败中止余下FileReader并释放回调，卸载取消不发布状态。`AssistantAttachmentReadStatus`提供type=button的取消控件，不提交聊天表单；选择文件不等于发送。保留原支持格式、粘贴图片命名和大附件行为，无新数量/大小阈值，见[验证边界](../../docs/develop/51-助手本地附件读取取消.md)。
 
 写值弹窗采用`registerWritePayloadValue`与REST共用的输入边界，提交前拒绝空值/非有限数值和无效64位整数文本；64位值序列化为精确字符串，hex/bin保持原进制payload。页面不新增写权限、自动重试或硬件动作，mock验证及限制见[说明](../../docs/develop/50-寄存器写值输入校验.md)。

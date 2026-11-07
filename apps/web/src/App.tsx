@@ -3,6 +3,7 @@ import { PersistenceStatus } from './PersistenceStatus'
 import { RetentionSummary } from './RetentionSummary'
 import { RealtimeFallbackRead } from './realtime-fallback'
 import { registerWritePayloadValue } from '../../../packages/core/src/register-write-value'
+import { bindUiTheme, readUiLanguage, readUiTheme, readSidebarCollapsed, saveUiLanguage, saveSidebarCollapsed } from './ui-preferences'
 import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
@@ -423,8 +424,8 @@ function SidebarResizer({ t }: { t: T }) {
 }
 
 export default function App() {
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('ps-theme') as Theme) ?? 'system')
-  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('ps-lang') as Lang) ?? 'zh')
+  const [theme, setTheme] = useState<Theme>(() => readUiTheme())
+  const [lang, setLang] = useState<Lang>(() => readUiLanguage())
   const [devices, setDevices] = useState<Device[]>([])
   const [deviceSearch, setDeviceSearch] = useState('')
   const [deviceOrder, setDeviceOrder] = useState<number[]>(() => {
@@ -440,7 +441,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [settingsSection, setSettingsSection] = useState<'general' | 'ai'>('general')
   const [aiConfigRevision, setAiConfigRevision] = useState(0)
-  const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 768 || localStorage.getItem('ps-collapsed') === '1')
+  const [collapsed, setCollapsed] = useState(() => readSidebarCollapsed(window.innerWidth))
   const [groupSnapshot, setGroupSnapshot] = useState<{ objectId: number; groups: DeviceGroup[] } | null>(null)
   const groups = useMemo(() => groupsForSelection(groupSnapshot, selectedId), [groupSnapshot, selectedId])
   const [fallbackStatus, setFallbackStatus] = useState<Record<number, boolean>>({})
@@ -468,19 +469,9 @@ export default function App() {
   const fallbackReadRef = useRef<RealtimeFallbackRead<Record<string, LatestValue>>>()
   useEffect(() => { selectedIdRef.current = selectedId; fallbackReadRef.current?.select(selectedId); setFallbackStatus({}) }, [selectedId])
 
-  useEffect(() => {
-    const apply = () => {
-      const r = theme === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme
-      document.documentElement.setAttribute('data-theme', r)
-    }
-    apply()
-    localStorage.setItem('ps-theme', theme)
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    mq.addEventListener('change', apply)
-    return () => mq.removeEventListener('change', apply)
-  }, [theme])
-  useEffect(() => { localStorage.setItem('ps-lang', lang) }, [lang])
-  useEffect(() => { localStorage.setItem('ps-collapsed', collapsed ? '1' : '0') }, [collapsed])
+  useEffect(() => bindUiTheme(theme, window.matchMedia('(prefers-color-scheme: dark)'), resolved => document.documentElement.setAttribute('data-theme', resolved)), [theme])
+  useEffect(() => { saveUiLanguage(lang) }, [lang])
+  useEffect(() => { saveSidebarCollapsed(collapsed) }, [collapsed])
 
   const refreshDevices = useCallback(() => {
     void deviceRead.current!.run(async signal => {
