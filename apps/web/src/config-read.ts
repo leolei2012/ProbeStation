@@ -1,3 +1,13 @@
+import { runRequestWithTimeout, RequestTimeoutError } from './request-timeout'
+
+export const CONFIG_READ_TIMEOUT_MS = 10_000
+export type ConfigReadFailure = 'timeout' | 'failed'
+export function configReadFailure(error: unknown): ConfigReadFailure { return error instanceof RequestTimeoutError ? 'timeout' : 'failed' }
+/** One metadata GET, including body parsing. Give each graph request its own budget; never wrap mutations. */
+export function readConfigRequest<T>(url: string, signal: AbortSignal, fetcher: (url: string, signal: AbortSignal) => Promise<T>, timeoutMs = CONFIG_READ_TIMEOUT_MS): Promise<T> {
+  return runRequestWithTimeout(child => fetcher(url, child), signal, timeoutMs)
+}
+
 /** Metadata reads only; mutations must never be cancelled through this helper. */
 export class LatestConfigRead {
   private sequence = 0

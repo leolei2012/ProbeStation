@@ -25,6 +25,7 @@
     "preview:diagnostics-cleanup": "tsx scripts/preview-register-picker.ts --diagnostics-cleanup",
     "preview:global-retention": "tsx scripts/preview-register-picker.ts --global-retention",
     "preview:settings-loading": "tsx scripts/preview-register-picker.ts --settings-loading",
+    "preview:config-loading": "tsx scripts/preview-register-picker.ts --config-loading",
     "preview:markdown": "tsx scripts/preview-register-picker.ts --markdown",
     "preview:curve-selection": "tsx scripts/preview-register-picker.ts --curve-selection",
     "preview:history-context": "tsx scripts/preview-register-picker.ts --history-context",

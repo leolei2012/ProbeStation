@@ -22,7 +22,8 @@ import { pickerSources } from './register-picker'
 import { PointDiagnosticsPanel } from './PointDiagnostics'
 import { captureHistoryAnchor, historyComparisonContext, updateHistoryComparison, type HistoryComparisonState } from './history-comparison'
 import { HistoryNavigation } from './history-navigation'
-import { LatestConfigRead, readDeviceGroups, groupsForSelection } from './config-read'
+import { LatestConfigRead, readDeviceGroups, groupsForSelection, readConfigRequest, configReadFailure, type ConfigReadFailure } from './config-read'
+import { ConfigLoadNotice } from './ConfigLoadNotice'
 import { PointBookImportResult, type PointBookResult } from './PointBookImportResult'
 import { InvalidPointBookReportError, pointBookReportKind, uploadPointBook as sendPointBook, type PointBookReport } from './pointbook-result'
 import { PointLabel, buildPointLabels, type PointLabelData } from './PointLabel'
@@ -466,9 +467,8 @@ export default function App() {
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const operation = useOperation(t)
-  const [deviceLoadError, setDeviceLoadError] = useState(false)
-  const [groupLoadError, setGroupLoadError] = useState(false)
-  const loadError = deviceLoadError || groupLoadError
+  const [deviceLoadError, setDeviceLoadError] = useState<ConfigReadFailure | null>(null)
+  const [groupLoadError, setGroupLoadError] = useState<ConfigReadFailure | null>(null)
   const deviceRead = useRef<LatestConfigRead>()
   const groupRead = useRef<LatestConfigRead>()
   if (!deviceRead.current) deviceRead.current = new LatestConfigRead()
@@ -484,7 +484,7 @@ export default function App() {
 
   const refreshDevices = useCallback(() => {
     void deviceRead.current!.run(async signal => {
-      const objs: Device[] = await request('/api/monitor_objects', { signal })
+      const objs: Device[] = await readConfigRequest('/api/monitor_objects', signal, (url, requestSignal) => request(url, { signal: requestSignal }))
       if (!Array.isArray(objs)) throw new Error('Invalid devices response')
       const map: Record<number, boolean> = {}
       for (const object of objs) {
@@ -492,17 +492,17 @@ export default function App() {
         map[object.id] = object.connected === true
       }
       return { objs, map }
-    }, ({ objs, map }) => { setDevices(objs); setDeviceConnected(map); setDeviceLoadError(false) }, () => setDeviceLoadError(true))
+    }, ({ objs, map }) => { setDevices(objs); setDeviceConnected(map); setDeviceLoadError(null) }, error => setDeviceLoadError(configReadFailure(error)))
   }, [])
   const refreshRegisters = useCallback((id: number) => {
-    void groupRead.current!.run(signal => readDeviceGroups<Register>(id, signal, (url, requestSignal) => request(url, { signal: requestSignal })),
-      out => { setGroupSnapshot({ objectId: id, groups: out }); setGroupLoadError(false) },
-      () => setGroupLoadError(true), () => selectedIdRef.current === id)
+    void groupRead.current!.run(signal => readDeviceGroups<Register>(id, signal, (url, requestSignal) => readConfigRequest(url, requestSignal, (path, innerSignal) => request(path, { signal: innerSignal }))),
+      out => { setGroupSnapshot({ objectId: id, groups: out }); setGroupLoadError(null) },
+      error => setGroupLoadError(configReadFailure(error)), () => selectedIdRef.current === id)
   }, [])
 
   useEffect(() => { refreshDevices() }, [refreshDevices])
   useEffect(() => {
-    setGroupSnapshot(null); setGroupLoadError(false)
+    setGroupSnapshot(null); setGroupLoadError(null)
     if (selectedId != null) refreshRegisters(selectedId)
     return () => groupRead.current?.cancel()
   }, [selectedId, refreshRegisters])
@@ -736,7 +736,7 @@ export default function App() {
       <main className="main">
         <div className="mobile-header"><button className="btn" aria-label={t('expandNav')} onClick={() => setCollapsed(false)}>☰ {t('devices')}</button><strong>ProbeStation</strong><button className="btn" aria-label={t('settings')} onClick={() => { setSettingsSection('general'); setShowSettings(true) }}>⚙</button></div>
 
-        {loadError && <div className="operation-feedback error" role="alert">{t('loadFailed')}<button className="btn" onClick={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }}>{t('refresh')}</button></div>}
+        <ConfigLoadNotice deviceError={deviceLoadError} groupError={groupLoadError} english={lang === 'en'} onRetry={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }} />
         <DeviceIssues onNavigate={navigateData} english={lang === 'en'} />
         <GlobalTabBar t={t} view={view} onChange={next => { if (next === 'database') setDataTarget(null); setView(next) }} />
         {view === 'database'
