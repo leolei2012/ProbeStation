@@ -1,4 +1,5 @@
 import { RecordingIntervalNotice } from './RecordingIntervalNotice'
+import { PersistenceStatus } from './PersistenceStatus'
 import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
@@ -811,6 +812,8 @@ function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
       </div>
       <div className="toolbar"><label>统计范围 / Scope <select aria-label="统计范围 / Scope" className="hist-input" value={device ? scope : 'all'} onChange={e => setScope(e.target.value)}><option value="all">全部设备 / All devices</option>{devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label></div>
       {err && <div className="write-msg error">{err}</div>}
+
+      <PersistenceStatus objectId={device?.id ?? null} english={t('cancel') === 'Cancel'} />
 
       <div className="db-cards">
         <div className="db-card">

@@ -983,3 +983,8 @@ table.reg th, .btn { white-space: nowrap; }
 .recording-interval-notice ul { padding-left: 20px; max-height: 300px; overflow-y: auto; }
 .recording-interval-notice li { margin-bottom: 10px; }
 .recording-interval-notice small { color: var(--text-2); }
+.persistence-status { border: 1px solid var(--border-2); border-radius: 10px; padding: 14px; margin: 14px 0; overflow-wrap: anywhere; }
+.persistence-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.persistence-status.needs-review { border-color: #b58b38; }
+.persistence-status p { margin: 8px 0; }
+.persistence-status small { display: block; line-height: 1.5; opacity: .8; }

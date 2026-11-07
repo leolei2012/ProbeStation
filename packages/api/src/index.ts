@@ -1,5 +1,6 @@
 import { registerRecordingAttention } from './recording-attention.ts'
 import { registerAlarmSettings } from './alarm-settings.ts'
+import { registerPersistenceStatus } from './persistence-status.ts'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import type { Context } from 'cordis'
 import z from 'schemastery'
@@ -72,6 +73,7 @@ export function apply(ctx: Context, config: Config): void {
 
     fastify.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
     registerRecordingAttention(fastify, () => ctx.get('mcp', false) as any)
+    registerPersistenceStatus(fastify, () => typeof store?.getSamplePersistenceStatus === 'function' ? store : undefined)
     registerSerialPorts(fastify)
     registerAssistant(fastify, { cfg, store, poller }, dataDir)
     registerCurve(fastify, cfg, store)

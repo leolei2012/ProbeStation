@@ -7,6 +7,7 @@ import { ensurePollDataSchema } from './schema.ts'
 import { sourceKey, validSlaveId } from '../../core/src/sample-source.ts'
 import { decodeHistoricalSample } from '../../core/src/history-integrity.ts'
 import { HISTORY_EXPORT_RAW_LIMIT, type HistoryExportReadRange } from '../../core/src/history-export-policy.ts'
+import type { SamplePersistenceStatus } from '../../core/src/sample-persistence.ts'
 
 function rawTimestampMs(value: unknown): number {
   const text = String(value)
@@ -65,11 +66,28 @@ export class DuckDBStore {
   private persistenceError: unknown = null
   private initError: unknown = null
   private switching = false
+  private initialization: 'opening' | 'ready' | 'failed' = 'opening'
+  private flushing = false
+  private lastCommitAt: string | null = null
+  private lastFailureAt: string | null = null
   private background(task: Promise<unknown>): void {
     void task.catch(error => this.onError(error instanceof Error ? error : new Error(String(error))))
   }
   getPersistenceStatus() {
     return { pendingRows: this.buffer.length, error: this.persistenceError == null ? null : String(this.persistenceError) }
+  }
+  private pendingRows(objectId?: number) {
+    if (objectId === undefined) return this.buffer.length
+    let count = 0
+    for (const point of this.buffer) if (point.objectId === objectId) count++
+    return count
+  }
+  /** Memory metadata only. The write state is shared by the service, counts may be device-filtered. */
+  getSamplePersistenceStatus(objectId?: number): SamplePersistenceStatus {
+    if (objectId !== undefined && (!Number.isSafeInteger(objectId) || objectId < 1)) throw new Error('Invalid persistence scope')
+    const failure = this.initialization === 'failed' ? 'initialization-failed' : this.initError != null ? 'write-uncertain' : this.persistenceError != null ? 'flush-failed' : null
+    const phase = this.switching ? 'switching' : this.initialization === 'opening' ? 'initializing' : this.initError != null ? 'blocked' : this.persistenceError != null ? 'failed' : 'ready'
+    return Object.freeze({ version: 1, available: true, objectId: objectId ?? null, stateScope: 'service', checkedAt: new Date().toISOString(), phase, failure, flushing: this.flushing, pendingRows: this.pendingRows(objectId), globalPendingRows: this.buffer.length, lastCommitAt: this.lastCommitAt, lastFailureAt: this.lastFailureAt })
   }
   private mutate<T>(action: () => Promise<T>): Promise<T> {
     const result = this.mutations.then(action)
@@ -99,9 +117,11 @@ export class DuckDBStore {
       this.instance = instance
       conn = await instance.connect()
       await ensurePollDataSchema(conn)
+      this.initialization = 'ready'
       return conn
     } catch (error) {
       this.initError = this.persistenceError = error
+      this.initialization = 'failed'; this.lastFailureAt = new Date().toISOString()
       conn?.closeSync()
       instance?.closeSync()
       this.instance = null
@@ -123,6 +143,7 @@ export class DuckDBStore {
       this.latest.clear(); this.sources.clear()
       this.dbPath = dbPath
       this.initError = this.persistenceError = null
+      this.initialization = 'opening'; this.lastCommitAt = this.lastFailureAt = null
       this.ready = this.init()
       await this.ready
     } finally { this.switching = false }
@@ -161,6 +182,7 @@ export class DuckDBStore {
         await this.ready
         const batch = this.buffer.slice()
         if (!batch.length) return
+        this.flushing = true
         // Readers on the main connection see only committed batches between chunks.
         conn = await this.instance!.connect()
         await conn.run('BEGIN TRANSACTION')
@@ -183,8 +205,9 @@ export class DuckDBStore {
         }
         this.buffer.splice(0, batch.length)
         this.persistenceError = null
-      } catch (error) { this.persistenceError = error; throw error }
-      finally { conn?.closeSync() }
+        this.lastCommitAt = new Date().toISOString()
+      } catch (error) { this.persistenceError = error; this.lastFailureAt = new Date().toISOString(); throw error }
+      finally { this.flushing = false; conn?.closeSync() }
     })
   }
 
@@ -518,7 +541,7 @@ export class DuckDBStore {
       oldestTs: span?.mn == null ? null : localTs(String(span.mn)),
       newestTs: span?.mx == null ? null : localTs(String(span.mx)),
       byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
-      bufferPending: this.buffer.length,
+      bufferPending: this.pendingRows(objectId),
       retention: { retention_seconds: this.getRetentionSeconds() },
     }
   }

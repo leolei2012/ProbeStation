@@ -216,3 +216,7 @@ source-changed/source-unverified表示旧录制已停止追加或触发，保留
 ### 告警编辑的点位及来源条件
 
 新增前用get_alarm_edit_context(register_id)读取条件，更新/删除前用rule_id读取原规则与条件；不能同时指定两个ID。新增传原expected_context，编辑/删除同时传expected_rule与expected_context，检查成功响应protection=rule-and-context及后续warnings文本。条件冲突时保留原草稿，不自动重读条件来强行覆盖；需要新的明确编辑意图并核对dtype/地址/有效从站与连接。旧调用兼容警告表示没有验证之前快照，不能声称已有来源保护；警告不代表操作未执行，不自动重放。新增没有幂等键，响应不明先只读核对。此为配置值条件，不是持久修订或物理认证，见[详细契约](../develop/46-告警点位与来源上下文保护.md)。
+
+### 区分实时读数与历史落盘
+
+排查历史缺数据时，可在数据管理页或已授权的REST连接只读读取/api/storage/persistence-status，按object_id过滤待写计数。stateScope=service是共享写入状态；selected待写0不能覆盖全服务失败，ready/上次提交时间也不是某点已落库证明。未核实/unsupported时不要断言保存正常。待写计数仅为已进入内存缓冲的原始行，不含拒写后的样本，也不是丢失总数。本接口不提供重试或恢复操作；不得据此自动flush、清空、重开、重启或更改保留策略，先报告后端日志需排查的事实。见[落盘状态边界](../develop/47-采样落盘状态与设备缓冲计数.md)。

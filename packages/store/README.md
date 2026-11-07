@@ -1,5 +1,7 @@
 # @probebench/store
 
+采样落盘状态新增`getSamplePersistenceStatus(objectId?)`，同步读取本实例内存元数据：初始化/切换/ready/失败/阻止、原始待写行数/全服务行数、提交中及最近批次提交/失败时间。状态始终是全服务共享，设备参数只过滤队列数；不包含错误原文，不做SQL/flush/cleanup/reopen，旧getPersistenceStatus诊断返回保持。statsByObject.bufferPending现按设备计数；全局stats保持全服务数。ready不等于所有数据已保存或历史完整；范围和内存回归见[落盘说明](../../docs/develop/47-采样落盘状态与设备缓冲计数.md)。
+
 时序数据持久化：热内存快照 + DuckDB 列存。提供 `ctx.store`。
 
 ## 配置（schemastery）

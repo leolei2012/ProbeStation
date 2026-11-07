@@ -1,5 +1,7 @@
 # @probebench/api
 
+新增只读`GET /api/storage/persistence-status?object_id=正整数`（省略为全服务），Cache-Control:no-store。返回version/available/objectId；可用时包含stateScope=service、checkedAt、phase/failure、flushing、pendingRows/globalPendingRows、lastCommitAt/lastFailureAt，不含SQL/路径/错误原文。设备筛选不把共享写入故障改成设备专属故障；不存在当前配置的ID也仅表示该ID的缓冲计数，未验证配置身份。无服务能力时available=false；参数400、无法核实503。只读刷新不查询DuckDB或触发写/清理/重开，见[字段及限制](../../docs/develop/47-采样落盘状态与设备缓冲计数.md)。
+
 告警上下文扩展：`GET /api/rules/:id/settings`读`{expected,expectedContext}`，`GET /api/registers/:id/alarm-context`读新增用条件，均不缓存。`PUT/DELETE /api/rules/:id/settings`可附原`expectedContext`，提供时必须完整有效，不会降级；`POST /api/rules/settings`用`{fields,expectedContext}`在源条件下新增。上下文成功响应含`protection="rule-and-context"`；旧无context的规则级settings响应字段保持不变，不具有来源保护。原`/api/rules`CRUD未改语义。接口不访问设备、不做真实库结构迁移，详见[字段和兼容边界](../../docs/develop/46-告警点位与来源上下文保护.md)。
 
 告警界面新增`PUT/DELETE /api/rules/:id/settings`：更新传`{expected,changes}`，删除传`{expected}`；expected为打开操作时的完整原规则`id/registerId/operator/threshold/message`，changes仅允许operator/threshold/message且不可为空。事务内全字段核对，不一致409、已删除404、无条件/非法输入400，不回退旧接口。响应`{rule,deletedRuleId,warnings}`，提交后的通知失败仍成功返回警告。现有`/api/rules/:id`与MCP仍无条件兼容；不代表点位/来源或持久修订保护。见[契约及验证](../../docs/develop/45-告警编辑删除旧值核对.md)。
