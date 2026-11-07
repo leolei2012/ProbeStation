@@ -736,7 +736,7 @@ export default function App() {
 
         {loadError && <div className="operation-feedback error" role="alert">{t('loadFailed')}<button className="btn" onClick={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }}>{t('refresh')}</button></div>}
         <DeviceIssues onNavigate={navigateData} english={lang === 'en'} />
-        <GlobalTabBar t={t} view={view} onChange={setView} />
+        <GlobalTabBar t={t} view={view} onChange={next => { if (next === 'database') setDataTarget(null); setView(next) }} />
         {view === 'database'
           ? <DatabaseView t={t} devices={devices} />
           : (selected

@@ -128,4 +128,27 @@ const missingLifetime = deviceLifetime(); assert.equal(missingLifetime.mount().c
 assert.equal(missingLifetime.mount().consume(exact), null, 'missing point is not silently retried on remount')
 assert.equal(deviceLifetime(2).mount().consume(exact), null, 'another device cannot consume the old target')
 assert.ok(deviceLifetime(2).mount().consume({ ...exact, deviceId: 2 })?.range, 'new device lifetime owns a separate intent journal')
-console.log('HISTORY NAVIGATION OK: one-shot/late/invalid/legacy intents plus actual parent/child allocations, prop wiring and consume/cancel/tab expressions; remount, manual override, leaving cancels unresolved focus, late definitions, missing ID, explicit repeat, exact time/value-mode and device isolation; no component mount, DOM, service, device or model I/O')
+
+// Global navigation destroys DeviceView. Exercise the actual App handler and
+// fresh device effect, rather than assuming its old ref survives this boundary.
+const globalElement = nodes(sourceFile, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(sourceFile) === 'GlobalTabBar')[0] as ts.JsxSelfClosingElement
+const globalChange = globalElement.attributes.properties.find(node => ts.isJsxAttribute(node) && node.name.getText(sourceFile) === 'onChange') as ts.JsxAttribute
+const navigateDeclaration = nodes(sourceFile, node => ts.isVariableDeclaration(node) && node.name.getText(sourceFile) === 'navigateData')[0] as ts.VariableDeclaration
+const targetEffect = nodes(parentComponent, node => ts.isCallExpression(node) && node.expression.getText(sourceFile) === 'useEffect' && node.arguments[0]?.getText(sourceFile).includes('target.view'))[0] as ts.CallExpression
+assert(globalChange.initializer && ts.isJsxExpression(globalChange.initializer) && globalChange.initializer.expression && navigateDeclaration?.initializer && targetEffect)
+let appView = 'monitor', appTarget: any = exact, appDevice = 1
+const appSequence = { current: 10 }, setView = (value: string) => { appView = value }, setDataTarget = (value: unknown) => { appTarget = value }
+const manualGlobal = (next: string) => expression((globalChange.initializer as ts.JsxExpression).expression!, ['setView', 'setDataTarget'], [setView, setDataTarget])(next)
+const freshDeviceTab = () => { let tab = 0; expression(targetEffect.arguments[0], ['target', 'device', 'setTab'], [appTarget, { id: appDevice, mode: 'master' }, (next: number) => { tab = next }])(); return tab }
+manualGlobal('database'); assert.equal(appView, 'database')
+manualGlobal('monitor'); assert.equal(appView, 'monitor')
+assert.equal(freshDeviceTab(), 0, 'monitor→database→monitor must not replay the dismissed history target in a fresh DeviceView')
+assert.equal(appTarget, null)
+const emit = expression(navigateDeclaration.initializer!, ['setSelectedId', 'setView', 'setDataTarget', 'navigationSequence'], [(id: number) => { appDevice = id }, setView, setDataTarget, appSequence])
+manualGlobal('database'); emit(exact)
+assert.equal(appView, 'monitor'); assert.equal(appDevice, 1); assert.equal(freshDeviceTab(), 2); assert.equal(appTarget.token, 11); assert.equal(appTarget.start, exact.start); assert.equal(appTarget.valueMode, 'raw')
+manualGlobal('monitor'); assert.equal(appTarget.token, 11, 'clicking the already-active monitor does not discard a fresh intent')
+manualGlobal('database'); emit({ ...exact, deviceId: 2, registerId: 22 })
+assert.equal(appDevice, 2); assert.equal(appTarget.token, 12); assert.equal(appTarget.registerId, 22); assert.equal(freshDeviceTab(), 2)
+manualGlobal('database'); manualGlobal('database'); manualGlobal('monitor'); assert.equal(freshDeviceTab(), 0); assert.equal(appTarget, null)
+console.log('HISTORY NAVIGATION OK: one-shot/late/invalid/legacy intents plus actual owner/prop/consume/cancel/tab/global handlers; child and full device remount, manual override, pending focus cancellation, missing ID, explicit repeat/new target from database, exact time/value-mode and device isolation; no component mount, DOM, service, device or model I/O')

@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs'
 import { captureHistoryExport, historyExportRangeLabel, historyExportUrl } from '../apps/web/src/history-export.ts'
 import { HistoryExportModal } from '../apps/web/src/HistoryExportModal.tsx'
 import { createOfflineTestApp } from './offline-test-app.ts'
+import { Sink } from '../packages/sink/src/index.ts'
 
 const t = Date.parse('2026-11-06T00:00:00.123Z'), selection = [3, 1, 3]
 const snapshot = captureHistoryExport(2, { start: t + .5, end: t + 1000.75 }, selection, 480, 'viewport')
@@ -72,4 +73,34 @@ try {
   assert.equal(tooLarge.headers['content-disposition'], undefined)
   assert.equal((await app.inject('/api/test-info')).json().realDataOpened, false)
 } finally { await edition.app.close() }
-console.log('HISTORY EXPORT OK: exact viewport/full ranges, selection snapshot, milliseconds/timezones, CSV/XLSX raw rows, batch status, empty and failure/retry')
+
+// Change the same mutable configuration objects while the actual exporter awaits
+// its raw query. Both formats must keep the definitions captured by that request.
+const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
+for (const format of ['csv', 'xlsx'] as const) {
+  const device = { id: 7, mode: 'master' }, group = { id: 10, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 2 }
+  const point = { id: 101, objectId: 7, groupId: 10, alias: 'before', functionCode: 3, startAddress: 0, dataType: 'uint16' }
+  const entered = deferred<void>(), held = deferred<any[]>(); let ranges: any[] = [], reads = 0
+  const data = [
+    { objectId: 7, area: 'holding-register', address: 0, slaveId: 1, rawValue: 123, quality: 'good', ts: new Date(t).toISOString(), timestampMs: t, batchId: 'first-response' },
+    ...[1, 0].map((rawValue, address) => ({ objectId: 7, area: 'holding-register', address, slaveId: 2, rawValue, quality: 'good', ts: new Date(t).toISOString(), timestampMs: t, batchId: 'second-response' })),
+  ]
+  const rowsFor = (selected: any[]) => data.filter(row => selected.some(range => range.area === row.area && range.slaveId === row.slaveId && row.address >= range.startAddress && row.address <= range.endAddress))
+  const store = { async queryObjectForExport(id: number, start: string, end: string, selected: any[]) { reads++; assert.equal(id, 7); assert.equal(start, snapshot.start); assert.equal(end, snapshot.end); ranges = structuredClone(selected); entered.resolve(); return held.promise } }
+  const sink = new Sink({ config: { listRegistersByObject: () => [point], listGroups: () => [group], getObject: () => device }, store })
+  const run = () => format === 'csv' ? sink.exportCsv(7, snapshot.start, snapshot.end, [101]) : sink.exportXlsx(7, snapshot.start, snapshot.end, [101])
+  const pending = run(); await entered.promise
+  assert.deepEqual(ranges, [{ area: 'holding-register', startAddress: 0, endAddress: 0, slaveId: 1 }])
+  group.slaveId = 2; point.alias = 'after'; point.dataType = 'uint32'
+  held.resolve(rowsFor(ranges)); const first = await pending
+  const cells = async (body: string | Buffer) => {
+    if (typeof body === 'string') { const rows = body.split('\n').map(line => line.split(',')); return [rows[0][1], ...rows[1].slice(1)] }
+    const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(body as any); const sheet = workbook.getWorksheet('data')!; return [sheet.getCell('B1').value, sheet.getCell('B2').value, sheet.getCell('C2').value, sheet.getCell('D2').value]
+  }
+  const eligible = format === 'csv' ? 'true' : true
+  assert.deepEqual(await cells(first), ['before', '123', '批次/来源已验证', eligible], 'configuration changes during await must not relabel, widen or change the source of this file')
+  store.queryObjectForExport = async (_id, _start, _end, selected) => { reads++; ranges = structuredClone(selected); return rowsFor(selected) }
+  assert.deepEqual(await cells(await run()), ['after', '65536', '批次/来源已验证', eligible], 'a new export uses the new definition, not the prior request snapshot')
+  assert.deepEqual(ranges, [{ area: 'holding-register', startAddress: 0, endAddress: 1, slaveId: 2 }]); assert.equal(reads, 2)
+}
+console.log('HISTORY EXPORT OK: exact range/selection/milliseconds/timezones, real CSV/XLSX, batch status/empty/failure/retry, and actual Sink in-flight mutable definition/source/width isolation versus fresh export; isolated temporary or pure mock data only, no production service/device/model I/O')
