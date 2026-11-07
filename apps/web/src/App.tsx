@@ -1,6 +1,7 @@
 import { RecordingIntervalNotice } from './RecordingIntervalNotice'
 import { PersistenceStatus } from './PersistenceStatus'
 import { RetentionSummary } from './RetentionSummary'
+import { RealtimeFallbackRead } from './realtime-fallback'
 import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
@@ -463,7 +464,8 @@ export default function App() {
   if (!groupRead.current) groupRead.current = new LatestConfigRead()
   useEffect(() => () => { deviceRead.current?.cancel(); groupRead.current?.cancel() }, [])
   const selectedIdRef = useRef<number | null>(selectedId)
-  useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
+  const fallbackReadRef = useRef<RealtimeFallbackRead<Record<string, LatestValue>>>()
+  useEffect(() => { selectedIdRef.current = selectedId; fallbackReadRef.current?.select(selectedId); setFallbackStatus({}) }, [selectedId])
 
   useEffect(() => {
     const apply = () => {
@@ -514,9 +516,11 @@ export default function App() {
     let lastMessageAt = Date.now()
     let currentStatus: RealtimeStatus = 'connecting'
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+    let fallbackRead: RealtimeFallbackRead<Record<string, LatestValue>> | undefined
 
     const updateStatus = (status: RealtimeStatus, nextAttempt = attempt) => {
       currentStatus = status
+      fallbackRead?.setConnected(status === 'connected')
       setRealtime({ status, attempt: nextAttempt })
     }
     const mergeObjectSnapshot = (objectId: number, data: Record<string, LatestValue>) => {
@@ -528,18 +532,13 @@ export default function App() {
         return next
       })
     }
-    const channelConnected = () => currentStatus === 'connected'
-    const fetchFallback = async () => {
-      if (channelConnected()) return
-      const id = selectedIdRef.current
-      if (id == null) return
-      try {
-        const snapshot = await api.get('/api/monitor_objects/' + id + '/latest')
-        if (stopped || channelConnected()) return
-        mergeObjectSnapshot(id, snapshot)
-        setFallbackStatus(prev => ({ ...prev, [id]: true }))
-      } catch { if (!stopped && !channelConnected()) setFallbackStatus(prev => ({ ...prev, [id]: false })) }
-    }
+    fallbackRead = new RealtimeFallbackRead({
+      read: (id, signal) => request('/api/monitor_objects/' + id + '/latest', { signal }),
+      accept: (id, snapshot) => { mergeObjectSnapshot(id, snapshot); setFallbackStatus(prev => ({ ...prev, [id]: true })) },
+      failed: id => setFallbackStatus(prev => ({ ...prev, [id]: false })),
+    })
+    fallbackRead.select(selectedIdRef.current)
+    fallbackReadRef.current = fallbackRead
     const scheduleReconnect = () => {
       if (stopped || reconnectTimer) return
       attempt += 1
@@ -606,7 +605,7 @@ export default function App() {
       if (idle >= FORCE_RECONNECT_MS) ws.close()
       else if (idle >= STALE_MS && currentStatus === 'connected') updateStatus('stale', attempt)
     }, 5_000)
-    const fallback = setInterval(() => { void fetchFallback() }, FALLBACK_MS)
+    const fallback = setInterval(() => { void fallbackRead!.refresh() }, FALLBACK_MS)
     const onOnline = () => reconnectNow()
     const onVisible = () => { if (document.visibilityState === 'visible' && currentStatus !== 'connected') reconnectNow() }
     window.addEventListener('online', onOnline)
@@ -615,6 +614,8 @@ export default function App() {
 
     return () => {
       stopped = true
+      fallbackRead?.dispose()
+      if (fallbackReadRef.current === fallbackRead) fallbackReadRef.current = undefined
       if (reconnectTimer) clearTimeout(reconnectTimer)
       clearInterval(heartbeat); clearInterval(watchdog); clearInterval(fallback)
       window.removeEventListener('online', onOnline)
