@@ -1,5 +1,7 @@
 # @probebench/web
 
+助手本地附件读取由`assistant-attachment-read.ts`管理：全批元数据预检、原子追加、取消/失败中止余下FileReader并释放回调，卸载取消不发布状态。`AssistantAttachmentReadStatus`提供type=button的取消控件，不提交聊天表单；选择文件不等于发送。保留原支持格式、粘贴图片命名和大附件行为，无新数量/大小阈值，见[验证边界](../../docs/develop/51-助手本地附件读取取消.md)。
+
 写值弹窗采用`registerWritePayloadValue`与REST共用的输入边界，提交前拒绝空值/非有限数值和无效64位整数文本；64位值序列化为精确字符串，hex/bin保持原进制payload。页面不新增写权限、自动重试或硬件动作，mock验证及限制见[说明](../../docs/develop/50-寄存器写值输入校验.md)。
 
 实时REST回退生命周期：`src/realtime-fallback.ts`只负责所选设备的只读latest快照，合并有效在途请求，10秒超时；通道恢复、选择变更、卸载后旧响应及错误均失效。保留5秒刷新周期及既有更新中断提示，不改重连/心跳/硬件采样或写入；前端取消不表示后端采集已停止。离线回归及未验收部分见[说明](../../docs/develop/49-实时回退读取生命周期隔离.md)。

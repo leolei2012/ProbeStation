@@ -5,6 +5,8 @@ import { AssistantMessage } from './AssistantMessage'
 import type { DataTarget } from './DeviceIssues'
 import { AssistantModelPicker } from './AssistantModelPicker'
 import { AssistantConversation, type AssistantTurn } from './AssistantConversation'
+import { AttachmentBatchRead, readAttachmentBase64 } from './assistant-attachment-read'
+import { AssistantAttachmentReadStatus } from './AssistantAttachmentReadStatus'
 
 type Proposal = { id: string; label: string; field: string; before: unknown; after: unknown; state: string }
 type Session = { partial?: string; activity?: string; sources?: (DataTarget & { entryIndex: number })[]; compacting?: boolean; turns?: AssistantTurn[]; id: string; entries: { role: string; content: string }[]; proposals: Proposal[]; running: boolean; error?: string }
@@ -23,7 +25,14 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
   const [provider, setProvider] = useState('custom')
   const [attachments, setAttachments] = useState<{ name: string; data: string; size: number }[]>([])
   const [readingFiles, setReadingFiles] = useState(false)
-  const attachmentLock = useRef(false)
+  const attachmentReader = useRef<AttachmentBatchRead<File>>()
+  if (!attachmentReader.current) attachmentReader.current = new AttachmentBatchRead<File>({
+    read: readAttachmentBase64,
+    accepted: files => setAttachments(prev => [...prev, ...files]),
+    failed: error => setError(error instanceof Error ? error.message : '读取附件失败'),
+    busy: setReadingFiles,
+  })
+  useEffect(() => { setReadingFiles(attachmentReader.current?.reading ?? false); return () => { attachmentReader.current?.cancel(false) } }, [])
   const fileInput = useRef<HTMLInputElement>(null)
   const [effort, setEffort] = useState('default')
   const [input, setInput] = useState('')
@@ -85,7 +94,7 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
   }
   const send = () => act(async () => {
     const message = input.trim()
-    if (restoring || restoreFailed || (!message && !attachments.length) || readingFiles || busy || session?.running || session?.proposals.some(p => p.state === 'pending')) return
+    if (restoring || restoreFailed || (!message && !attachments.length) || readingFiles || attachmentReader.current?.reading || busy || session?.running || session?.proposals.some(p => p.state === 'pending')) return
     setFollowing(true)
     if (message.startsWith('/')) {
       if (message !== '/compact') throw new Error('当前支持 /compact：压缩上下文，不接受参数')
@@ -108,20 +117,9 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
   const pending = session?.proposals.some(p => p.state === 'pending')
   const active = restoring || restoreFailed || busy || readingFiles || session?.running
   const addAttachments = async (files: File[]) => {
-          if (!files.length || active || pending || attachmentLock.current) return
-          attachmentLock.current = true
-          setError(''); setReadingFiles(true)
-          try {
-            const next = await Promise.all(files.map(async file => {
-              const imageExt = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' } as Record<string, string>)[file.type]
-              const name = imageExt && !/\.(png|jpe?g|webp)$/i.test(file.name) ? `${file.name || '粘贴图片'}.${imageExt}` : file.name
-              if (!/\.(png|jpe?g|webp|txt|md|csv|json|log|yaml|yml|xml|ini|c|h|cpp|py|js|ts)$/i.test(name)) throw new Error(`${name}：暂不支持此附件格式`)
-              if (!file.size) throw new Error(`${file.name}：不能上传空文件`)
-              const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = () => reject(new Error('读取附件失败')); reader.readAsDataURL(file) })
-              return { name, size: file.size, data }
-            }))
-            if (!disposed.current) setAttachments(prev => [...prev, ...next])
-          } catch (e: any) { if (!disposed.current) setError(e.message) } finally { attachmentLock.current = false; if (!disposed.current) setReadingFiles(false) }
+    if (!files.length || active || pending || requestLock.current) return
+    setError(''); setNotice('')
+    await attachmentReader.current!.start(files)
   }
   return <>
     <button className="btn ai-launch" aria-expanded={open} onClick={() => setOpen(!open)}>✦ AI 助手{session?.running ? ' · 处理中' : ''}</button>
@@ -147,7 +145,7 @@ export function AssistantPanel({ device, onChanged, onOpenSettings, configRevisi
           void addAttachments(files)
         }} />
         {!!attachments.length && <div className="ai-attachments">{attachments.map((file, i) => <div className="ai-attachment" key={i}><span title={file.name}>📎 {file.name}</span><small>{Math.ceil(file.size / 1024)} KB</small><button type="button" disabled={!!active} aria-label={'移除附件 ' + file.name} onClick={() => setAttachments(prev => prev.filter((_, n) => n !== i))}>×</button></div>)}</div>}
-        {readingFiles && <small role="status">正在读取附件…</small>}
+        <AssistantAttachmentReadStatus reading={readingFiles} cancel={() => { if (attachmentReader.current!.cancel()) setNotice('附件读取已取消，已有附件保持不变。') }} />
         <textarea onPaste={e => {
           const items = Array.from(e.clipboardData.items).filter(item => item.kind === 'file').map(item => item.getAsFile()).filter((file): file is File => file !== null)
           const files = items.length ? items : Array.from(e.clipboardData.files)

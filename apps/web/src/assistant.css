@@ -163,3 +163,5 @@
   .ai-send, .ai-new-chat { width: 44px; height: 44px; flex-basis: 44px; }
   .ai-header { flex-wrap: wrap; }
 }
+.ai-attachment-reading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ai-attachment-reading small { flex: 1; min-width: 180px; }
