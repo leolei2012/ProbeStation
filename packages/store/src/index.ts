@@ -8,6 +8,7 @@ import { sourceKey, validSlaveId } from '../../core/src/sample-source.ts'
 import { decodeHistoricalSample } from '../../core/src/history-integrity.ts'
 import { HISTORY_EXPORT_RAW_LIMIT, type HistoryExportReadRange } from '../../core/src/history-export-policy.ts'
 import type { SamplePersistenceStatus } from '../../core/src/sample-persistence.ts'
+import { deviceRetentionPolicy, type DeviceRetentionPolicy } from '../../core/src/retention-policy.ts'
 
 function rawTimestampMs(value: unknown): number {
   const text = String(value)
@@ -526,7 +527,7 @@ export class DuckDBStore {
     newestTs: string | null
     byArea: Array<{ area: string; rows: number }>
     bufferPending: number
-    retention: { retention_seconds: number }
+    retention: { retention_seconds: number; policy: DeviceRetentionPolicy }
   }> {
     const conn = await this.ready
     const num = (v: unknown): number => Number(v ?? 0)
@@ -542,7 +543,7 @@ export class DuckDBStore {
       newestTs: span?.mx == null ? null : localTs(String(span.mx)),
       byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
       bufferPending: this.pendingRows(objectId),
-      retention: { retention_seconds: this.getRetentionSeconds() },
+      retention: { retention_seconds: this.getRetentionSeconds(), policy: deviceRetentionPolicy(this.getRetentionSeconds(), objectId, this.cfg ? this.cfg.listObjects() : []) },
     }
   }
 

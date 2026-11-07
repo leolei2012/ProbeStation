@@ -220,3 +220,7 @@ source-changed/source-unverified表示旧录制已停止追加或触发，保留
 ### 区分实时读数与历史落盘
 
 排查历史缺数据时，可在数据管理页或已授权的REST连接只读读取/api/storage/persistence-status，按object_id过滤待写计数。stateScope=service是共享写入状态；selected待写0不能覆盖全服务失败，ready/上次提交时间也不是某点已落库证明。未核实/unsupported时不要断言保存正常。待写计数仅为已进入内存缓冲的原始行，不含拒写后的样本，也不是丢失总数。本接口不提供重试或恢复操作；不得据此自动flush、清空、重开、重启或更改保留策略，先报告后端日志需排查的事实。见[落盘状态边界](../develop/47-采样落盘状态与设备缓冲计数.md)。
+
+### 只读核对设备保留配置
+
+设备stats.retention.retention_seconds仍为全局默认；不能据此断言所选设备继承。新policy需匹配version=1和所选objectId，source=global/device且seconds有效，才表示该设备当前配置；0永久，NULL覆盖继承全局。旧响应、非法值和不匹配范围均未核实，不自动改策略或清理。配置时长不保证历史完整，也不能恢复已清理行；此轮未改助手/MCP保留工具，读取设备配置时仍需核对覆盖字段，见[详细范围](../develop/48-设备保留策略准确显示.md)。

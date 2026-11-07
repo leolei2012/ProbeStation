@@ -24,6 +24,7 @@
     "preview:alarm-history": "tsx scripts/preview-register-picker.ts --alarm-history",
     "preview:alarm-rules": "tsx scripts/preview-register-picker.ts --alarm-rules",
     "preview:persistence": "tsx scripts/preview-register-picker.ts --persistence",
+    "preview:retention": "tsx scripts/preview-register-picker.ts --retention",
     "preview:query-memory": "tsx scripts/preview-register-picker.ts --query-memory",
     "preview:time-range": "tsx scripts/preview-register-picker.ts --time-range",
     "diagnose:points": "tsx scripts/diagnose-points.ts",

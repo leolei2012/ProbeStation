@@ -988,3 +988,6 @@ table.reg th, .btn { white-space: nowrap; }
 .persistence-status.needs-review { border-color: #b58b38; }
 .persistence-status p { margin: 8px 0; }
 .persistence-status small { display: block; line-height: 1.5; opacity: .8; }
+.retention-summary { overflow-wrap: anywhere; }
+.retention-summary p { margin: 8px 0; }
+.retention-summary small { display: block; color: var(--text-2); line-height: 1.5; }

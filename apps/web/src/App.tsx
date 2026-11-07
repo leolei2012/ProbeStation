@@ -1,5 +1,6 @@
 import { RecordingIntervalNotice } from './RecordingIntervalNotice'
 import { PersistenceStatus } from './PersistenceStatus'
+import { RetentionSummary } from './RetentionSummary'
 import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
@@ -796,9 +797,6 @@ function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
   }, [device])
   useEffect(() => { void load() }, [load])
 
-  const retention = stats?.retention?.retention_seconds
-  const retentionText = retention === 0 ? t('dbRetentionForever') : (retention != null ? t('dbRetentionDays').replace('{n}', String(Math.round(retention / 86400))) : '—')
-
 
   return (
     <div className="db-view">
@@ -831,7 +829,7 @@ function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
 
       <div className="db-section">
         <div className="db-section-title">{t('dbRetention')}</div>
-        <div className="kv">{retentionText}</div>
+        <RetentionSummary retention={stats?.retention} objectId={device?.id ?? null} english={t('cancel') === 'Cancel'} />
       </div>
     </div>
   )
