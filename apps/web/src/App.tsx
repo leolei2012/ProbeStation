@@ -845,6 +845,8 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
   const [tab, setTab] = useState(0)
   const queryMemory = useRef<HistoryQueryMemory>()
   if (!queryMemory.current) queryMemory.current = new HistoryQueryMemory(device.id)
+  const historyNavigation = useRef<HistoryNavigation>()
+  if (!historyNavigation.current) historyNavigation.current = new HistoryNavigation()
   useEffect(() => { if (target) setTab(target.view === 'history' ? 2 : target.view === 'diagnostics' && device.mode !== 'slave' ? 3 : 0) }, [target?.token])
   const [showEdit, setShowEdit] = useState(false)
   const registers = useMemo(() => withRegisterSources(groups.flatMap(g => g.registers), groups, device), [groups, device.mode, device.slaveId])
@@ -876,10 +878,10 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
       </div>
       {device.mode === 'slave' && <DeviceSlaveStatus deviceId={device.id} />}
       <RecordingIntervalNotice deviceId={device.id} />
-      <TabBar tabs={[{ id: 0, label: t('tabLive') }, { id: 1, label: t('liveCurve') }, { id: 2, label: t('tabHistory') }, ...(device.mode === 'slave' ? [] : [{ id: 3, label: t('tabRaw') }, { id: 4, label: t('tabFirmware') }]), { id: 5, label: t('pointCheckTab') }]} active={tab} onChange={setTab} />
+      <TabBar tabs={[{ id: 0, label: t('tabLive') }, { id: 1, label: t('liveCurve') }, { id: 2, label: t('tabHistory') }, ...(device.mode === 'slave' ? [] : [{ id: 3, label: t('tabRaw') }, { id: 4, label: t('tabFirmware') }]), { id: 5, label: t('pointCheckTab') }]} active={tab} onChange={next => { if (next !== 2) historyNavigation.current!.cancelPending(); setTab(next) }} />
       <AlarmPanel configurationReady={configurationReady} onHistory={onNavigate} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
       {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
-      {tab === 2 && <HistoryView memory={queryMemory.current} configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
+      {tab === 2 && <HistoryView navigation={historyNavigation.current} memory={queryMemory.current} configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
       {tab === 5 && (configurationReady ? <PointDiagnosticsPanel key={pointCheckContext} deviceId={device.id} points={registers} groups={groups} pointLabels={pointCheckLabels} fetcher={fetchPointDiagnostics} english={t('cancel') === 'Cancel'} /> : <p role="status">{t('pointCheckWaiting')}</p>)}
@@ -1155,7 +1157,7 @@ function deriveHistoryRows(pts: HistoryPoint[], registers: Register[], selectedR
 }
 
 interface HistoryPayload { points: HistoryPoint[]; series?: HistorySeries[]; sourceSamples?: number; displayedSamples?: number; downsampled?: boolean; total: number }
-function HistoryView({ memory, configurationReady, target, t, device, groups, registers }: { memory: HistoryQueryMemory; configurationReady: boolean; target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
+function HistoryView({ navigation, memory, configurationReady, target, t, device, groups, registers }: { navigation: HistoryNavigation; memory: HistoryQueryMemory; configurationReady: boolean; target: DataTarget | null; t: T; device: Device; groups: DeviceGroup[]; registers: Register[] }) {
   const [mode, setMode] = useState<'table' | 'chart'>('table')
   const [valueMode, setValueMode] = useValueMode('ps-history-value-mode-' + device.id)
   const [range, setRange] = useState(() => historyPresetRange(60, Date.now(), 'local'))
@@ -1167,12 +1169,10 @@ function HistoryView({ memory, configurationReady, target, t, device, groups, re
   const queryTask = useRef<HistoryQueryTask | null>(null)
   const [exportRequest, setExportRequest] = useState<HistoryExportRequest | null>(null)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
-  const navigation = useRef<HistoryNavigation>()
-  if (!navigation.current) navigation.current = new HistoryNavigation()
   const [navigationRevision, setNavigationRevision] = useState(0)
   const [navigationNotice, setNavigationNotice] = useState<{ kind: 'waiting' | 'missing' | 'invalid'; id?: number } | null>(null)
   useEffect(() => {
-    const action = navigation.current!.consume(target, device.id, registers.map(r => r.id), configurationReady)
+    const action = navigation.consume(target, device.id, registers.map(r => r.id), configurationReady)
     if (!target || target.view !== 'history') setNavigationNotice(null)
     if (!action) return
     if (action.invalid) { setNavigationNotice({ kind: 'invalid' }); setSelected(new Set()); return }
@@ -1186,8 +1186,8 @@ function HistoryView({ memory, configurationReady, target, t, device, groups, re
       setSelected(action.focus.state === 'found' ? new Set([action.focus.id]) : new Set())
       setNavigationNotice(action.focus.state === 'found' ? null : { kind: action.focus.state, id: action.focus.id })
     }
-  }, [target, device.id, registers, configurationReady])
-  const cancelNavigation = () => { navigation.current!.cancelPending(); setNavigationNotice(null) }
+  }, [navigation, target, device.id, registers, configurationReady])
+  const cancelNavigation = () => { navigation.cancelPending(); setNavigationNotice(null) }
   const selectedRegisters = registers.filter(r => selected.has(r.id))
   const pointLabels = useMemo(() => buildPointLabels(registers, groups, t, device.mode === 'slave' ? device.slaveId : undefined), [registers, groups, t, device.mode, device.slaveId])
   const { start: startMs, end: endMs, valid } = useMemo(() => resolveHistoryTimeRange(range), [range])
