@@ -5,8 +5,12 @@ import { readPointAlarmObservation } from './alarm-value'
 import { alarmHistoryState } from './alarm-history'
 import { AlarmHistoryAction } from './AlarmHistoryAction'
 import type { DataTarget } from './DeviceIssues'
-import { AlarmRulesReader, readAlarmRules } from './alarm-rule-read'
+import { AlarmRulesReader } from './alarm-rule-read'
 import { AlarmRuleReadStatus, alarmRuleSummaryKey } from './AlarmRuleReadStatus'
+import { captureAlarmRule } from '../../../packages/core/src/alarm-settings-edit'
+import type { AlarmRule } from '../../../packages/core/src/alarm'
+import { AlarmWriteGate, writeGuardedAlarm, createAlarm, completeAlarmWrite } from './alarm-settings-save'
+import { AlarmRuleWriteStatus } from './AlarmRuleWriteStatus'
 
 type Register = { id: number; alias: string | null; startAddress: number; dataType: string; functionCode: number }
 type Group = { id: number; name: string; isActive: number; slaveId?: number; registers: Register[] }
@@ -14,12 +18,12 @@ const symbols: Record<string, string> = { '>': '>', '>=': '≥', '==': '=', '<='
 async function request(path: string, method = 'GET', body?: unknown, signal?: AbortSignal) {
   const res = await fetch(path, { method, signal, headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
   const value = await res.json()
-  if (!res.ok) throw new Error(value.message || value.error || 'HTTP ' + res.status)
+  if (!res.ok) throw Object.assign(new Error(value.message || value.error || 'HTTP ' + res.status), { statusCode: res.status })
   return value
 }
 
-export function useAlarmRules(deviceId: number) {
-  const reader = useMemo(() => new AlarmRulesReader(signal => request('/api/rules', 'GET', undefined, signal)), [deviceId])
+export function useAlarmRules(deviceId: number, requester = request) {
+  const reader = useMemo(() => new AlarmRulesReader(signal => requester('/api/rules', 'GET', undefined, signal)), [deviceId, requester])
   const state = useSyncExternalStore(reader.subscribe, reader.snapshot, reader.snapshot)
   const [operationError, setError] = useState('')
   const lock = useRef(false)
@@ -36,12 +40,13 @@ export function useAlarmRules(deviceId: number) {
     retry: () => { if (!lock.current) void reader.refresh(true) } }
 }
 
-export function AlarmPanel({ t, device, groups, latest, groupErrors, now, threshold, point, onClose, configurationReady = false, onHistory }: {
+export function AlarmPanel({ t, device, groups, latest, groupErrors, now, threshold, point, onClose, configurationReady = false, onHistory, api = request }: {
   t: (key: string) => string; device: { id: number; isActive: number; mode?: string; slaveId?: number }; groups: Group[]
   latest: Record<string, Sample>; groupErrors: Record<number, string>; now: number; threshold: number; point?: Register; onClose?: () => void
   configurationReady?: boolean; onHistory?: (target: Readonly<DataTarget>) => void
+  api?: typeof request
 }) {
-  const { rules, setRules, error, setError, lock, ready, reading, state: readState, invalidate, retry } = useAlarmRules(device.id)
+  const { rules, setRules, error, setError, lock, ready, reading, state: readState, invalidate, retry } = useAlarmRules(device.id, api)
   const [open, setOpen] = useState(!!point)
   const [busy, setBusy] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
@@ -49,7 +54,11 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
   const [operator, setOperator] = useState('>')
   const [limit, setLimit] = useState('')
   const [message, setMessage] = useState('')
-  const [deleting, setDeleting] = useState<number | null>(null)
+  const [editExpected, setEditExpected] = useState<Readonly<AlarmRule> | null>(null)
+  const [deleting, setDeleting] = useState<Readonly<AlarmRule> | null>(null)
+  const gate = useMemo(() => new AlarmWriteGate(), [device.id])
+  const writeState = useSyncExternalStore(gate.subscribe, gate.snapshot, gate.snapshot)
+  const [writeWarning, setWriteWarning] = useState('')
   const titleId = useId()
   const registers = groups.flatMap(g => g.registers)
   const localRules = rules.filter(rule => registers.some(r => r.id === rule.registerId) && (!point || rule.registerId === point.id))
@@ -61,17 +70,31 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
     return { rule, reg, observation, known, value, active: known && alarmMatches(value, rule.operator, rule.threshold) }
   })
   const active = evaluated.filter(e => e.active), unknown = evaluated.filter(e => !e.known)
-  const reset = () => { setEditId(null); setRegisterId(point ? String(point.id) : ''); setOperator('>'); setLimit(''); setMessage(''); setDeleting(null) }
-  const mutate = async (action: () => Promise<void>) => {
-    if (lock.current || !ready || reading) return
+  const reset = () => { gate.reset(); setError(''); setWriteWarning(''); setEditId(null); setEditExpected(null); setRegisterId(point ? String(point.id) : ''); setOperator('>'); setLimit(''); setMessage(''); setDeleting(null) }
+  const mutate = async (action: (signal: AbortSignal) => Promise<readonly string[]>) => {
+    if (lock.current || !ready || reading || gate.snapshot().phase !== 'idle') return
     lock.current = true; invalidate(); setBusy(true); setError('')
-    try { await action(); const next = await readAlarmRules(signal => request('/api/rules', 'GET', undefined, signal), new AbortController().signal); setRules(next); reset() }
-    catch (e: any) { setError(t('alarmWriteVerify') + ' ' + (e instanceof Error ? e.message : String(e))) }
+    let next: readonly AlarmRule[] | null = null, warnings: readonly string[] = []
+    try {
+      const saved = await gate.run(async signal => {
+        const completed = await completeAlarmWrite(action, child => api('/api/rules', 'GET', undefined, child), signal)
+        warnings = completed.warnings; next = completed.rules
+      })
+      if (saved && next) { setRules(next); reset(); setWriteWarning(warnings.join(' ')) }
+    }
     finally { window.dispatchEvent(new Event('alarm-rules-changed')); lock.current = false; setBusy(false) }
   }
   const save = () => {
     if (!registerId || !registers.some(r => r.id === Number(registerId)) || !limit.trim() || !Number.isFinite(Number(limit))) { setError(t('alarmInvalid')); return }
-    void mutate(async () => { await request('/api/rules' + (editId === null ? '' : '/' + editId), editId === null ? 'POST' : 'PUT', { registerId: Number(registerId), operator, threshold: Number(limit), message: message.trim() || null }) })
+    if (deleting) return
+    void mutate(async signal => {
+      const changes = { operator, threshold: Number(limit), message: message.trim() || null }
+      if (editId !== null) {
+        if (!editExpected || editExpected.id !== editId) throw new Error('missing original rule')
+        return writeGuardedAlarm(editExpected, changes, (url, method, body) => api(url, method, body, signal))
+      }
+      return createAlarm({ registerId: Number(registerId), ...changes }, (url, method, body) => api(url, method, body, signal))
+    })
   }
   const close = () => { setOpen(false); onClose?.() }
   return <div className={point ? undefined : "alarm-panel"}>
@@ -90,16 +113,18 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
       <AlarmRuleReadStatus state={readState} onRetry={retry} disabled={busy} english={t('cancel') === 'Cancel'} />
       <div className="alarm-rule-list">{ready && !reading && localRules.length === 0 && <p className="alarm-hint">{t('alarmNone')}</p>}{localRules.map(rule => { const state = evaluated.find(e => e.rule.id === rule.id)!; return <div className="alarm-rule-item" key={rule.id}>
         <div><strong>{state.reg.alias || '#' + state.reg.startAddress} · {symbols[rule.operator]} {rule.threshold}</strong><small>{rule.message || t('alarmTriggered')} · {t(!ready || reading ? 'alarmRulesUnverified' : state.active ? 'alarmTriggered' : state.known ? 'alarmNormal' : 'alarmWaiting')}</small></div>
-        <button type="button" className="btn" disabled={busy || !ready || reading} onClick={() => { setEditId(rule.id); setRegisterId(String(rule.registerId)); setOperator(rule.operator); setLimit(String(rule.threshold)); setMessage(rule.message ?? ''); setDeleting(null) }}>{t('edit')}</button>
-        <button type="button" className="btn" disabled={busy || !ready || reading} onClick={() => setDeleting(deleting === rule.id ? null : rule.id)}>{t('alarmDelete')}</button>
-        {deleting === rule.id && <div className="alarm-delete-confirm"><span>{t('alarmConfirmDelete')}</span><button type="button" className="btn" disabled={busy} onClick={() => setDeleting(null)}>{t('cancel')}</button><button type="button" className="btn danger" disabled={busy || !ready || reading} onClick={() => void mutate(async () => { await request('/api/rules/' + rule.id, 'DELETE') })}>{t('alarmDelete')}</button></div>}
+        <button type="button" className="btn" disabled={busy || !ready || reading} onClick={() => { gate.reset(); setError(''); setWriteWarning(''); setEditId(rule.id); setEditExpected(captureAlarmRule(rule)); setRegisterId(String(rule.registerId)); setOperator(rule.operator); setLimit(String(rule.threshold)); setMessage(rule.message ?? ''); setDeleting(null) }}>{t('edit')}</button>
+        <button type="button" className="btn" disabled={busy || !ready || reading} onClick={() => { gate.reset(); setError(''); setWriteWarning(''); setDeleting(deleting?.id === rule.id ? null : captureAlarmRule(rule)) }}>{t('alarmDelete')}</button>
       </div> })}</div>
+      {deleting && <div className="alarm-delete-confirm"><span>{t('alarmConfirmDelete')} #{deleting.id} · #{deleting.registerId} · {symbols[deleting.operator]} {deleting.threshold} · {deleting.message}</span><button type="button" className="btn" disabled={busy} onClick={() => setDeleting(null)}>{t('cancel')}</button><button type="button" className="btn danger" disabled={busy || !ready || reading || writeState.phase === 'blocked'} onClick={() => void mutate(signal => writeGuardedAlarm(deleting, null, (url, method, body) => api(url, method, body, signal)))}>{t('alarmDelete')}</button></div>}
+      <AlarmRuleWriteStatus state={writeState} onReset={reset} english={t('cancel') === 'Cancel'} />
+      {writeWarning && <p className="alarm-hint" role="status">{writeWarning}</p>}
       <h4>{t(editId === null ? 'alarmAdd' : 'alarmEdit')}</h4>
       {point ? <p className="enum-context">{point.alias || '#' + point.id} · {t('colAddr')} {point.startAddress} · {point.dataType}</p> : null}
       <div className="alarm-condition"><label>{t('alarmOperator')}<select aria-label={t('alarmOperator')} value={operator} disabled={busy} onChange={e => setOperator(e.target.value)}>{ALARM_OPERATORS.map(op => <option key={op} value={op}>{symbols[op]}</option>)}</select></label><label>{t('alarmThreshold')}<input aria-label={t('alarmThreshold')} type="number" step="any" value={limit} disabled={busy} onChange={e => setLimit(e.target.value)} placeholder="100" /></label></div>
       <label>{t('alarmMessage')}<input aria-label={t('alarmMessage')} value={message} maxLength={200} disabled={busy} onChange={e => setMessage(e.target.value)} placeholder={t('alarmMessageHint')} /></label>
       {error && <p className="write-msg error" role="alert">{error}</p>}
-      <div className="modal-actions">{editId !== null && <button type="button" className="btn" disabled={busy} onClick={reset}>{t('alarmCancelEdit')}</button>}<button type="button" className="btn" disabled={busy} onClick={close}>{t('alarmClose')}</button><button className="btn primary" disabled={busy || !ready || reading || !registers.length}>{t(busy ? 'working' : 'save')}</button></div>
+      <div className="modal-actions">{editId !== null && <button type="button" className="btn" disabled={busy} onClick={reset}>{t('alarmCancelEdit')}</button>}<button type="button" className="btn" disabled={busy} onClick={close}>{t('alarmClose')}</button><button className="btn primary" disabled={busy || !ready || reading || !registers.length || !!deleting || writeState.phase === 'blocked'}>{t(busy ? 'working' : 'save')}</button></div>
     </form></div>}
   </div>
 }

@@ -18,6 +18,7 @@ import { capturePointEditBaseline, parsePointEditRequest, pointEditMatches } fro
 import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest } from '../../core/src/device-settings-edit.ts'
 import { captureGroupEditGraph, groupDeletionAcknowledged, groupEditInvalid, parseGroupEditChanges, planGroupResize, type GroupEditSnapshot } from '../../core/src/group-settings-edit.ts'
 import { RecordingIntervals, type RecordingIntervalLease, type RecordingSourceGuard } from './recording-interval.ts'
+import { alarmRuleMatches, parseAlarmEdit, invalidAlarmEdit } from '../../core/src/alarm-settings-edit.ts'
 
 export const name = 'config'
 
@@ -533,6 +534,34 @@ export class ConfigStore {
   deleteRule(id: number): void {
     this.db.prepare('DELETE FROM alarm_rules WHERE id = ?').run(id)
     this.notify('rule', id)
+  }
+
+  updateRuleSettings(id: number, request: unknown) { return this.mutateRuleSettings(id, request, false) }
+  deleteRuleSettings(id: number, request: unknown) { return this.mutateRuleSettings(id, request, true) }
+  /** Compare and write under one lock. Legacy CRUD remains compatible for older clients. */
+  private mutateRuleSettings(id: number, request: unknown, deleting: boolean): { rule: RuleRecord | null; deletedRuleId: number | null; warnings: string[] } {
+    const { expected, changes } = parseAlarmEdit(request, deleting)
+    if (!Number.isSafeInteger(id) || id < 1 || expected.id !== id) return invalidAlarmEdit()
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请稍后重新核对告警。'), { statusCode: 409 })
+    let rule: RuleRecord | null = null
+    this.db.exec('BEGIN IMMEDIATE'); this.restoring = true
+    try {
+      const before = this.listRules().find(row => row.id === id)
+      if (!before) throw Object.assign(new Error('告警规则已不存在，本次未修改。'), { statusCode: 404 })
+      if (!alarmRuleMatches(before, expected)) throw Object.assign(new Error('告警规则已被修改，本次未保存或删除。请保留草稿，重新读取并核对后再编辑。'), { statusCode: 409 })
+      if (deleting) this.deleteRule(id)
+      else rule = this.updateRule(id, { ...before, ...changes })
+      const after = this.listRules().find(row => row.id === id)
+      if (deleting ? after !== undefined : !after || !alarmRuleMatches(after, { ...before, ...changes })) throw new Error('告警操作读回不一致，事务已中止。')
+      if (!deleting) rule = after!
+      this.db.exec('COMMIT')
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '告警操作回滚失败，结果待核实，勿自动重试。') }
+      throw error
+    } finally { this.restoring = false }
+    const warnings: string[] = []
+    try { this.notify('rule', id) } catch { warnings.push('告警操作已保存，但变更通知失败；请重新读取核对，勿重复操作。') }
+    return { rule, deletedRuleId: deleting ? id : null, warnings }
   }
 
   log(level: string, source: string, message: string): void {

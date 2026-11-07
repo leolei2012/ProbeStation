@@ -15,6 +15,7 @@
     "packages/api/src/points-import.ts",
     "packages/api/src/point-settings.ts",
     "packages/api/src/recording-attention.ts",
+    "packages/api/src/alarm-settings.ts",
     "packages/api/src/assistant-config-edit.ts",
     "packages/api/src/device-settings.ts",
     "packages/api/src/group-settings.ts",

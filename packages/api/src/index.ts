@@ -1,4 +1,5 @@
 import { registerRecordingAttention } from './recording-attention.ts'
+import { registerAlarmSettings } from './alarm-settings.ts'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import type { Context } from 'cordis'
 import z from 'schemastery'
@@ -76,6 +77,7 @@ export function apply(ctx: Context, config: Config): void {
     registerCurve(fastify, cfg, store)
     registerPointDiagnostics(fastify, cfg)
     registerPointSettings(fastify, cfg)
+    registerAlarmSettings(fastify, cfg)
     registerGroupSettings(fastify, cfg)
     registerDeviceSettings(fastify, cfg, { reconnect: id => poller.reconnectDevice(id), syncSlaves: async () => ctx.get('deviceSlaves', false)?.sync() })
     registerConfigBackup(fastify, cfg)

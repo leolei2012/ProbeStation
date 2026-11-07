@@ -1,5 +1,7 @@
 # @probebench/api
 
+告警界面新增`PUT/DELETE /api/rules/:id/settings`：更新传`{expected,changes}`，删除传`{expected}`；expected为打开操作时的完整原规则`id/registerId/operator/threshold/message`，changes仅允许operator/threshold/message且不可为空。事务内全字段核对，不一致409、已删除404、无条件/非法输入400，不回退旧接口。响应`{rule,deletedRuleId,warnings}`，提交后的通知失败仍成功返回警告。现有`/api/rules/:id`与MCP仍无条件兼容；不代表点位/来源或持久修订保护。见[契约及验证](../../docs/develop/45-告警编辑删除旧值核对.md)。
+
 REST + WebSocket API（Fastify + @fastify/websocket），镜像原 Monitor 端点。
 注入 `config` + `store` + `poller`，提供 `ctx.api`。
 
