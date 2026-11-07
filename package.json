@@ -37,6 +37,7 @@
     "preview:log-cleanup": "tsx scripts/preview-register-picker.ts --log-cleanup",
     "preview:query-memory": "tsx scripts/preview-register-picker.ts --query-memory",
     "preview:time-range": "tsx scripts/preview-register-picker.ts --time-range",
+    "audit:export-version": "tsx scripts/audit-history-export-version.ts --mock",
     "diagnose:points": "tsx scripts/diagnose-points.ts",
     "test:edition": "npm run build:web && tsx scripts/offline-test-app.ts",
     "typecheck:web": "tsc -p tsconfig.web.json",
