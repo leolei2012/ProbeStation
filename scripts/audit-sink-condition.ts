@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import Fastify from 'fastify'
 import ExcelJS from 'exceljs'
+import compress from '@fastify/compress'
+import { gunzipSync } from 'node:zlib'
 import { ConfigStore } from '../packages/config/src/index.ts'
 import { DuckDBStore } from '../packages/store/src/index.ts'
 import { Sink } from '../packages/sink/src/index.ts'
@@ -126,4 +128,50 @@ await memory(async f => {
   assert.equal(f.cfg.getHistoryExportConfigurationScope(), oldScope); await assert.rejects(f.candidate('csv', old), changed)
   const fresh = await f.candidate('csv', f.preview()); assert.equal(await readValue('csv', fresh.body), '200'); fresh.validate()
 })
-console.log(JSON.stringify({ audit: 'CONDITIONAL SINK CANDIDATE; REMAINING GAPS REPRODUCED; NOT A SAFETY PASS', proved: ['CSV/XLSX normal', 'stale source before SQL', 'same-scope alias/factor-zero/dtype/source edits during read', 'XLSX generation edit', 'config/store reopen after preview'], remaining: ['existing route accepts edits between Sink return and attachment', 'fresh preview accepts independently reopened store with old config', 'no deployed preview/checked capability or acknowledgment/client handshake'], currentContentCondition: 'ABA accepted, not a monotonic revision', proposedRoutePostcheck: '409 without attachment in test-only route', productionIntegration: false, database: ':memory: only', listeners: false, workspaceLoaded: false }))
+
+// Bounded handoff assessment: actual Fastify onSend ordering, including header cleanup on rejection.
+for (const cleanHeaders of [false, true]) await memory(async f => {
+  const expected = f.preview(); let validate: (() => void) | undefined
+  f.app.addHook('onSend', async (_req, reply, payload) => {
+    if (reply.statusCode === 200) { await Promise.resolve(); f.cfg.updateRegister(1, { alias: 'earlier asynchronous onSend' }) }
+    return payload
+  })
+  f.app.get('/audit/send-guard', { onSend(_req, reply, payload, done) {
+    const check = validate; validate = undefined
+    if (!check || reply.statusCode !== 200) return done(null, payload)
+    try { check(); done(null, payload) }
+    catch (error) {
+      if (cleanHeaders) {
+        for (const header of ['Content-Disposition', 'Content-Length', 'Content-Encoding', 'X-Audit-Condition']) reply.removeHeader(header)
+      }
+      done(error as Error)
+    }
+  } }, async (_req, reply) => {
+    const result = await f.candidate('csv', expected); validate = result.validate
+    return reply.header('Content-Disposition', 'attachment').header('X-Audit-Condition', expected).type('text/csv').send(result.body)
+  })
+  const response = await f.app.inject('/audit/send-guard'); assert.equal(response.statusCode, 409)
+  assert.equal(response.headers['content-disposition'], cleanHeaders ? undefined : 'attachment', 'an onSend error alone does not remove an already-set attachment header')
+  assert.equal(response.headers['x-audit-condition'], cleanHeaders ? undefined : expected)
+  if (cleanHeaders) assert.match(String(response.headers['content-type']), /application\/json/)
+})
+
+// A synchronous approval point is possible, but a later asynchronous hook/compression is not a wire-time lock.
+await memory(async f => {
+  f.store.write(Array.from({ length: 200 }, (_, i) => ({ objectId: 1, area: 'holding-register' as const, address: 0, timestamp: new Date(Date.parse(start) + i + 1).toISOString(), rawValue: 10, slaveId: 1, batchId: 'response-' + i, quality: 'good' })))
+  await f.store.flush()
+  await f.app.register(compress, { global: true })
+  const expected = f.preview(), trace: string[] = []; let validate: (() => void) | undefined
+  f.app.get('/audit/logical-approval', { onSend: [
+    (_req, reply, payload, done) => { assert(validate); validate(); assert.equal(reply.raw.headersSent, false); trace.push('approved'); reply.header('X-Audit-Condition', expected); done(null, payload) },
+    async (_req, reply, payload) => { await Promise.resolve(); assert.equal(reply.raw.headersSent, false); f.cfg.updateRegister(1, { alias: 'after approval, before headers' }); trace.push('later-edit'); return payload },
+  ] }, async (_req, reply) => {
+    const result = await f.candidate('csv', expected); validate = result.validate
+    return reply.header('Content-Disposition', 'attachment').type('text/csv').send(result.body)
+  })
+  const response = await f.app.inject({ url: '/audit/logical-approval', headers: { 'accept-encoding': 'gzip' } })
+  assert.equal(response.statusCode, 200); assert.equal(response.headers['content-encoding'], 'gzip'); assert.equal(response.headers['x-audit-condition'], expected)
+  assert.deepEqual(trace, ['approved', 'later-edit']); assert.notEqual(f.preview(), expected)
+  const csv = gunzipSync(response.rawPayload).toString('utf8'); assert.match(csv.split('\n')[0], /point/); assert.equal(csv.split('\n').length, 202)
+})
+console.log(JSON.stringify({ audit: 'CONDITIONAL SINK CANDIDATE; REMAINING GAPS REPRODUCED; NOT A SAFETY PASS', proved: ['CSV/XLSX normal', 'stale source before SQL', 'same-scope alias/factor-zero/dtype/source edits during read', 'XLSX generation edit', 'config/store reopen after preview'], remaining: ['existing route accepts edits between Sink return and attachment', 'fresh preview accepts independently reopened store with old config', 'no deployed preview/checked capability or acknowledgment/client handshake'], handoffAssessment: ['synchronous logical approval is testable', 'naive onSend rejection retains attachment/ack headers; explicit cleanup removes them', 'later async onSend edit occurs before headers and gzip send despite prior approval'], currentContentCondition: 'ABA accepted, not a monotonic revision', proposedRoutePostcheck: '409 without attachment in test-only route', productionIntegration: false, database: ':memory: only', listeners: false, workspaceLoaded: false }))

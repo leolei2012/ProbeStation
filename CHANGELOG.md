@@ -11,6 +11,8 @@
 
 ### Added
 
+- 扩展已有`audit:sink-condition`评估Fastify真实onSend/全局gzip路径：证明同步逻辑批准可观察，后续异步编辑仍可发生于发头前；发现onSend错误保留附件/成功回执头，显式清理后409无附件。文档区分启动路径声明、进程打开周期与历史数据归属，不新增生产基础设施或接入，见`docs/develop/74-导出线性化点与单目录配对评估.md`。
+
 - 新增纯内存`audit:sink-condition`，通过真实Sink/CSV/XLSX和共享Fastify路由验证条件导出候选：同周期普通编辑、读取等待、生成后检查；明确复现路由交付间隙、初始配对及当前值条件ABA限制。候选仅存在审计中，未修改生产Sink/接口或新增Workspace能力，见`docs/develop/73-Sink条件导出候选与发送边界验证.md`。
 
 - 新增`audit:export-entry`，固定纯内存模式执行实际config/store/sink插件和共享导出路由，证明无Workspace时旧CSV/XLSX可用且后台来源变化未受服务端版本保护；输出明确为已知缺口而非安全通过。修正接手指南误称工作区已启用，停止扩展未接入基础设施；不修改运行时接口或启动流程，见`docs/develop/72-导出实际入口与工作区方案收敛.md`。
