@@ -9,8 +9,8 @@ import { AlarmRulesReader } from './alarm-rule-read'
 import { AlarmRuleReadStatus, alarmRuleSummaryKey } from './AlarmRuleReadStatus'
 import { captureAlarmRule } from '../../../packages/core/src/alarm-settings-edit'
 import type { AlarmRule } from '../../../packages/core/src/alarm'
-import { AlarmWriteGate, writeGuardedAlarm, createAlarm, completeAlarmWrite } from './alarm-settings-save'
-import { AlarmRuleWriteStatus } from './AlarmRuleWriteStatus'
+import { AlarmWriteGate, writeGuardedAlarm, createAlarm, completeAlarmWrite, captureAlarmOpening, alarmOpeningState } from './alarm-settings-save'
+import { AlarmRuleWriteStatus, AlarmContextNotice } from './AlarmRuleWriteStatus'
 
 type Register = { id: number; alias: string | null; startAddress: number; dataType: string; functionCode: number }
 type Group = { id: number; name: string; isActive: number; slaveId?: number; registers: Register[] }
@@ -59,6 +59,8 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
   const gate = useMemo(() => new AlarmWriteGate(), [device.id])
   const writeState = useSyncExternalStore(gate.subscribe, gate.snapshot, gate.snapshot)
   const [writeWarning, setWriteWarning] = useState('')
+  const [openingContext] = useState(() => { try { return point ? captureAlarmOpening(point, groups, device) : null } catch { return null } })
+  const contextState = alarmOpeningState(openingContext, groups, device), contextReady = contextState === 'ready'
   const titleId = useId()
   const registers = groups.flatMap(g => g.registers)
   const localRules = rules.filter(rule => registers.some(r => r.id === rule.registerId) && (!point || rule.registerId === point.id))
@@ -72,7 +74,7 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
   const active = evaluated.filter(e => e.active), unknown = evaluated.filter(e => !e.known)
   const reset = () => { gate.reset(); setError(''); setWriteWarning(''); setEditId(null); setEditExpected(null); setRegisterId(point ? String(point.id) : ''); setOperator('>'); setLimit(''); setMessage(''); setDeleting(null) }
   const mutate = async (action: (signal: AbortSignal) => Promise<readonly string[]>) => {
-    if (lock.current || !ready || reading || gate.snapshot().phase !== 'idle') return
+    if (lock.current || !ready || reading || !contextReady || gate.snapshot().phase !== 'idle') return
     lock.current = true; invalidate(); setBusy(true); setError('')
     let next: readonly AlarmRule[] | null = null, warnings: readonly string[] = []
     try {
@@ -91,9 +93,9 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
       const changes = { operator, threshold: Number(limit), message: message.trim() || null }
       if (editId !== null) {
         if (!editExpected || editExpected.id !== editId) throw new Error('missing original rule')
-        return writeGuardedAlarm(editExpected, changes, (url, method, body) => api(url, method, body, signal))
+        return writeGuardedAlarm(editExpected, changes, (url, method, body) => api(url, method, body, signal), openingContext!)
       }
-      return createAlarm({ registerId: Number(registerId), ...changes }, (url, method, body) => api(url, method, body, signal))
+      return createAlarm({ registerId: Number(registerId), ...changes }, (url, method, body) => api(url, method, body, signal), openingContext!)
     })
   }
   const close = () => { setOpen(false); onClose?.() }
@@ -110,13 +112,14 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
     {open && <div className="modal-mask"><form className="modal alarm-editor" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); save() }}>
       <div className="modal-head"><h3 id={titleId}>{t('alarmRules')}</h3><button type="button" className="modal-close" aria-label={t('cancel')} disabled={busy} onClick={close}>×</button></div>
       <p className="alarm-hint">{t('alarmHelp')}</p>
+      <AlarmContextNotice state={contextState} english={t('cancel') === 'Cancel'} />
       <AlarmRuleReadStatus state={readState} onRetry={retry} disabled={busy} english={t('cancel') === 'Cancel'} />
       <div className="alarm-rule-list">{ready && !reading && localRules.length === 0 && <p className="alarm-hint">{t('alarmNone')}</p>}{localRules.map(rule => { const state = evaluated.find(e => e.rule.id === rule.id)!; return <div className="alarm-rule-item" key={rule.id}>
         <div><strong>{state.reg.alias || '#' + state.reg.startAddress} · {symbols[rule.operator]} {rule.threshold}</strong><small>{rule.message || t('alarmTriggered')} · {t(!ready || reading ? 'alarmRulesUnverified' : state.active ? 'alarmTriggered' : state.known ? 'alarmNormal' : 'alarmWaiting')}</small></div>
-        <button type="button" className="btn" disabled={busy || !ready || reading} onClick={() => { gate.reset(); setError(''); setWriteWarning(''); setEditId(rule.id); setEditExpected(captureAlarmRule(rule)); setRegisterId(String(rule.registerId)); setOperator(rule.operator); setLimit(String(rule.threshold)); setMessage(rule.message ?? ''); setDeleting(null) }}>{t('edit')}</button>
-        <button type="button" className="btn" disabled={busy || !ready || reading} onClick={() => { gate.reset(); setError(''); setWriteWarning(''); setDeleting(deleting?.id === rule.id ? null : captureAlarmRule(rule)) }}>{t('alarmDelete')}</button>
+        <button type="button" className="btn" disabled={busy || !ready || reading || !contextReady} onClick={() => { gate.reset(); setError(''); setWriteWarning(''); setEditId(rule.id); setEditExpected(captureAlarmRule(rule)); setRegisterId(String(rule.registerId)); setOperator(rule.operator); setLimit(String(rule.threshold)); setMessage(rule.message ?? ''); setDeleting(null) }}>{t('edit')}</button>
+        <button type="button" className="btn" disabled={busy || !ready || reading || !contextReady} onClick={() => { gate.reset(); setError(''); setWriteWarning(''); setDeleting(deleting?.id === rule.id ? null : captureAlarmRule(rule)) }}>{t('alarmDelete')}</button>
       </div> })}</div>
-      {deleting && <div className="alarm-delete-confirm"><span>{t('alarmConfirmDelete')} #{deleting.id} · #{deleting.registerId} · {symbols[deleting.operator]} {deleting.threshold} · {deleting.message}</span><button type="button" className="btn" disabled={busy} onClick={() => setDeleting(null)}>{t('cancel')}</button><button type="button" className="btn danger" disabled={busy || !ready || reading || writeState.phase === 'blocked'} onClick={() => void mutate(signal => writeGuardedAlarm(deleting, null, (url, method, body) => api(url, method, body, signal)))}>{t('alarmDelete')}</button></div>}
+      {deleting && <div className="alarm-delete-confirm"><span>{t('alarmConfirmDelete')} #{deleting.id} · #{deleting.registerId} · {symbols[deleting.operator]} {deleting.threshold} · {deleting.message}</span><button type="button" className="btn" disabled={busy} onClick={() => setDeleting(null)}>{t('cancel')}</button><button type="button" className="btn danger" disabled={busy || !ready || reading || !contextReady || writeState.phase === 'blocked'} onClick={() => void mutate(signal => writeGuardedAlarm(deleting, null, (url, method, body) => api(url, method, body, signal), openingContext!))}>{t('alarmDelete')}</button></div>}
       <AlarmRuleWriteStatus state={writeState} onReset={reset} english={t('cancel') === 'Cancel'} />
       {writeWarning && <p className="alarm-hint" role="status">{writeWarning}</p>}
       <h4>{t(editId === null ? 'alarmAdd' : 'alarmEdit')}</h4>
@@ -124,7 +127,7 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
       <div className="alarm-condition"><label>{t('alarmOperator')}<select aria-label={t('alarmOperator')} value={operator} disabled={busy} onChange={e => setOperator(e.target.value)}>{ALARM_OPERATORS.map(op => <option key={op} value={op}>{symbols[op]}</option>)}</select></label><label>{t('alarmThreshold')}<input aria-label={t('alarmThreshold')} type="number" step="any" value={limit} disabled={busy} onChange={e => setLimit(e.target.value)} placeholder="100" /></label></div>
       <label>{t('alarmMessage')}<input aria-label={t('alarmMessage')} value={message} maxLength={200} disabled={busy} onChange={e => setMessage(e.target.value)} placeholder={t('alarmMessageHint')} /></label>
       {error && <p className="write-msg error" role="alert">{error}</p>}
-      <div className="modal-actions">{editId !== null && <button type="button" className="btn" disabled={busy} onClick={reset}>{t('alarmCancelEdit')}</button>}<button type="button" className="btn" disabled={busy} onClick={close}>{t('alarmClose')}</button><button className="btn primary" disabled={busy || !ready || reading || !registers.length || !!deleting || writeState.phase === 'blocked'}>{t(busy ? 'working' : 'save')}</button></div>
+      <div className="modal-actions">{editId !== null && <button type="button" className="btn" disabled={busy} onClick={reset}>{t('alarmCancelEdit')}</button>}<button type="button" className="btn" disabled={busy} onClick={close}>{t('alarmClose')}</button><button className="btn primary" disabled={busy || !ready || reading || !contextReady || !registers.length || !!deleting || writeState.phase === 'blocked'}>{t(busy ? 'working' : 'save')}</button></div>
     </form></div>}
   </div>
 }

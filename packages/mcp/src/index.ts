@@ -15,6 +15,7 @@ import { areaForFunction, encodeRegister, invertSemantic, parseEnum, registerWid
 import { Recorder, MAX_RECORDING_PAGE_SIZE } from './recorder.ts'
 import { registerConfigEditTools } from './config-edit.ts'
 import { configEditRegistrar } from './config-edit-registry.ts'
+import { registerAlarmTools } from './alarm-settings.ts'
 
 /** 把 RegisterRecord 映射成语义寄存器（factor/offset/unit/enum）。 */
 function semanticOf(r: any) {
@@ -521,26 +522,8 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(rules) }] }
     })
 
-    server.registerTool('create_alarm_rule', {
-      title: 'Create alarm rule', description: '为具体点位新增告警，阈值比较类型解码后的原始值，不应用 factor/offset；一个点可设置多个规则。',
-      inputSchema: { register_id: zz.number().int().positive(), operator: zz.enum(['>', '>=', '==', '<=', '<', '!=']), threshold: zz.number().finite(), message: zz.string().max(200).nullable().optional() },
-    }, async args => ({ content: [{ type: 'text', text: JSON.stringify(cfg.createRule(args.register_id, args.operator, args.threshold, args.message ?? null)) }] }))
-    server.registerTool('update_alarm_rule', {
-      title: 'Update alarm rule', description: '修改告警条件、原始值阈值或提示；省略的字段保留原值，message=null 清除提示。',
-      inputSchema: { rule_id: zz.number().int().positive(), operator: zz.enum(['>', '>=', '==', '<=', '<', '!=']).optional(), threshold: zz.number().finite().optional(), message: zz.string().max(200).nullable().optional() },
-    }, async args => {
-      const before = cfg.listRules().find((r: any) => r.id === args.rule_id)
-      if (!before) throw new Error('告警规则不存在')
-      const updated = cfg.updateRule(args.rule_id, { registerId: before.registerId, operator: args.operator ?? before.operator, threshold: args.threshold ?? before.threshold, message: args.message === undefined ? before.message : args.message })
-      return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
-    })
-    server.registerTool('delete_alarm_rule', {
-      title: 'Delete alarm rule', description: '删除单条告警规则，保留点位及其他规则。', annotations: { destructiveHint: true }, inputSchema: { rule_id: zz.number().int().positive() },
-    }, async args => {
-      if (!cfg.listRules().some((r: any) => r.id === args.rule_id)) throw new Error('告警规则不存在')
-      cfg.deleteRule(args.rule_id)
-      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, rule_id: args.rule_id }) }] }
-    })
+    registerAlarmTools(configEditRegistrar(server), cfg)
+
     server.registerTool('ask_ai', {
       title: 'Ask configured AI', description: '向软件设置中保存的 AI 提问，复用提供商认证；可指定 provider/model/effort，并附 context 或 device_id（全部点位配置与缓存快照）。单次咨询，无工具执行、不修改配置，不加入界面聊天。会消耗提供商 API 额度。回答是模型建议，不能当作已验证的设备事实。',
       inputSchema: { question: zz.string().min(1), context: zz.string().min(1).optional(), device_id: zz.number().int().positive().optional(), provider: zz.string().optional(), model: zz.string().optional(), effort: zz.enum(['default', 'off', 'max', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional() },

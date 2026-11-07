@@ -19,6 +19,7 @@ import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest } 
 import { captureGroupEditGraph, groupDeletionAcknowledged, groupEditInvalid, parseGroupEditChanges, planGroupResize, type GroupEditSnapshot } from '../../core/src/group-settings-edit.ts'
 import { RecordingIntervals, type RecordingIntervalLease, type RecordingSourceGuard } from './recording-interval.ts'
 import { alarmRuleMatches, parseAlarmEdit, invalidAlarmEdit } from '../../core/src/alarm-settings-edit.ts'
+import { captureAlarmContext, alarmContextMatches, parseAlarmContext, type AlarmContext } from '../../core/src/alarm-settings-context.ts'
 
 export const name = 'config'
 
@@ -538,9 +539,47 @@ export class ConfigStore {
 
   updateRuleSettings(id: number, request: unknown) { return this.mutateRuleSettings(id, request, false) }
   deleteRuleSettings(id: number, request: unknown) { return this.mutateRuleSettings(id, request, true) }
+  private alarmPointContext(registerId: number): AlarmContext {
+    const point = this.getRegister(registerId), group = point && this.getGroup(point.groupId), device = point && this.getObject(point.objectId)
+    if (!point || !group || !device || group.objectId !== point.objectId) throw Object.assign(new Error('告警点位或来源已不存在/不一致，请重新核对。'), { statusCode: 409 })
+    return captureAlarmContext(point, group, device)
+  }
+  getAlarmEditContext(selection: { ruleId?: number; registerId?: number }) {
+    if (!selection || typeof selection !== 'object' || Array.isArray(selection) || Object.keys(selection).some(key => !['ruleId', 'registerId'].includes(key))) return invalidAlarmEdit()
+    const { ruleId, registerId } = selection
+    if ((ruleId === undefined) === (registerId === undefined) || !Number.isSafeInteger(ruleId ?? registerId) || (ruleId ?? registerId)! < 1) return invalidAlarmEdit()
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请稍后重读。'), { statusCode: 409 })
+    this.db.exec('BEGIN')
+    try {
+      const expected = ruleId === undefined ? undefined : this.listRules().find(row => row.id === ruleId)
+      if (ruleId !== undefined && !expected) throw Object.assign(new Error('告警规则不存在。'), { statusCode: 404 })
+      const expectedContext = this.alarmPointContext(expected?.registerId ?? registerId!)
+      this.db.exec('COMMIT'); return { ...(expected ? { expected: Object.freeze({ ...expected }) } : {}), expectedContext }
+    } catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '告警快照读取结束失败。') }; throw error }
+  }
+  createRuleSettings(request: unknown) {
+    const raw = request as any
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !raw.fields || typeof raw.fields !== 'object' || Array.isArray(raw.fields) || Object.keys(raw).some(key => !['fields', 'expectedContext'].includes(key)) || Object.keys(raw.fields).some(key => !['registerId', 'operator', 'threshold', 'message'].includes(key))) return invalidAlarmEdit()
+    const expectedContext = parseAlarmContext(raw.expectedContext), fields = raw.fields
+    parseAlarmEdit({ expected: { id: 1, ...fields }, changes: { operator: fields.operator, threshold: fields.threshold, message: fields.message } })
+    if (fields.registerId !== expectedContext.point.id) return invalidAlarmEdit()
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请稍后核对。'), { statusCode: 409 })
+    let rule: RuleRecord
+    this.db.exec('BEGIN IMMEDIATE'); this.restoring = true
+    try {
+      if (!alarmContextMatches(this.alarmPointContext(fields.registerId), expectedContext)) throw Object.assign(new Error('告警点位或来源已变化，本次未新增。请保留草稿并重新核对。'), { statusCode: 409 })
+      rule = this.createRule(fields.registerId, fields.operator, fields.threshold, fields.message)
+      if (!alarmRuleMatches(rule, { id: rule.id, ...fields }) || !alarmContextMatches(this.alarmPointContext(fields.registerId), expectedContext)) throw new Error('新增告警读回不一致，事务已中止。')
+      this.db.exec('COMMIT')
+    } catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '新增告警回滚失败，结果待核实。') }; throw error }
+    finally { this.restoring = false }
+    const warnings: string[] = []
+    try { this.notify('rule', rule.id) } catch { warnings.push('告警已新增，但通知失败，请读回核对，勿重复新增。') }
+    return { rule, warnings, protection: 'rule-and-context' as const }
+  }
   /** Compare and write under one lock. Legacy CRUD remains compatible for older clients. */
-  private mutateRuleSettings(id: number, request: unknown, deleting: boolean): { rule: RuleRecord | null; deletedRuleId: number | null; warnings: string[] } {
-    const { expected, changes } = parseAlarmEdit(request, deleting)
+  private mutateRuleSettings(id: number, request: unknown, deleting: boolean): { rule: RuleRecord | null; deletedRuleId: number | null; warnings: string[]; protection?: 'rule-and-context' } {
+    const { expected, changes, expectedContext } = parseAlarmEdit(request, deleting)
     if (!Number.isSafeInteger(id) || id < 1 || expected.id !== id) return invalidAlarmEdit()
     if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请稍后重新核对告警。'), { statusCode: 409 })
     let rule: RuleRecord | null = null
@@ -549,11 +588,13 @@ export class ConfigStore {
       const before = this.listRules().find(row => row.id === id)
       if (!before) throw Object.assign(new Error('告警规则已不存在，本次未修改。'), { statusCode: 404 })
       if (!alarmRuleMatches(before, expected)) throw Object.assign(new Error('告警规则已被修改，本次未保存或删除。请保留草稿，重新读取并核对后再编辑。'), { statusCode: 409 })
+      if (expectedContext && !alarmContextMatches(this.alarmPointContext(before.registerId), expectedContext)) throw Object.assign(new Error('告警点位定义或来源已变化，本次未保存或删除。请保留草稿，关闭并刷新后重新编辑。'), { statusCode: 409 })
       if (deleting) this.deleteRule(id)
       else rule = this.updateRule(id, { ...before, ...changes })
       const after = this.listRules().find(row => row.id === id)
       if (deleting ? after !== undefined : !after || !alarmRuleMatches(after, { ...before, ...changes })) throw new Error('告警操作读回不一致，事务已中止。')
       if (!deleting) rule = after!
+      if (expectedContext && !alarmContextMatches(this.alarmPointContext(before.registerId), expectedContext)) throw new Error('告警点位或来源读回不一致，事务已中止。')
       this.db.exec('COMMIT')
     } catch (error) {
       try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '告警操作回滚失败，结果待核实，勿自动重试。') }
@@ -561,7 +602,7 @@ export class ConfigStore {
     } finally { this.restoring = false }
     const warnings: string[] = []
     try { this.notify('rule', id) } catch { warnings.push('告警操作已保存，但变更通知失败；请重新读取核对，勿重复操作。') }
-    return { rule, deletedRuleId: deleting ? id : null, warnings }
+    return { rule, deletedRuleId: deleting ? id : null, warnings, ...(expectedContext ? { protection: 'rule-and-context' as const } : {}) }
   }
 
   log(level: string, source: string, message: string): void {

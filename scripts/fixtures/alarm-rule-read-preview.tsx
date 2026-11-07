@@ -4,13 +4,17 @@ import { AlarmRulesReader } from '../../apps/web/src/alarm-rule-read'
 import { AlarmRuleReadStatus, alarmRuleSummaryKey } from '../../apps/web/src/AlarmRuleReadStatus'
 import { AlarmPanel } from '../../apps/web/src/AlarmPanel'
 import { alarmRuleMatches, parseAlarmEdit } from '../../packages/core/src/alarm-settings-edit'
+import { captureAlarmContext, alarmContextMatches, parseAlarmContext } from '../../packages/core/src/alarm-settings-context'
 import '../../apps/web/src/styles.css'
 
 const rules = [{ id: 1, registerId: 101, operator: '>', threshold: 100, message: '合成规则' }]
-const point = { id: 101, alias: '合成温度', startAddress: 0, dataType: 'uint16', functionCode: 3 }
+const point = { id: 101, objectId: 1, groupId: 1, alias: '合成温度', startAddress: 0, dataType: 'uint16', functionCode: 3 }
+const device = { id: 1, isActive: 1, mode: 'master', slaveId: 1, transport: 'tcp', ip: 'mock.invalid', port: 502 }
+const group = { id: 1, name: 'mock', isActive: 1, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 4, mode: 'read' }
 function EditorPreview() {
   const [open, setOpen] = useState(false), [mode, setMode] = useState('normal'), modeRef = useRef(mode); modeRef.current = mode
   const stored = useRef(rules.map(row => ({ ...row }))), failRead = useRef(false), [version, setVersion] = useState(0)
+  const pointRef = useRef({ ...point }), deviceRef = useRef({ ...device }), groupRef = useRef({ ...group })
   const api = useMemo(() => async (url: string, method = 'GET', body?: unknown) => {
     if (method === 'GET') {
       if (failRead.current && modeRef.current === 'read-failure') throw Object.assign(new Error('合成读回失败'), { statusCode: 503 })
@@ -19,15 +23,22 @@ function EditorPreview() {
     }
     const deleting = method === 'DELETE', input = body as any
     let result: any
-    if (method === 'POST') { const id = Math.max(0, ...stored.current.map(row => row.id)) + 1; result = { id, ...input }; stored.current.push(result) }
+    const currentContext = () => captureAlarmContext(pointRef.current, groupRef.current, deviceRef.current)
+    if (method === 'POST') {
+      const contextual = url === '/api/rules/settings', fields = contextual ? input.fields : input
+      if (contextual && !alarmContextMatches(parseAlarmContext(input.expectedContext), currentContext())) throw Object.assign(new Error('合成点位/来源已变化，未新增'), { statusCode: 409 })
+      const id = Math.max(0, ...stored.current.map(row => row.id)) + 1, row = { id, ...fields }; stored.current.push(row)
+      result = contextual ? { rule: row, protection: 'rule-and-context', warnings: modeRef.current === 'warning' ? ['合成：已保存但通知失败，请核对。'] : [] } : row
+    }
     else {
       const parsed = parseAlarmEdit(body, deleting), row = stored.current.find(row => row.id === parsed.expected.id)
       if (!row) throw Object.assign(new Error('合成规则已删除'), { statusCode: 404 })
       if (!alarmRuleMatches(row, parsed.expected)) throw Object.assign(new Error('合成规则被另一窗口修改，操作被拒绝'), { statusCode: 409 })
+      if (parsed.expectedContext && !alarmContextMatches(parsed.expectedContext, currentContext())) throw Object.assign(new Error('合成点位或来源已变化，操作被拒绝'), { statusCode: 409 })
       if (!url.endsWith('/' + row.id + '/settings')) throw new Error('unexpected mock route')
       if (deleting) stored.current = stored.current.filter(value => value.id !== row.id)
       else Object.assign(row, parsed.changes)
-      result = { rule: deleting ? null : { ...row }, deletedRuleId: deleting ? row.id : null, warnings: modeRef.current === 'warning' ? ['合成：已保存但通知失败，请核对。'] : [] }
+      result = { rule: deleting ? null : { ...row }, deletedRuleId: deleting ? row.id : null, protection: parsed.expectedContext ? 'rule-and-context' : 'rule-only', warnings: modeRef.current === 'warning' ? ['合成：已保存但通知失败，请核对。'] : [] }
     }
     setVersion(value => value + 1)
     failRead.current = true
@@ -38,9 +49,9 @@ function EditorPreview() {
   const labels: Record<string, string> = { cancel: '取消', edit: '编辑', save: '保存', working: '处理中…', alarmRules: '告警规则编辑 / 纯模拟', alarmHelp: '阈值仍比较原始解码值；本页不连接任何设备。', alarmNone: '未设置规则', alarmDelete: '删除', alarmConfirmDelete: '删除以下原始规则？', alarmAdd: '新增规则', alarmEdit: '编辑规则', alarmThreshold: '原始阈值', alarmOperator: '比较条件', alarmMessage: '提示', alarmClose: '关闭', alarmCancelEdit: '取消编辑', colAddr: '地址', alarmTriggered: '条件触发', alarmWaiting: '等待数据', alarmNormal: '未触发', alarmRulesUnverified: '待核实', alarmInvalid: '填写有效阈值' }
   return <section style={{ marginTop: 32 }}><h2>正式告警编辑器 · 纯 mock API</h2><p>所有编辑只改变本页合成数组，不发送请求、不读库、不操作设备。{version} 次合成状态变化。</p>
     <div className="toolbar" style={{ position: open ? 'fixed' : 'relative', top: open ? 8 : undefined, right: open ? 8 : undefined, zIndex: 10000, maxWidth: open ? 360 : undefined, padding: 8, background: '#252525', color: '#eee' }}><button className="btn" onClick={() => setOpen(true)}>打开正式编辑器</button><label>下次响应<select value={mode} onChange={e => setMode(e.target.value)}><option value="normal">正常</option><option value="warning">提交成功但通知警告</option><option value="lost">提交后响应丢失</option><option value="hang">提交后挂起（30秒解除等待）</option><option value="read-failure">保存后读回失败</option></select></label>
-      <button className="btn" onClick={() => { if (stored.current[0]) stored.current[0].threshold += 10; setVersion(value => value + 1); window.dispatchEvent(new Event('alarm-rules-changed')) }}>模拟另一窗口提高阈值并刷新列表</button><button className="btn" onClick={() => window.dispatchEvent(new Event('alarm-rules-changed'))}>只读重新加载</button></div>
-    <pre>{JSON.stringify(stored.current, null, 2)}</pre><p>手测：先打开编辑器点编辑或删除确认，再点“另一窗口提高阈值”。列表可刷新，原草稿/删除条件保持；提交应冲突且不改合成数组。响应丢失/挂起后不能直接重复；切回正常只读刷新，记录草稿后明确放弃，再从当前规则重新编辑。关闭后重新打开会丢弃本页编辑状态，不是服务端幂等保证。窄屏和长提示仍需人工检查。</p>
-    {open && <AlarmPanel t={key => labels[key] ?? key} device={{ id: 1, isActive: 1, mode: 'master', slaveId: 1 }} groups={[{ id: 1, name: 'mock', isActive: 1, slaveId: 1, registers: [point] }]} latest={{}} groupErrors={{}} now={Date.now()} threshold={5000} point={point} onClose={() => setOpen(false)} api={api} />}
+      <button className="btn" onClick={() => { if (stored.current[0]) stored.current[0].threshold += 10; setVersion(value => value + 1); window.dispatchEvent(new Event('alarm-rules-changed')) }}>模拟另一窗口提高阈值并刷新列表</button><button className="btn" onClick={() => { pointRef.current = { ...pointRef.current, dataType: pointRef.current.dataType === 'uint16' ? 'uint32' : 'uint16' }; setVersion(value => value + 1) }}>模拟改dtype</button><button className="btn" onClick={() => { groupRef.current = { ...groupRef.current, slaveId: groupRef.current.slaveId + 1 }; setVersion(value => value + 1) }}>模拟改分组从站</button><button className="btn" onClick={() => window.dispatchEvent(new Event('alarm-rules-changed'))}>只读重新加载</button></div>
+    <pre>{JSON.stringify(stored.current, null, 2)}</pre><p>手测：先打开编辑器点编辑或删除确认，再点“另一窗口提高阈值”。列表可刷新，原草稿/删除条件保持；提交应冲突且不改合成数组。模拟改dtype/分组从站后应保留草稿并暂停写，规则重读或放弃草稿不更新来源，关闭并重新打开才采用新条件。响应丢失/挂起后不能直接重复；切回正常只读刷新，记录草稿后明确放弃，再从当前规则重新编辑。关闭后重新打开会丢弃本页编辑状态，不是服务端幂等保证。窄屏和长提示仍需人工检查。</p>
+    {open && <AlarmPanel t={key => labels[key] ?? key} device={deviceRef.current} groups={[{ ...groupRef.current, registers: [pointRef.current] }]} latest={{}} groupErrors={{}} now={Date.now()} threshold={5000} point={pointRef.current} onClose={() => setOpen(false)} api={api} />}
   </section>
 }
 function Preview() {

@@ -1,5 +1,7 @@
 # @probebench/mcp
 
+告警新调用先`get_alarm_edit_context`，传`rule_id`或`register_id`之一。修改/删除携带原`expected_rule=expected`及`expected_context=expectedContext`，新增携带原`expected_context`；两个编辑条件只传一个时拒绝，不降级。显式条件成功的首段JSON含`protection=rule-and-context`，通知警告为后续文本。旧参数调用仍保留原首段JSON及语义，但另附无条件兼容警告，不能称为跨轮次来源保护。不要为旧草稿临时重读/替换条件，不自动重试新增；见[上下文协议及SDK回归](../../docs/develop/46-告警点位与来源上下文保护.md)。
+
 MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设备」能力暴露成 MCP 工具，
 供 DeepSeek Harness（或任意 MCP 客户端）通过 streamable-http 连接调用。
 
@@ -40,9 +42,10 @@ MCP（Model Context Protocol）服务器：把 ProbeStation 的「读/写/查设
 | `export_history` | `device_id, start, end, format?, register_ids?, tz_offset_min?` | CSV/XLSX，返回文件 base64；中国展示时区 +480 分钟 |
 | `delete_history` | `device_id, start, end, dry_run?` | 默认预览行数，false 删除指定设备和时间范围；实时缓存和配置保留 |
 | `list_alarm_rules` | `device_id?` | 查询点位告警 |
-| `create_alarm_rule` | `register_id, operator, threshold, message?` | 比较解码原始值，支持六种比较符 |
-| `update_alarm_rule` | `rule_id, operator?, threshold?, message?` | 编辑规则，省略字段保留 |
-| `delete_alarm_rule` | `rule_id` | 删除指定规则 |
+| `get_alarm_edit_context` | `rule_id? / register_id?` 二选一 | 只读一致的规则/点位来源条件 |
+| `create_alarm_rule` | `register_id, operator, threshold, message?, expected_context?` | 原始值比较，可绑定新增来源条件 |
+| `update_alarm_rule` | `rule_id, operator?, threshold?, message?, expected_rule?, expected_context?` | 条件需成对提供，省略变更字段保留 |
+| `delete_alarm_rule` | `rule_id, expected_rule?, expected_context?` | 条件需成对提供；旧无条件调用有警告 |
 | `ask_ai` | `question, context?, device_id?, provider?, model?, effort?` | 复用 AI 设置进行单次咨询，可附设备全部点位缓存；没有工具执行，不修改配置，消耗 API 额度 |
 | `start_recording` | `device_id, interval_ms, duration_ms, slave_id?, addresses?` | 连续采样：录 duration_ms，事后 get_recording 回放 |
 | `start_trigger_recording` | `device_id, interval_ms, trigger_area, trigger_address, operator, threshold?, before_ms, after_ms, slave_id?, trigger_slave_id?, addresses?` | 触发记录：条件命中缓存前后窗口（operator 支持 > < >= <= == != changed） |

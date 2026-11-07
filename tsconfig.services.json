@@ -10,6 +10,7 @@
     "packages/mcp/src/recorder.ts",
     "packages/mcp/src/config-edit.ts",
     "packages/mcp/src/config-edit-registry.ts",
+    "packages/mcp/src/alarm-settings.ts",
     "packages/api/src/curve.ts",
     "packages/api/src/point-diagnostics.ts",
     "packages/api/src/points-import.ts",
