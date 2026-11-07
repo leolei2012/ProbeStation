@@ -1,5 +1,7 @@
 # @probebench/config
 
+`getHistoryExportConfigurationScope()`仅返回本配置实例当前打开周期的内存标识，不运行SQL或暴露路径；恢复中或导出快照状态不明时拒绝，与`getHistoryExportConfiguration`使用同一门禁。它不是内容revision，普通编辑不会变更；用于后续生命周期配对，未接入实际导出。见[工作区门禁](../../docs/develop/71-工作区导出配对生命周期保护.md)。
+
 内部新增 `getHistoryExportConfiguration(objectId)`：单次只读事务获取设备、全部分组/点位的冻结副本，返回结构版本1与本实例配置库打开周期scope。scope不随普通字段修改变化，不是内容版本或工作区/时序库租约；尚无REST入口，现有导出不调用。读取回滚不明时仅阻止此能力，成功重开后恢复，无schema迁移；见[快照契约与临时库验收](../../docs/develop/69-导出配置只读事务快照.md)。
 
 日志新增previewLogCleanup/cleanupReviewedLogs：内存连接范围绑定预览，BEGIN IMMEDIATE事务内仅删除id<=throughId；AUTOINCREMENT契约未核实则拒绝，无schema迁移。新增记录保留、重复范围可无新增删除、已有移除单独计数；回滚结果不明阻止该清理能力直到显式成功重开。原clearLogs全删行为及日志生成/保留策略未变，见[边界](../../docs/develop/55-预览范围日志清理.md)。

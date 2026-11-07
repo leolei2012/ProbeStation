@@ -362,6 +362,11 @@ export class ConfigStore {
   listRegisters(groupId: number): RegisterRecord[] { return this.db.prepare(REGISTER_SELECT + ' WHERE group_id = ? ORDER BY start_address').all(groupId) as unknown as RegisterRecord[] }
   /** All points of a device, across all of its groups. */
   listRegistersByObject(objectId: number): RegisterRecord[] { return this.db.prepare(REGISTER_SELECT + ' WHERE object_id = ? ORDER BY start_address').all(objectId) as unknown as RegisterRecord[] }
+  /** In-memory open-lifetime identity only; no SQL, content revision or path disclosure. */
+  getHistoryExportConfigurationScope(): string {
+    if (this.restoring || this.exportSnapshotBlocked) throw Object.assign(new Error('导出配置快照暂不可用，请核对配置状态。'), { statusCode: 409 })
+    return this.exportSnapshotScope
+  }
   /** One bounded read transaction; no raw history reads, notifications or runtime hooks. */
   getHistoryExportConfiguration(objectId: number): HistoryExportConfigurationSnapshot {
     if (!Number.isSafeInteger(objectId) || objectId < 1) throw Object.assign(new Error('导出配置设备编号无效。'), { statusCode: 400 })

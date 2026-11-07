@@ -5,6 +5,7 @@
     "packages/poller/src",
     "packages/slave/src/devices.ts",
     "packages/store/src",
+    "packages/workspace/src",
     "packages/importer/src",
     "packages/sink/src",
     "packages/mcp/src/recorder.ts",

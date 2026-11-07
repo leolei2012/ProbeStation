@@ -1,6 +1,6 @@
 /** Known-gap audit, not a safety regression test. Mock-only, no app bootstrap or user data. */
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import Fastify from 'fastify'
@@ -57,10 +57,11 @@ try {
   const workspaceClass = workspaceSource.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === 'Workspace') as ts.ClassDeclaration
   const method = workspaceClass.members.find(node => ts.isMethodDeclaration(node) && node.name.getText(workspaceSource) === 'switchTo') as ts.MethodDeclaration
   assert(method?.body)
-  const switchMock = new Function('resolve', 'mkdirSync', 'join', ts.transpileModule('return async function(path: string) ' + method.body.getText(workspaceSource), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)((path: string) => path, () => {}, (path: string, file: string) => path + '/' + file)
+  // Retain the actual lifecycle helpers too. No constructor is called; all filesystem/runtime effects remain mocked.
+  const WorkspaceMock = new Function('resolve', 'mkdirSync', 'join', 'randomUUID', ts.transpileModule(workspaceClass.getText(workspaceSource) + '\nreturn Workspace', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)((path: string) => path, () => {}, (path: string, file: string) => path + '/' + file, randomUUID)
   const entered = deferred<void>(), finish = deferred<void>(); let configReopened = false, stops = 0, starts = 0
-  const workspace = { current: 'old', addToRegistry() {}, ctx: { poller: { async stopAll() { stops++ }, startAll() { starts++ } }, store: { async reopen() { storeScope = 'new'; entered.resolve(); await finish.promise } }, config: { reopen() { configReopened = true } }, emit() {} } }
-  group.slaveId = 1; const oldConfiguration = signature(), switching = switchMock.call(workspace, 'synthetic-mock-workspace')
+  const workspace = Object.assign(Object.create(WorkspaceMock.prototype), { current: 'old', exportSwitching: false, addToRegistry() {}, ctx: { poller: { async stopAll() { stops++ }, startAll() { starts++ } }, store: { async reopen() { storeScope = 'new'; entered.resolve(); await finish.promise } }, config: { reopen() { configReopened = true } }, emit() {} } })
+  group.slaveId = 1; const oldConfiguration = signature(), switching = workspace.switchTo('synthetic-mock-workspace')
   await entered.promise
   assert.equal(configReopened, false); assert.equal(signature(), oldConfiguration)
   assert.equal(valueOf((await app.inject(historyExportUrl('csv', request))).body), '900', 'the actual switch ordering can expose old mock configuration while the mock store has changed')

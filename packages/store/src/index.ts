@@ -325,6 +325,8 @@ export class DuckDBStore {
     if (!owner || owner.scope !== this.exportReadScope || owner.ready !== this.ready) throw new ExportReadHandleError()
     return owner
   }
+  /** Metadata-only ownership check; does not wait, query, flush or hold a connection open. */
+  validateExportReadHandle(handle: ExportReadHandle): void { this.exportReadOwner(handle) }
   /** Optional guarded path. Existing export callers keep their original semantics. */
   async queryObjectForExportWithHandle(handle: ExportReadHandle, objectId: number, start: string, end: string, ranges?: readonly HistoryExportReadRange[]) {
     const owner = this.exportReadOwner(handle)
