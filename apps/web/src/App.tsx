@@ -735,7 +735,7 @@ export default function App() {
         <div className="mobile-header"><button className="btn" aria-label={t('expandNav')} onClick={() => setCollapsed(false)}>☰ {t('devices')}</button><strong>ProbeStation</strong><button className="btn" aria-label={t('settings')} onClick={() => { setSettingsSection('general'); setShowSettings(true) }}>⚙</button></div>
 
         {loadError && <div className="operation-feedback error" role="alert">{t('loadFailed')}<button className="btn" onClick={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }}>{t('refresh')}</button></div>}
-        <DeviceIssues onNavigate={navigateData} />
+        <DeviceIssues onNavigate={navigateData} english={lang === 'en'} />
         <GlobalTabBar t={t} view={view} onChange={setView} />
         {view === 'database'
           ? <DatabaseView t={t} devices={devices} />

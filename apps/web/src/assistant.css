@@ -150,10 +150,15 @@
 .ai-sources > small { width: 100%; color: var(--text-3); }
 .ai-sources .btn { white-space: normal; text-align: left; }
 .ai-sources .btn small { display: block; font-size: 10px; color: var(--text-3); }
-.device-issues { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; color: var(--text-2); }
+.device-issues { border: 1px solid var(--border-2); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; color: var(--text-2); overflow-wrap: anywhere; }
 .device-issues summary { cursor: pointer; font-size: 12px; }
-.device-issues > div { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; }
+.device-issues .device-issue-list { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; }
 .device-issues .btn { display: flex; gap: 10px; align-items: center; white-space: normal; }
+.device-issues .toolbar { align-items: center; margin-bottom: 6px; }
+.device-issues .device-issue-list .btn { flex-wrap: wrap; max-width: 100%; text-align: left; }
+.device-issues .device-issue-list .btn > * { min-width: 0; }
+.device-issues-read-status { min-height: 3.2em; font-size: 12px; line-height: 1.6; }
+.device-issues p, .device-issues small { display: block; font-size: 12px; line-height: 1.6; margin: 6px 0; }
 
 @media (max-width: 768px) {
   .ai-launch { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); min-height: 44px; }

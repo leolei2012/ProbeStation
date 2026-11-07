@@ -33,6 +33,7 @@
     "scripts/fixtures/config-backup-preview.tsx",
     "scripts/fixtures/live-point-filter-preview.tsx",
     "scripts/fixtures/live-snapshot-preview.tsx",
+    "scripts/fixtures/device-issues-preview.tsx",
     "scripts/fixtures/communication-summary-preview.tsx",
     "scripts/fixtures/raw-frames-read-preview.tsx",
     "scripts/fixtures/diagnostics-cleanup-preview.tsx",

@@ -19,6 +19,7 @@
     "preview:backup": "tsx scripts/preview-register-picker.ts --backup",
     "preview:live-filter": "tsx scripts/preview-register-picker.ts --live-filter",
     "preview:live-snapshot": "tsx scripts/preview-register-picker.ts --live-snapshot",
+    "preview:device-issues": "tsx scripts/preview-register-picker.ts --device-issues",
     "preview:communication": "tsx scripts/preview-register-picker.ts --communication",
     "preview:raw-frames": "tsx scripts/preview-register-picker.ts --raw-frames",
     "preview:diagnostics-cleanup": "tsx scripts/preview-register-picker.ts --diagnostics-cleanup",
