@@ -1,5 +1,7 @@
 # @probebench/web
 
+`RuntimeLogs`接入设置→数据的“查看近期日志”，默认收起，使用原GET /api/logs?limit=200；全服务快照可按原始级别/空格关键词筛选并20条分页。关闭取消只读等待，失败保留上次并标未核实，原清空请求正常返回后对已展开查看器重读。新查看器没有清空/写配置/模型能力，未改旧端点契约，见[说明与手测](../../docs/develop/53-只读近期运行日志查看.md)。
+
 `ui-preferences.ts`仅处理ps-theme/ps-lang/ps-collapsed：受支持枚举、原默认值、存储属性/getItem/setItem异常降级；主题effect不因保存失败而中断系统主题订阅。读取不写、不清空其他key，保存失败时React当前状态仍可用，刷新后能否保留取决于浏览器存储；见[范围与验证](../../docs/develop/52-启动偏好存储容错.md)。
 
 助手本地附件读取由`assistant-attachment-read.ts`管理：全批元数据预检、原子追加、取消/失败中止余下FileReader并释放回调，卸载取消不发布状态。`AssistantAttachmentReadStatus`提供type=button的取消控件，不提交聊天表单；选择文件不等于发送。保留原支持格式、粘贴图片命名和大附件行为，无新数量/大小阈值，见[验证边界](../../docs/develop/51-助手本地附件读取取消.md)。

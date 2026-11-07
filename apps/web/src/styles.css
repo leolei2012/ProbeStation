@@ -991,3 +991,13 @@ table.reg th, .btn { white-space: nowrap; }
 .retention-summary { overflow-wrap: anywhere; }
 .retention-summary p { margin: 8px 0; }
 .retention-summary small { display: block; color: var(--text-2); line-height: 1.5; }
+.runtime-logs { border: 1px solid var(--border-2); border-radius: 10px; padding: 12px; margin: 12px 0; overflow-wrap: anywhere; }
+.runtime-logs-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.runtime-logs small { display: block; color: var(--text-2); line-height: 1.5; }
+.runtime-logs-scroll { overflow: auto; max-height: 560px; margin: 10px 0; }
+.runtime-logs-table { width: 100%; min-width: 720px; table-layout: fixed; border-collapse: collapse; }
+.runtime-logs-table th, .runtime-logs-table td { padding: 8px; border-bottom: 1px solid var(--border-1); vertical-align: top; text-align: left; overflow-wrap: anywhere; }
+.runtime-logs-table th:first-child { width: 48px; }
+.runtime-logs-table th:nth-child(2) { width: 150px; }
+.runtime-logs-table th:nth-child(3), .runtime-logs-table th:nth-child(4) { width: 90px; }
+.runtime-log-message { white-space: pre-wrap; }

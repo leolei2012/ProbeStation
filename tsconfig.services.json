@@ -37,6 +37,7 @@
     "scripts/fixtures/persistence-status-preview.tsx",
     "scripts/fixtures/retention-summary-preview.tsx",
     "scripts/fixtures/assistant-attachment-read-preview.tsx",
+    "scripts/fixtures/runtime-logs-preview.tsx",
     "scripts/fixtures/alarm-history-preview.tsx",
     "scripts/fixtures/history-read-context-preview.tsx",
     "scripts/fixtures/history-curve-selection-preview.tsx",
