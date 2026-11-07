@@ -39,6 +39,8 @@ import type { DeviceEditBaseline } from '../../../packages/core/src/device-setti
 import { saveGuardedDeviceSettings } from './device-settings-save'
 import { DeviceSlaveStatus } from './DeviceSlaveStatus'
 import { CommunicationSummary } from './CommunicationSummary'
+import { RawFramesRead, clampFrameLimit } from './raw-frames-read'
+import { RawFramesStatus } from './RawFramesStatus'
 import { ColumnControl, ValueModeControl, useDisplayColumns, useValueMode } from './DataDisplayControls'
 import { AlarmPanel, useAlarmRules } from './AlarmPanel'
 import { ValueReading } from './ValueReading'
@@ -254,6 +256,7 @@ const api = {
   del: (url: string) => request(url, { method: 'DELETE' }),
 }
 const fetchPointDiagnostics = (url: string, signal: AbortSignal) => request(url, { signal })
+const fetchRawFrames = (url: string, signal: AbortSignal) => request(url, { signal, cache: 'no-store' })
 
 function formatDateTime(iso: string): string {
   const d = new Date(iso)
@@ -1655,39 +1658,30 @@ function ChartBody({ queryContextKey, pointLabels, valueMode, t, registers, sele
 }
 
 function RawDataView({ t, device }: { t: T; device: Device | null }) {
-  const [frames, setFrames] = useState<any[]>([])
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
   const [limit, setLimit] = useState(200)
   const [paused, setPaused] = useState(false)
   const pausedRef = useRef(false)
-  const requestVersion = useRef(0)
-  const clampLimit = (v: number) => Math.max(1, Math.min(2000, Math.trunc(v) || 200))
-  const load = useCallback(async () => {
-    if (pausedRef.current) return
-    if (!device) { setFrames([]); setErr(null); return }
-    const version = ++requestVersion.current
-    setBusy(true); setErr(null)
-    try {
-      const result = await api.get('/api/monitor_objects/' + device.id + '/frames?limit=' + clampLimit(limit))
-      if (version === requestVersion.current && !pausedRef.current) setFrames(result)
-    }
-    catch (e: any) { if (version === requestVersion.current) setErr(e?.message ?? String(e)) }
-    finally { if (version === requestVersion.current) setBusy(false) }
-  }, [device, limit])
+  const reader = useMemo(() => new RawFramesRead(device, limit), [device?.id, device?.transport, device?.serialPath, device?.ip, device?.port, device?.baudRate, device?.parity, device?.stopBits, device?.dataBits, device?.flowControl, device?.slaveId, limit])
+  const state = useSyncExternalStore(reader.subscribe, reader.snapshot, reader.snapshot)
+  const frames = state.value?.frames ?? [], busy = state.phase === 'loading', readerRef = useRef(reader), mounted = useRef(false)
+  readerRef.current = reader
+  const load = useCallback(() => pausedRef.current ? Promise.resolve() : reader.refresh(fetchRawFrames), [reader])
   useEffect(() => {
-    if (paused) return
+    mounted.current = true
+    return () => { mounted.current = false; reader.cancel() }
+  }, [reader])
+  useEffect(() => {
+    if (paused) { reader.cancel(); return }
     void load()
     const id = setInterval(() => { void load() }, 1000)
-    return () => { clearInterval(id); requestVersion.current++ }
-  }, [load, paused])
+    return () => { clearInterval(id); reader.cancel() }
+  }, [load, paused, reader])
   const togglePause = () => {
     pausedRef.current = !pausedRef.current
-    requestVersion.current++
-    setBusy(false)
+    reader.cancel()
     setPaused(pausedRef.current)
   }
-  const clear = async () => { if (!device) return; try { await api.post('/api/monitor_objects/' + device.id + '/frames/clear', {}); await load() } catch { /* */ } }
+  const clear = async () => { if (!device) return; try { await api.post('/api/monitor_objects/' + device.id + '/frames/clear', {}); if (mounted.current && readerRef.current === reader) { reader.cancel(); await load() } } catch { /* Existing clear behavior; write-result handling remains a separate task. */ } }
   const dir = (d: string) => d === 'tx' ? 'TX' : 'RX'
   if (!device) return <div className="db-view"><div className="hist-empty">{t('emptyHint')}</div></div>
   return (
@@ -1699,17 +1693,17 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
         <label className="kv">显示帧数
           <input type="number" min={1} max={2000} value={limit}
             style={{ width: 70, marginLeft: 6 }}
-            onChange={(e) => setLimit(clampLimit(Number(e.target.value)))}
-            onBlur={(e) => setLimit(clampLimit(Number(e.target.value)))} />
+            onChange={(e) => setLimit(clampFrameLimit(Number(e.target.value)))}
+            onBlur={(e) => setLimit(clampFrameLimit(Number(e.target.value)))} />
         </label>
         <div style={{ flex: 1 }} />
         <button className={'btn' + (paused ? ' selected' : '')} aria-pressed={paused} onClick={togglePause}>{paused ? '继续' : '暂停'}</button>
         <button className="btn" onClick={() => void load()} disabled={busy || paused}>{busy ? '…' : '刷新'}</button>
         <button className="btn" disabled={paused} onClick={() => void clear()}>清空</button>
       </div>
-      {err && <div className="write-msg error">{err}</div>}
+      <RawFramesStatus state={state} paused={paused} english={t('cancel') === 'Cancel'} />
       <div style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, maxHeight: '60vh', overflow: 'auto', background: 'var(--surface)', color: 'var(--text-1, #eee)', borderRadius: 6, padding: 8 }}>
-        {frames.length === 0 ? <div className="kv">暂无原始帧（确认设备已连接并轮询）</div> : (
+        {frames.length === 0 ? null : (
           frames.map((f) => (
             <div key={f.id} style={{ display: 'flex', gap: 10, padding: '1px 0', borderBottom: '1px solid var(--border-1, #222)' }}>
               <span style={{ color: 'var(--text-3, #888)', minWidth: 72 }}>{formatLocalTs(f.timestamp).slice(11)}</span>
