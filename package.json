@@ -39,6 +39,7 @@
     "preview:time-range": "tsx scripts/preview-register-picker.ts --time-range",
     "audit:export-version": "tsx scripts/audit-history-export-version.ts --mock",
     "audit:export-entry": "tsx scripts/audit-export-entry.ts --memory",
+    "audit:sink-condition": "tsx scripts/audit-sink-condition.ts --memory",
     "diagnose:points": "tsx scripts/diagnose-points.ts",
     "test:edition": "npm run build:web && tsx scripts/offline-test-app.ts",
     "typecheck:web": "tsc -p tsconfig.web.json",
