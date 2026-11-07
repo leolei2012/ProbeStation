@@ -111,6 +111,7 @@ function RecordingReviewPreview() {
 function Preview() {
   const [settings, setSettings] = useState<PointSettings>({ dataType: 'uint32', unit: '旧单位', factor: 0, offset: 12.5, enumJson: null, decimalPlaces: 1 })
   const [show, setShow] = useState(false), [failOnce, setFailOnce] = useState(false)
+  const [slowSave, setSlowSave] = useState(false), [pointEnglish, setPointEnglish] = useState(false)
   const [patch, setPatch] = useState<PointSettingsUpdate | null>(null)
   const [concurrent, setConcurrent] = useState(false)
   const [conflict, setConflict] = useState(false), [baseline, setBaseline] = useState<PointEditBaseline | null>(null)
@@ -142,17 +143,20 @@ function Preview() {
       setDeviceResult(['配置已保存（模拟）', ...warnings].join(' · ')); setShowDevice(false)
     }} />}
     <h2>点位设置（纯模拟）</h2>
-    <p>将“旧单位”改名后保持系数 0 保存并重新打开；再测试清空数字、负倍率、枚举重复、取消及失败重试。可缩至360px检查布局。</p>
+    <p>将“旧单位”改名后保持系数 0 保存并重新打开；再测试清空数字、负倍率、枚举重复及失败重试。改动后点击×/取消/按Escape应先询问，继续编辑保留输入；确认中Escape返回编辑，放弃只丢本地草稿。完全改回原输入后关闭不再询问，保存成功直接关闭。可缩至360px检查布局。</p>
     <p>原枚举不改动时，请检查下方发送字段中没有 enumJson；明确替换或清空后才会发送该字段。大映射可分页，错误会定位所在页。</p>
     <div className="toolbar">{scenarios.map(scenario => <button key={scenario.name} className="btn" disabled={show || showDevice || showGroup} onClick={() => { setSettings(previous => ({ ...previous, enumJson: scenario.value })); setPatch(null) }}>{scenario.name}</button>)}</div>
     <label><input type="checkbox" checked={concurrent} onChange={e => setConcurrent(e.target.checked)} />保存前模拟其他用户更新枚举（仅页面内存）</label>
     <label><input type="checkbox" checked={conflict} onChange={e => setConflict(e.target.checked)} />保存前模拟其他用户更改单位，应拒绝旧草稿（仅页面内存）</label>
     <label><input type="checkbox" checked={failOnce} onChange={e => setFailOnce(e.target.checked)} />下次保存模拟失败一次，随后允许重试</label>
+    <label><input type="checkbox" checked={slowSave} onChange={e => setSlowSave(e.target.checked)} />保存模拟延迟2秒，期间关闭/放弃不应取消保存</label>
+    <label><input type="checkbox" checked={pointEnglish} onChange={e => setPointEnglish(e.target.checked)} />点位编辑关闭提示 English</label>
     <button className="btn" disabled={show || showDevice || showGroup} onClick={() => { setBaseline(capturePointEditBaseline(point(settings), group, device)); setShow(true) }}>编辑模拟点位</button>
     <pre aria-label="页面内存配置">{JSON.stringify(settings, null, 2)}</pre>
     <pre aria-label="最近发送字段">{patch === null ? '尚未保存' : JSON.stringify(patch, null, 2)}</pre>
     {show && baseline && <PointSettingsEditor guarded name="模拟点位 · 不接触实机" address={0} settings={settings} available={4}
-      typeGroups={[{ key: 'types', types: ['uint16', 'uint32', 'uint64', 'hex32', 'bin32'] }]} t={key => words[key] ?? key} onClose={() => setShow(false)} onSave={async next => {
+      typeGroups={[{ key: 'types', types: ['uint16', 'uint32', 'uint64', 'hex32', 'bin32'] }]} t={key => pointEnglish && key === 'cancel' ? 'Cancel' : words[key] ?? key} onClose={() => setShow(false)} onSave={async next => {
+        if (slowSave) await new Promise(resolve => setTimeout(resolve, 2000))
         if (failOnce) { setFailOnce(false); throw new Error('模拟保存失败：草稿保持不变，可直接再次保存。') }
         await saveGuardedPointSettings(baseline, next, async (_url, body) => {
           const current = { ...settings, ...(concurrent ? { enumJson: '{"7":"模拟并发更新"}' } : {}), ...(conflict ? { unit: '模拟并发单位' } : {}) }
