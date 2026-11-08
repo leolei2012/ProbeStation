@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { configurationWriteBlocked } from '../apps/web/src/configuration-write-outcome.ts'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import React from 'react'
@@ -27,7 +28,7 @@ try {
   const useState = (init: any) => { const index = cursor++; if (!(index in cells)) cells[index] = typeof init === 'function' ? init() : init; return [cells[index], (value: any) => { cells[index] = typeof value === 'function' ? value(cells[index]) : value }] }
   const useRef = (init: any) => useState(() => ({ current: init }))[0]
   const useEffect = (fn: () => void, values: unknown[]) => { const index = cursor++; if (!deps[index] || values.some((value, i) => value !== deps[index][i])) effects.push(fn); deps[index] = values }
-  const env = { React, useState, useRef, useEffect, useId: () => useState('mock-group-title')[0], captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings }
+  const env = { React, useState, useRef, useEffect, useId: () => useState('mock-group-title')[0], captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }
   const component = new Function(...Object.keys(env), ts.transpileModule('return (' + declaration.getText(ui).replace(/^export /, '') + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, jsx: ts.JsxEmit.React } }).outputText)(...Object.values(env))
   const props = { t: (key: string) => key, device, initial: null, onClose() { unexpected++ }, onSaved(warnings: unknown[]) { receivedWarnings.push([...warnings]); saved++ }, async get() { unexpected++; throw new Error('new group must not read an edit snapshot') }, async put() { unexpected++; throw new Error('new group must not update another group') }, async create(url: string, body: unknown) { assert.equal(url, '/api/monitor_objects/' + objectId + '/groups'); sent = body; pending = post(body); const response = await pending; if (response.statusCode !== 200) throw new Error('HTTP ' + response.statusCode + ' ' + response.body); return response.json() } }
   const all = (node: any): any[] => Array.isArray(node) ? node.flatMap(all) : React.isValidElement(node) ? [node, ...all((node.props as any).children)] : []

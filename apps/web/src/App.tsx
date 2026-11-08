@@ -39,6 +39,7 @@ import { GroupModal } from './GroupModal'
 import { fullGroupForEditing } from './group-settings-save'
 import type { DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { saveGuardedDeviceSettings } from './device-settings-save'
+import { configurationWriteBlocked } from './configuration-write-outcome'
 import { captureActivation } from '../../../packages/core/src/activation-settings'
 import { ActivationUncertainError, saveActivation } from './activation-settings-save'
 import { DeviceSlaveStatus } from './DeviceSlaveStatus'
@@ -662,6 +663,8 @@ export default function App() {
     if (!f.name || (f.transport !== 'rtu' && !f.ip)) return
     try { await api.post('/api/monitor_objects', f) }
     catch (error) {
+      const blocked = configurationWriteBlocked(error, true)
+      if (blocked) throw blocked
       if (error instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(error.message)) throw error
       throw new Error('新增设备结果待核实，请核对设备列表，勿重复新增。')
     }

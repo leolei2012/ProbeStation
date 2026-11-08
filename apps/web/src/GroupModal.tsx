@@ -2,6 +2,7 @@ import React, { useEffect, useId, useRef, useState } from 'react'
 import { captureDeviceEditBaseline, type DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { captureGroupOpening, parseGroupEditChanges, planGroupResize, type GroupEditSnapshot } from '../../../packages/core/src/group-settings-edit'
 import { readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings } from './group-settings-save'
+import { configurationWriteBlocked } from './configuration-write-outcome'
 
 export interface GroupEditorInput { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number; mode?: string; registers: readonly unknown[] }
 export function GroupModal({ t, device, initial, onClose, onSaved, get, put, create }: {
@@ -35,7 +36,8 @@ export function GroupModal({ t, device, initial, onClose, onSaved, get, put, cre
       else { const result = await create('/api/monitor_objects/' + opening.device.id + '/groups', body); onSaved(groupCreateWarnings(result)) }
     } catch (e) {
       const rejected = e instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(e.message)
-      setError(!initial && !rejected ? text('创建结果待核实，请核对分组及点位，勿重复创建。', 'Creation outcome is unverified. Check the group and points before creating again.') : e instanceof Error ? e.message : t('operationFailed'))
+      const blocked = !initial ? configurationWriteBlocked(e, true, english) : null
+      setError(blocked ? blocked.message : !initial && !rejected ? text('创建结果待核实，请核对分组及点位，勿重复创建。', 'Creation outcome is unverified. Check the group and points before creating again.') : e instanceof Error ? e.message : t('operationFailed'))
     }
     finally { lock.current = false; setBusy(false) }
   }

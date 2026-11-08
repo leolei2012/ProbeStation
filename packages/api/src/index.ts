@@ -124,7 +124,9 @@ export function apply(ctx: Context, config: Config): void {
       const states = new Map((poller.listConnectionStates?.() ?? []).map((s: any) => [s.objectId, s.connected]))
       return objects.map((o: any) => ({ ...o, connected: states.get(o.id) ?? false }))
     })
-    fastify.post('/api/monitor_objects', async (req: any) => {
+    fastify.post('/api/monitor_objects', async (req: any, reply: any) => {
+      const state = cfg.getConfigurationReadinessStatus?.()
+      if (state?.version === 1 && state.phase === 'quarantined' && state.failure === 'connection-quarantined') return reply.code(503).send({ error: '配置连接已隔离，本次保存未执行。请管理员核查并恢复，勿重复保存；之前请求结果仍须单独核实。', version: 1, code: 'CONFIG_WRITE_NOT_STARTED', outcome: 'not-applied' })
       const b = req.body as any
       const device = cfg.createObject(b.name, b.ip, b.port, b.mode ?? 'master', {
         transport: b.transport, serialPath: b.serialPath, baudRate: b.baudRate,
@@ -164,7 +166,9 @@ export function apply(ctx: Context, config: Config): void {
 
     // ── Groups ──────────────────────────────────────────────
     fastify.get('/api/monitor_objects/:id/groups', async (req: any) => cfg.listGroups(Number((req.params as any).id)))
-    fastify.post('/api/monitor_objects/:id/groups', async (req: any) => {
+    fastify.post('/api/monitor_objects/:id/groups', async (req: any, reply: any) => {
+      const state = cfg.getConfigurationReadinessStatus?.()
+      if (state?.version === 1 && state.phase === 'quarantined' && state.failure === 'connection-quarantined') return reply.code(503).send({ error: '配置连接已隔离，本次保存未执行。请管理员核查并恢复，勿重复保存；之前请求结果仍须单独核实。', version: 1, code: 'CONFIG_WRITE_NOT_STARTED', outcome: 'not-applied' })
       const oid = Number((req.params as any).id)
       const b = req.body as any
       return cfg.createGroupWithRegisters(oid, b.name, b.functionCode ?? 3, b.startAddress ?? 0, b.quantity ?? 1, b.mode ?? 'read', b.slaveId ?? 1, { isActive: b.isActive })

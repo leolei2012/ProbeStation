@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { configurationWriteBlocked } from '../apps/web/src/configuration-write-outcome.ts'
 import { bindBeforeUnload } from '../apps/web/src/before-unload.ts'
 import { draftDialogKey } from '../apps/web/src/dialog-focus.ts'
 import { ConfigurationSaveHint } from '../apps/web/src/RetainedDraftNotice.tsx'
@@ -137,7 +138,7 @@ const createCfg = new ConfigStore({ dbPath: ':memory:' }, () => { if (failCreate
 let loseResponse = true, failSync = false, createRequests = 0, createRefreshes = 0, createClosed = 0, syncCalls = 0
 const createNotices: any[] = []
 new Function('fastify', 'cfg', 'ctx', ts.transpileModule(createRoute.getText(apiSource), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(createApp, createCfg, { get(name: string) { assert.equal(name, 'deviceSlaves'); return { async sync() { syncCalls++; if (failSync) throw new Error('synthetic sync failure') } } } })
-const createEnv = { api: { async post(url: string, body: any) {
+const createEnv = { configurationWriteBlocked, api: { async post(url: string, body: any) {
   createRequests++; const response = await createApp.inject({ method: 'POST', url, payload: body })
   if (response.statusCode !== 200) throw new Error('HTTP ' + response.statusCode + ' ' + response.body)
   if (loseResponse) throw new TypeError('Failed to fetch')
