@@ -43,7 +43,6 @@ export const Config: z<Config> = z.object({
 export function apply(ctx: Context, config: Config): void {
   const app: FastifyInstance = Fastify()
   let disposed = false
-  ctx.effect(() => () => { disposed = true })
   const cfg = (ctx as any).config
   const store = (ctx as any).store
   const poller = (ctx as any).poller
@@ -72,6 +71,12 @@ export function apply(ctx: Context, config: Config): void {
     }
   }, 15_000)
   if (typeof socketSweep.unref === 'function') socketSweep.unref()
+  const closeSockets = (): void => {
+    clearInterval(socketSweep)
+    for (const socket of [...sockets]) { removeSocket(socket); try { socket.terminate() } catch { /* ignore */ } }
+  }
+  // Register before asynchronous bootstrap: failures may occur before route-level onClose exists.
+  ctx.effect(() => async () => { disposed = true; closeSockets(); await app.close() })
 
   // 压缩 + 所有路由 + WebSocket + 静态托管，都放进同一个异步 register：
   // compress 必须「await 注册完成后」再定义路由，onRoute 钩子才会对后续路由生效。
@@ -309,16 +314,17 @@ export function apply(ctx: Context, config: Config): void {
       safeSend(socket, JSON.stringify({ type: 'group-errors', errors: poller.listGroupErrors?.() ?? [] }))
     })
 
-    fastify.addHook('onClose', async () => {
-      clearInterval(socketSweep)
-      for (const socket of [...sockets]) { removeSocket(socket); try { socket.terminate() } catch { /* ignore */ } }
-    })
+    fastify.addHook('onClose', async () => { closeSockets() })
 
     // ── 前端静态托管 ────────────────────────────────────────
     if (config.staticDir && existsSync(config.staticDir)) {
       await fastify.register(fastifyStatic, { root: resolve(config.staticDir) })
       ctx.logger('api').info(`serving frontend from ${config.staticDir}`)
     }
+  })
+
+  app.after(async error => {
+    if (error) { disposed = true; closeSockets(); throw error }
   })
 
   // ── 事件中继（同步注册，供 WS 广播） ──────────────────────

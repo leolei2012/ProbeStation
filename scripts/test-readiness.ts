@@ -105,15 +105,15 @@ try {
   const old = ctx.get('api', false) as any, oldStore = ctx.get('store', false) as DuckDBStore; assert(old && oldStore); apps.push(old); stores.push(oldStore)
   await (oldStore as any).ready; await old.ready()
   assert.equal((await old.inject('/ready')).statusCode, 200)
+  assert.deepEqual((await old.inject('/health')).json(), { status: 'ok', version: '0.1.0' })
   await storeFork.dispose(); assert.equal(ctx.get('api', false), undefined)
-  const detached = await old.inject('/ready'); assert.equal(detached.statusCode, 503, 'a disposed provider cannot keep its captured store ready'); assert.equal(detached.json().storage.phase, 'unavailable')
-  assert.deepEqual((await old.inject('/health')).json(), { status: 'ok', version: '0.1.0' }, 'legacy liveness is unchanged while this detached HTTP instance still exists')
+  await assert.rejects(old.inject('/ready'), { code: 'FST_ERR_REOPENED_CLOSE_SERVER' }, 'a disposed provider must close its captured HTTP instance')
   storeFork = await ctx.plugin(storePlugin, config); await apiFork
   const fresh = ctx.get('api', false) as any, freshStore = ctx.get('store', false) as DuckDBStore; assert(fresh && freshStore); apps.push(fresh); stores.push(freshStore)
   assert(fresh && fresh !== old, 'dependency recovery creates a new API instance')
   await (freshStore as any).ready; await fresh.ready(); assert.equal((await fresh.inject('/ready')).statusCode, 200)
-  assert.equal((await old.inject('/ready')).statusCode, 503, 'replacement must not revive the detached API')
-  await apiFork.dispose(); assert.equal((await fresh.inject('/ready')).statusCode, 503, 'direct API disposal must also invalidate readiness')
+  await assert.rejects(old.inject('/ready'), { code: 'FST_ERR_REOPENED_CLOSE_SERVER' }, 'replacement must not revive the detached API')
+  await apiFork.dispose(); await assert.rejects(fresh.inject('/ready'), { code: 'FST_ERR_REOPENED_CLOSE_SERVER' }, 'direct API disposal must close HTTP')
 } finally {
   const cfg = ctx.get('config', false) as any
   await apiFork.dispose(); for (const instance of apps) await instance.close()
