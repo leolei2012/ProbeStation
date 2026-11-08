@@ -35,7 +35,7 @@ export const Config: z<Config> = z.object({
   flushIntervalMs: z.number().default(5000),
   flushBatchSize: z.number().default(1000),
   retentionSeconds: z.number().default(2592000), // 全局默认保留 30 天；0 = 永久
-  retentionCheckMs: z.number().default(300000), // 清理间隔 5 分钟；0 = 仅启动时清理
+  retentionCheckMs: z.number().default(300000), // 周期清理间隔 5 分钟；0 仅停定时器，其他清理触发仍生效
 })
 
 /** 一个原始 16 位字采样，按 Modbus 地址键控（类型只是显示方式，解码在消费端做）。 */

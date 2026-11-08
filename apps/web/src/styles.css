@@ -989,6 +989,9 @@ table.reg th, .btn { white-space: nowrap; }
 .persistence-status p { margin: 8px 0; }
 .persistence-status small { display: block; line-height: 1.5; opacity: .8; }
 .retention-summary { overflow-wrap: anywhere; }
+.retention-cleanup-notice { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border-2); border-radius: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.retention-cleanup-notice p { margin: 0 0 6px; }
+.retention-cleanup-notice small { display: block; color: var(--text-2); }
 .retention-summary p { margin: 8px 0; }
 .retention-summary small { display: block; color: var(--text-2); line-height: 1.5; }
 .runtime-logs { border: 1px solid var(--border-2); border-radius: 10px; padding: 12px; margin: 12px 0; overflow-wrap: anywhere; }

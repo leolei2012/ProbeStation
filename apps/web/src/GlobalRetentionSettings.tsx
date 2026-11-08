@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { formatRetentionSeconds } from '../../../packages/core/src/retention-policy'
 import { globalRetentionFlow, retentionDraftValue, type GlobalRetentionFlow, type GlobalRetentionState, type RetentionApi } from './global-retention-state'
+import { RetentionCleanupNotice } from './RetentionCleanupNotice'
 export function GlobalRetentionView({ state, draft, custom, acknowledged, onDraft, onCustom, onAcknowledge, read, apply, english = false }: { state: GlobalRetentionState; draft: string | null; custom: boolean; acknowledged: boolean; onDraft: (value: string) => void; onCustom: (value: boolean) => void; onAcknowledge: (value: boolean) => void; read: () => void; apply: () => void; english?: boolean }) {
   const text = (zh: string, en: string) => english ? en : zh, value = draft === null ? null : retentionDraftValue(draft), busy = state.phase === 'saving', canEdit = state.seconds !== null && state.phase === 'ready' && state.outcome !== 'uncertain'
   const presets: Array<[string, number]> = [['1h', 3600], ['6h', 21600], ['24h', 86400], ['7d', 604800], ['30d', 2592000], ['90d', 7776000], [text('永久', 'Forever'), 0]]
   return <section className="global-retention-settings" aria-label={text('全局保留策略', 'Global retention policy')}>
     <div className="settings-line"><div><strong>{text('运行中全局默认保留时长', 'Runtime global default retention')}</strong><p>{text('仅影响跟随全局的设备，设备独立覆盖优先。修改会立即安排清理过期历史，无法恢复已删除数据；本入口不保证重启后保留。', 'Affects devices inheriting the global default; device overrides take precedence. A change immediately schedules removal of expired history, which cannot be recovered. This control does not guarantee persistence across restart.')}</p></div><button type="button" className="btn" disabled={busy || state.phase === 'reading'} onClick={read}>{text('重新读取当前策略', 'Read current policy')}</button></div>
+    <RetentionCleanupNotice english={english} />
     <p>{text(state.phase === 'ready' ? '本次后台确认值' : '上次核实值，当前未核实', state.phase === 'ready' ? 'Backend-reported value' : 'Last verified value; current value unverified')}: <strong>{state.seconds === null ? text('尚未核实', 'Unverified') : formatRetentionSeconds(state.seconds, english)}</strong>{state.checkedAt && <> · {state.checkedAt} UTC</>}</p>
     {state.phase === 'reading' && <p role="status">{text('正在读取；不使用30天等默认值代替后台结果。', 'Reading; no assumed 30-day or other fallback policy.')}</p>}
     {state.phase === 'read-error' && state.outcome !== 'uncertain' && <p role="alert">{text('当前策略读取失败或格式无法核实，已禁止修改；请重新读取。', 'Current policy could not be verified. Editing is disabled; read it again.')}</p>}

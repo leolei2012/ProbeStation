@@ -20,7 +20,7 @@
 | `flushIntervalMs` | number | 5000 | 定期 flush 间隔 |
 | `flushBatchSize` | number | 1000 | 攒批到该数量自动 flush |
 | `retentionSeconds` | number | 2592000 | 全局历史保留时长（秒，30 天）；0 = 永久 |
-| `retentionCheckMs` | number | 300000 | 保留清理间隔（毫秒，5 分钟）；0 = 仅启动时清理 |
+| `retentionCheckMs` | number | 300000 | 周期清理间隔（毫秒，5 分钟）；0 只停周期定时器，其他触发仍生效 |
 
 ## 服务 `ctx.store`
 
@@ -67,7 +67,9 @@ interface Store {
 - **新代码下次启动主应用可能自动加列；本轮仅对临时库验收，真实库迁移未做。**
 - `query/queryWithOffset/queryObject/queryObjectPage` 的原始行均保留 `batchId: string | null`，分页仍按原有时间戳语义，不按批次重排。
 - **数据保留**：`cleanup()` 按「全局 `retentionSeconds` + 设备级 `data_retain_seconds` 覆盖」删除过期数据
-  （启动时 + 每 `retentionCheckMs` 一次）；`setRetentionSeconds()/getRetentionSeconds()` 可运行时改全局并立即清理。
+  （启动、成功重开、周期定时器及显式`cleanup()`）；`setRetentionSeconds()`可运行时改全局并立即安排清理，`getRetentionSeconds()`只读。
+  `retentionCheckMs=0`不阻止启动、重开、修改全局或显式清理。全局`retentionSeconds=0`只关闭全局过期规则，设备正数覆盖仍执行，设备暂停也不跳过历史清理。
+  若隔离测试需不删除任何过期行，应同时设置全局0且所有设备覆盖为NULL或0；读取或渲染界面本身不会执行清理。界面不提供清理周期控件，规则说明不代表当前后台周期已核实，见[清理触发规则](../../docs/develop/91-清理触发规则与界面说明.md)。
 
 ## 用法
 
