@@ -48,7 +48,7 @@ export class DraftNavigation {
       const state = entry.read()
       if (typeof state?.dirty !== 'boolean' || typeof state?.busy !== 'boolean') throw Error('Unknown draft state')
       clean = !state.dirty && !state.busy
-      if (clean && !deletion) return true
+      if (clean && !deletion && !entry.capture) return true
       busy = state.busy
       const value = entry.capture?.()
       if (typeof value?.context !== 'string' || typeof value.text !== 'string') throw Error('Snapshot unavailable')
@@ -56,7 +56,7 @@ export class DraftNavigation {
       snapshot = Object.freeze({ context: value.context, text: value.text })
     } catch { /* Preserve an explicit unavailable record, without exposing thrown details or blocking refresh. */ }
     entry.retained = true; entry.captureFailed = !snapshot
-    // Even a clean editor must be sealed during deletion; do not create a spurious unsaved-input record.
+    // Seal clean editors after observed removal too; do not create spurious unsaved-input records.
     if (clean && snapshot) return true
     const id = ++this.sequence
     this.records.set(id, Object.freeze({ id, ownerId: entry.ownerId, kind: entry.kind, busy, snapshot, ...(deletion ? { deletion: true } : {}) }))

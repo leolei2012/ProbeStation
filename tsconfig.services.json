@@ -46,6 +46,7 @@
     "scripts/test-retained-drafts.ts",
     "scripts/test-device-removal-drafts.ts",
     "scripts/test-before-unload.ts",
+    "scripts/test-draft-composition.ts",
     "scripts/fixtures/unload-events.ts",
     "scripts/fixtures/draft-navigation-driver.ts",
     "scripts/fixtures/component-hook-driver.ts",
