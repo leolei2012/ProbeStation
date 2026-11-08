@@ -4,12 +4,14 @@ import { parseSamplePersistence, type PersistencePhase, type PersistenceFailure 
 
 /** Storage readiness, not liveness or device health. Observes metadata only; never probes by writing. */
 export function registerReadiness(app: FastifyInstance, service: () => Pick<DuckDBStore, 'getSamplePersistenceStatus'> | null | undefined) {
+  let closing = false
+  app.addHook('preClose', async () => { closing = true })
   app.get('/ready', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store')
     let storage: { phase: PersistencePhase | 'unavailable' | 'unknown'; failure: PersistenceFailure | 'unavailable' | 'status-unverified' } = { phase: 'unavailable', failure: 'unavailable' }
     let ready = false
     try {
-      const store = service(), raw: unknown = store?.getSamplePersistenceStatus()
+      const store = closing ? undefined : service(), raw: unknown = store?.getSamplePersistenceStatus()
       if (raw && typeof (raw as { then?: unknown }).then === 'function') {
         void Promise.resolve(raw).catch(() => {}) // Unsupported async metadata must not escape as an unhandled rejection.
         storage = { phase: 'unknown', failure: 'status-unverified' }

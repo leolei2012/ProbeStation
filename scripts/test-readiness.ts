@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import ts from 'typescript'
 import Fastify from 'fastify'
+import { Context } from 'cordis'
+import ConsoleExporter from '@cordisjs/plugin-logger-console'
+import * as apiPlugin from '../packages/api/src/index.ts'
+import * as configPlugin from '../packages/config/src/index.ts'
+import * as storePlugin from '../packages/store/src/index.ts'
 import { DuckDBInstance } from '@duckdb/node-api'
 import { DuckDBStore } from '../packages/store/src/index.ts'
 import { registerReadiness } from '../packages/api/src/readiness.ts'
@@ -70,6 +77,52 @@ registerReadiness(asynchronous, () => ({ async getSamplePersistenceStatus() { th
 process.on('unhandledRejection', onUnhandled)
 try { const result = await asynchronous.inject('/ready'); assert.equal(result.statusCode, 503); await tick(); assert.deepEqual(unhandled, [], 'an incompatible rejected metadata Promise must not become an unhandled rejection') }
 finally { await asynchronous.close(); process.off('unhandledRejection', onUnhandled) }
+
+// A request admitted before close must not report ready after shutdown has begun.
+const draining = Fastify(), admitted = deferred<void>(), proceed = deferred<void>(), closing = deferred<void>(), finishClose = deferred<void>()
+draining.addHook('preHandler', async request => { if (request.url === '/ready') { admitted.resolve(); await proceed.promise } })
+registerReadiness(draining, () => ({ getSamplePersistenceStatus: () => valid }) as any)
+draining.addHook('preClose', async () => { closing.resolve(); await finishClose.promise })
+let closingApp: Promise<void> | undefined
+try {
+  const request = Promise.resolve(draining.inject('/ready')); await admitted.promise
+  closingApp = draining.close(); await closing.promise; proceed.resolve()
+  const result = await request; assert.equal(result.statusCode, 503, 'an admitted request must not turn green during close'); assert.equal(result.headers['cache-control'], 'no-store')
+} finally { proceed.resolve(); finishClose.resolve(); await (closingApp ?? draining.close()) }
+await assert.rejects(draining.inject('/ready'), { code: 'FST_ERR_REOPENED_CLOSE_SERVER' })
+
+// Actual Cordis/API registration, with real memory databases and inert dependent services.
+// Disposing the store removes the API provider; its retained Fastify reference must fail closed.
+const dataDir = mkdtempSync(join(tmpdir(), 'probestation-readiness-')), ctx = new Context(), apps: ReturnType<typeof Fastify>[] = [], stores: DuckDBStore[] = []
+const loggerFork = await ctx.plugin(ConsoleExporter)
+const configFork = await ctx.plugin(configPlugin, { dbPath: ':memory:' })
+const inert = await ctx.plugin({ name: 'readiness-inert-services', apply(context: Context) { for (const name of ['poller', 'sink', 'importer', 'ota']) context.provide(name as any, {} as any) } })
+let storeFork = await ctx.plugin(storePlugin, config)
+const apiFork = await ctx.plugin(apiPlugin, { host: '127.0.0.1', port: 0, dataDir })
+try {
+  await apiFork.await()
+  assert.deepEqual(['config', 'store', 'poller', 'sink', 'importer', 'ota'].filter(name => !ctx.get(name as any, false)), [], 'all API dependencies must be registered')
+  const old = ctx.get('api', false) as any, oldStore = ctx.get('store', false) as DuckDBStore; assert(old && oldStore); apps.push(old); stores.push(oldStore)
+  await (oldStore as any).ready; await old.ready()
+  assert.equal((await old.inject('/ready')).statusCode, 200)
+  await storeFork.dispose(); assert.equal(ctx.get('api', false), undefined)
+  const detached = await old.inject('/ready'); assert.equal(detached.statusCode, 503, 'a disposed provider cannot keep its captured store ready'); assert.equal(detached.json().storage.phase, 'unavailable')
+  assert.deepEqual((await old.inject('/health')).json(), { status: 'ok', version: '0.1.0' }, 'legacy liveness is unchanged while this detached HTTP instance still exists')
+  storeFork = await ctx.plugin(storePlugin, config); await apiFork
+  const fresh = ctx.get('api', false) as any, freshStore = ctx.get('store', false) as DuckDBStore; assert(fresh && freshStore); apps.push(fresh); stores.push(freshStore)
+  assert(fresh && fresh !== old, 'dependency recovery creates a new API instance')
+  await (freshStore as any).ready; await fresh.ready(); assert.equal((await fresh.inject('/ready')).statusCode, 200)
+  assert.equal((await old.inject('/ready')).statusCode, 503, 'replacement must not revive the detached API')
+  await apiFork.dispose(); assert.equal((await fresh.inject('/ready')).statusCode, 503, 'direct API disposal must also invalidate readiness')
+} finally {
+  const cfg = ctx.get('config', false) as any
+  await apiFork.dispose(); for (const instance of apps) await instance.close()
+  await storeFork.dispose(); await inert.dispose(); await configFork.dispose()
+  for (const instance of stores) await close(instance)
+  cfg?.db.close()
+  await loggerFork.dispose()
+  rmSync(dataDir, { recursive: true, force: true })
+}
 assert.match(source.text, /registerReadiness\(fastify,/)
 await tick()
-console.log('READINESS OK: actual legacy health stays 200/exact body; global metadata-only no-store readiness 503 while native opening/failed/blocked/reopening and 200 after real initialization/flush retry/reopen recovery; pending healthy work allowed, malformed/unsupported/async/throwing status fails closed and redacted, no I/O/retry from probe; memory only, no service/listeners/hardware/model')
+console.log('READINESS OK: legacy health unchanged; metadata-only no-store readiness covers real initialization/flush/reopen recovery, malformed/async status, admitted requests during close, actual Cordis API/dependency disposal and replacement without reviving old instances; isolated memory data, no listeners/hardware/model')
