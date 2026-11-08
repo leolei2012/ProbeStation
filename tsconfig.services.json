@@ -36,6 +36,7 @@
     "scripts/test-history-page-snapshot.ts",
     "scripts/test-history-pagination.ts",
     "scripts/test-history-feedback.ts",
+    "scripts/test-history-capacity.ts",
     "scripts/diagnose-points.ts",
     "scripts/preview-register-picker.ts",
     "scripts/fixtures/register-picker-preview.tsx",

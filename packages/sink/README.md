@@ -22,6 +22,8 @@ interface Sink {
 
 HTTP 接口将该错误返回为 **413 JSON**，含 `code`、`limit` 和说明，不带附件头。网页在导出弹窗显示超限原因，取消并缩小范围后可重试；直连 API 的调用者必须检查状态码，不能将错误体保存为 CSV/XLSX。未提供自动拆分、流式或显式部分导出。
 
+历史XLSX另受16384列格式上限约束：时间戳1列，每个选中点位3列，最多5461个点位。筛选后超限会在历史读取前抛出`HistoryExportColumnLimitError`，路由返回413 JSON（code=`HISTORY_EXPORT_COLUMN_LIMIT`、limit=16384、pointLimit=5461），提示减少点位或改用CSV；空历史也不能生成超宽表头。CSV不套用此列数限制。原始行上限和列数限制都不是总内存保证，大稀疏采样仍可能展开为很大的宽表；取消/超时也不终止后端生成，见[容量审计](../../docs/develop/95-历史XLSX列数边界与资源审计.md)。
+
 ## 点表 xlsx（分组=sheet）
 
 `exportPointSheet` 把一台设备的**点位定义**（不是历史采样）导成一个 xlsx：

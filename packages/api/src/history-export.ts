@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { Sink } from '../../sink/src/index.ts'
-import { HistoryExportLimitError } from '../../core/src/history-export-policy.ts'
+import { HistoryExportColumnLimitError, HistoryExportLimitError } from '../../core/src/history-export-policy.ts'
 
 /** Shared by the production API and isolated edition; never sends attachments on failure. */
 export function registerHistoryExport(app: FastifyInstance, sink: Pick<Sink, 'exportCsv' | 'exportXlsx'>) {
@@ -14,6 +14,7 @@ export function registerHistoryExport(app: FastifyInstance, sink: Pick<Sink, 'ex
       reply.header('Content-Disposition', `attachment; filename="export.${format}"`)
       return result
     } catch (error) {
+      if (error instanceof HistoryExportColumnLimitError) return reply.code(413).send({ code: error.code, limit: error.limit, pointLimit: error.pointLimit, error: error.message })
       if (!(error instanceof HistoryExportLimitError)) throw error
       return reply.code(413).send({ code: error.code, limit: error.limit, error: `所选点位超过 ${error.limit} 条所需原始行，导出会被截断，已停止生成文件。请减少点位或缩小时间范围后重试。` })
     }

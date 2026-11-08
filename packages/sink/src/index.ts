@@ -4,7 +4,7 @@ import { parsePointBook } from './pointbook.ts'
 import { assertExportableGroupName, createSheetNameAllocator } from './sheet-names.ts'
 import { historyColumnNames } from './history-columns.ts'
 import { areaForFunction, formatRegisterValue, decodeHistoricalSample, historyVerificationLabel, type HistoryVerification } from '@probebench/core'
-import { HISTORY_EXPORT_RAW_LIMIT, HistoryExportLimitError, historyExportReadRanges } from '../../core/src/history-export-policy.ts'
+import { HISTORY_EXPORT_RAW_LIMIT, HISTORY_XLSX_POINT_LIMIT, HistoryExportColumnLimitError, HistoryExportLimitError, historyExportReadRanges } from '../../core/src/history-export-policy.ts'
 import { withRegisterSources } from '../../core/src/sample-source.ts'
 import type { PointBookImportReport } from '../../config/src/index.ts'
 
@@ -56,12 +56,14 @@ function boldRows(sheet: any, count: number): void {
 export class Sink {
   constructor(private readonly ctx: any) {}
 
-  private async collect(objectId: number, start: string, end: string, registerIds?: number[]) {
+  private async collect(objectId: number, start: string, end: string, registerIds: number[] | undefined, format: 'csv' | 'xlsx') {
     let registers = withRegisterSources<any>(this.ctx.config.listRegistersByObject(objectId), this.ctx.config.listGroups?.(objectId) ?? [], this.ctx.config.getObject?.(objectId))
     if (registerIds && registerIds.length > 0) {
       const idSet = new Set(registerIds)
       registers = registers.filter((r: any) => idSet.has(r.id))
     }
+    // Reject impossible workbooks before reading or expanding the historical rows.
+    if (format === 'xlsx' && registers.length > HISTORY_XLSX_POINT_LIMIT) throw new HistoryExportColumnLimitError()
     const points = registers.length ? await this.ctx.store.queryObjectForExport(objectId, start, end, historyExportReadRanges(registers)) : []
     if (points.length > HISTORY_EXPORT_RAW_LIMIT) throw new HistoryExportLimitError()
     const byTs = new Map<string, typeof points>()
@@ -82,7 +84,7 @@ export class Sink {
   }
 
   async exportCsv(objectId: number, start: string, end: string, registerIds?: number[], tzOffsetMin = 0): Promise<string> {
-    const { registers, tsOrder, formatted, verification } = await this.collect(objectId, start, end, registerIds)
+    const { registers, tsOrder, formatted, verification } = await this.collect(objectId, start, end, registerIds, 'csv')
     const timestamp = `timestamp(${tzLabel(tzOffsetMin)})`
     const names = historyColumnNames(registers, [timestamp, `timestamp (${tzLabel(tzOffsetMin)})`])
     const header = [timestamp, ...names.flatMap(name => [name, name + '__batch_status', name + '__automatic_eligible'])]
@@ -96,7 +98,7 @@ export class Sink {
   }
 
   async exportXlsx(objectId: number, start: string, end: string, registerIds?: number[], tzOffsetMin = 0): Promise<Buffer> {
-    const { registers, tsOrder, formatted, verification } = await this.collect(objectId, start, end, registerIds)
+    const { registers, tsOrder, formatted, verification } = await this.collect(objectId, start, end, registerIds, 'xlsx')
     const names = historyColumnNames(registers, [`timestamp(${tzLabel(tzOffsetMin)})`, `timestamp (${tzLabel(tzOffsetMin)})`])
     const wb = new ExcelJS.Workbook()
     const sheet = wb.addWorksheet('data')
