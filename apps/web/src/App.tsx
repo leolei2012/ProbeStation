@@ -691,7 +691,7 @@ export default function App() {
         setSelectedId(current => current === id ? null : current)
         refreshDevices()
       } finally { draftNavigation.endRemoval(id); setRetainedDrafts(draftNavigation.retained()) }
-    }, undefined, error => phase === 0 || error instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(error.message) ? (error instanceof Error ? error.message : String(error)) : phase === 2 ? (lang === 'en' ? 'Deletion returned success; page refresh failed. Check the device list; do not repeat automatically.' : '删除请求返回成功，但页面未同步；请核对设备清单，勿自动重删。') : (lang === 'en' ? 'Deletion outcome unverified; it may have applied. Check capture results and configuration; do not repeat automatically.' : '删除结果待核实，可能已生效；请核对本页留存及设备配置，勿自动重删。'))
+    }, undefined, error => phase === 0 || phase === 1 && error instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(error.message) ? (error instanceof Error ? error.message : String(error)) : phase === 2 ? (lang === 'en' ? 'Deletion returned success; page refresh failed. Check the device list; do not repeat automatically.' : '删除请求返回成功，但页面未同步；请核对设备清单，勿自动重删。') : (lang === 'en' ? 'Deletion outcome unverified; it may have applied. Check capture results and configuration; do not repeat automatically.' : '删除结果待核实，可能已生效；请核对本页留存及设备配置，勿自动重删。'))
   }
 
   const selected = devices.find((d) => d.id === selectedId) ?? null
@@ -980,7 +980,14 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
   const deleteGroup = async (id: number) => {
     const g = groups.find((gg) => gg.id === id)
     if (!window.confirm(t('confirmDeleteGroup').replace('{name}', g?.name ?? String(id)))) return
-    await operation.run(async () => { await api.del('/api/groups/' + id); onRefresh() })
+    let phase = 1
+    await operation.run(async () => { await api.del('/api/groups/' + id); phase = 2; onRefresh() }, undefined, error => {
+      if (phase === 1 && error instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(error.message)) return error.message
+      const english = t('cancel') === 'Cancel'
+      return phase === 2
+        ? (english ? 'Deletion returned success; page refresh failed. Check the group list; do not repeat automatically.' : '删除请求返回成功，但页面未同步；请核对分组清单，勿自动重删。')
+        : (english ? 'Deletion outcome unverified; it may have applied. Check the group configuration; do not repeat automatically.' : '删除结果待核实，可能已生效；请核对分组配置，勿自动重删。')
+    })
   }
   const toggleGroupPause = async (id: number) => {
     await operation.run(async () => {
