@@ -19,6 +19,7 @@ tests.push('config-write-entrypoints')
 tests.push('destructive-write-outcomes')
 tests.push('write-outcome-audit')
 tests.push('config-modal-loading')
+tests.push('group-drafts')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {

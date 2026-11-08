@@ -3,11 +3,15 @@ import { captureDeviceEditBaseline, type DeviceEditBaseline } from '../../../pac
 import { captureGroupOpening, parseGroupEditChanges, planGroupResize, type GroupEditSnapshot } from '../../../packages/core/src/group-settings-edit'
 import { readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings } from './group-settings-save'
 import { configurationWriteBlocked } from './configuration-write-outcome'
+import type { DraftRegistration } from './draft-navigation'
+import { bindBeforeUnload } from './before-unload'
+import { DetachedEditorNotice } from './RetainedDraftNotice'
 
 export interface GroupEditorInput { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number; mode?: string; registers: readonly unknown[] }
-export function GroupModal({ t, device, initial, onClose, onSaved, get, put, create }: {
+export function GroupModal({ t, device, initial, onClose, onSaved, get, put, create, draftScope }: {
   t: (key: string) => string; device: DeviceEditBaseline; initial: GroupEditorInput | null; onClose: () => void; onSaved: (warnings: readonly string[]) => void
   get: (url: string, signal: AbortSignal) => Promise<unknown>; put: (url: string, body: unknown) => Promise<unknown>; create: (url: string, body: unknown) => Promise<unknown>
+  draftScope?: DraftRegistration
 }) {
   const [opening] = useState(() => { try { return { device: captureDeviceEditBaseline(device), graph: initial ? captureGroupOpening(initial, device) : null, error: '' } } catch { return { device: null, graph: null, error: '分组或点位配置不完整，请关闭并刷新后重新编辑。' } } })
   const [name, setName] = useState(initial?.name ?? ''), [slaveId, setSlaveId] = useState(String(initial?.slaveId ?? device.slaveId ?? 1))
@@ -16,11 +20,26 @@ export function GroupModal({ t, device, initial, onClose, onSaved, get, put, cre
   const [snapshot, setSnapshot] = useState<GroupEditSnapshot | null>(null), [reading, setReading] = useState(!!initial && !opening.error), [readError, setReadError] = useState(opening.error)
   const [attempt, setAttempt] = useState(0), [error, setError] = useState(''), [busy, setBusy] = useState(false), [confirmed, setConfirmed] = useState(false)
   const lock = useRef(false), title = useId(), english = t('cancel') === 'Cancel', text = (zh: string, en: string) => english ? en : zh
+  const fields = { name, slaveId, functionCode, startAddress, quantity, active }, [originalFields] = useState(() => JSON.stringify(fields)), dirty = JSON.stringify(fields) !== originalFields
+  const alive = useRef(true), detached = useRef(draftScope?.removalPending?.() ?? false), [, notifyDetached] = useState(false)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const navigationState = useRef(() => ({ dirty: false, busy: false }))
+  navigationState.current = () => ({ dirty: !detached.current && dirty, busy: lock.current })
+  const unloadRisk = navigationState.current().dirty || lock.current
+  useEffect(() => bindBeforeUnload(window, unloadRisk, () => { const state = navigationState.current(); return state.dirty || state.busy }), [unloadRisk])
+  const captureDraft = useRef(() => ({ context: '', text: '' }))
+  captureDraft.current = () => { detached.current = true; notifyDetached(true); setReading(false); return { context: `${opening.device?.id ?? device.id} / ${initial?.id ?? 'new'} / ${name}`, text: JSON.stringify({ device: opening.device, groupId: initial?.id ?? null, opening: JSON.parse(originalFields), fields }, null, 2) } }
+  useEffect(() => draftScope?.register('group', () => navigationState.current(), () => captureDraft.current()), [draftScope])
+  const requestClose = () => {
+    if (lock.current) return
+    if (!detached.current && dirty) { try { if (!window.confirm(text('关闭将丢弃本页分组草稿，不会保存或撤销；此前保存结果仍须单独核实。确定放弃并关闭？', 'Discard this page’s group draft and close? No save or undo is sent; earlier save outcomes remain unverified.'))) return } catch { return } }
+    onClose()
+  }
   useEffect(() => {
-    if (!opening.graph) return
+    if (!opening.graph || detached.current) return
     const controller = new AbortController(); let current = true
     setSnapshot(null); setReading(true); setReadError(''); setConfirmed(false)
-    void readGroupSettings(opening.graph, get, controller.signal).then(value => { if (current) setSnapshot(value) }, e => { if (current) setReadError(e instanceof Error ? e.message : t('operationFailed')) }).finally(() => { if (current) setReading(false) })
+    void readGroupSettings(opening.graph, get, controller.signal).then(value => { if (current && !detached.current) setSnapshot(value) }, e => { if (current && !detached.current) setReadError(e instanceof Error ? e.message : t('operationFailed')) }).finally(() => { if (current && !detached.current) setReading(false) })
     return () => { current = false; controller.abort() }
   }, [attempt])
   const body = { name, slaveId: opening.device?.mode === 'slave' ? opening.device.slaveId : Number(slaveId), functionCode: Number(functionCode), startAddress: Number(startAddress), quantity: Number(quantity), isActive: active ? 1 : 0 }
@@ -29,29 +48,34 @@ export function GroupModal({ t, device, initial, onClose, onSaved, get, put, cre
   const destructive = !!plan?.removeRegisterIds.length || !!plan?.removeRuleIds.length
   const changed = (update: () => void) => { update(); setConfirmed(false); setError('') }
   const save = async () => {
-    if (lock.current || !opening.device || initial && (!snapshot || !plan || reading || destructive && !confirmed)) return
+    if (draftScope?.removalPending?.()) { detached.current = true; notifyDetached(true); return }
+    if (detached.current || lock.current || !opening.device || initial && (!snapshot || !plan || reading || destructive && !confirmed)) return
     lock.current = true; setBusy(true); setError('')
     try {
-      if (snapshot) { const result = await saveGuardedGroupSettings(snapshot, body, confirmed, put); onSaved(result.warnings) }
-      else { const result = await create('/api/monitor_objects/' + opening.device.id + '/groups', body); onSaved(groupCreateWarnings(result)) }
+      const warnings = snapshot ? (await saveGuardedGroupSettings(snapshot, body, confirmed, put)).warnings : groupCreateWarnings(await create('/api/monitor_objects/' + opening.device.id + '/groups', body))
+      if (alive.current && !detached.current && !draftScope?.removalPending?.()) onSaved(warnings)
     } catch (e) {
+      if (!alive.current) return
       const rejected = e instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(e.message)
       const blocked = !initial ? configurationWriteBlocked(e, true, english) : null
       setError(blocked ? blocked.message : !initial && !rejected ? text('创建结果待核实，请核对分组及点位，勿重复创建。', 'Creation outcome is unverified. Check the group and points before creating again.') : e instanceof Error ? e.message : t('operationFailed'))
     }
-    finally { lock.current = false; setBusy(false) }
+    finally { lock.current = false; if (alive.current) setBusy(false) }
   }
   return <div className="modal-mask"><form className="modal" role="dialog" tabIndex={-1} aria-modal="true" aria-labelledby={title} onSubmit={e => { e.preventDefault(); void save() }} onKeyDown={e => {
+    if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); requestClose(); return }
     if (e.key !== 'Tab') return
     const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),summary')), first = items[0], last = items[items.length - 1]
     if (!first) { e.preventDefault(); e.currentTarget.focus(); return }
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
   }}>
     <h3 id={title}>{t(initial ? 'editGroup' : 'newGroup')}</h3>
+    <p className="enum-hint">{text('草稿仅在当前页内存中，刷新或关页会丢失；离开前请保存或手工记录。', 'Drafts stay in this page memory only; refresh or close loses them. Save or copy them before leaving.')}</p>
+    {detached.current && <DetachedEditorNotice english={english} />}
     {initial && <p className="enum-hint">{text('保存前核对组、点位、告警及设备来源；变化会拒绝保存并保留草稿。数量沿用按定义条数同步的规则；修改地址或功能码不重建已有点位。', 'Saving checks group, points, rules and device source; conflicts keep drafts. Quantity follows definition-count rules. Changing address/function does not rebuild existing points.')}</p>}
     {reading && <p role="status">{text('正在读取点位与告警快照，尚不能保存…', 'Reading points and alarm snapshot; saving is disabled…')}</p>}
-    {readError && <div className="write-msg error" role="alert">{readError}{opening.graph && <button type="button" className="btn" disabled={busy || reading} onClick={() => setAttempt(v => v + 1)}>{text('重读快照', 'Retry snapshot')}</button>}</div>}
-    <fieldset disabled={busy} style={{ border: 0, margin: 0, padding: 0 }}>
+    {readError && <div className="write-msg error" role="alert">{readError}{opening.graph && <button type="button" className="btn" disabled={busy || reading || detached.current} onClick={() => { if (!detached.current) setAttempt(v => v + 1) }}>{text('重读快照', 'Retry snapshot')}</button>}</div>}
+    <fieldset disabled={busy || detached.current} style={{ border: 0, margin: 0, padding: 0 }}>
       <label>{t('groupName')}<input value={name} required onChange={e => changed(() => setName(e.target.value))} autoFocus /></label>
       <label>{t('slaveId')}<input type="number" min={0} max={247} step={1} required value={opening.device?.mode === 'slave' ? opening.device.slaveId : slaveId} disabled={opening.device?.mode === 'slave'} onChange={e => changed(() => setSlaveId(e.target.value))} /></label>
       <label>{t('functionCode')}<select value={functionCode} onChange={e => changed(() => setFunctionCode(e.target.value))}>{[1, 2, 3, 4].map((fc, i) => <option value={fc} key={fc}>FC0{fc} · {t(['fcReadCoils', 'fcReadDiscrete', 'fcReadHolding', 'fcReadInput'][i])}</option>)}</select></label>
@@ -64,6 +88,6 @@ export function GroupModal({ t, device, initial, onClose, onSaved, get, put, cre
       </section>}
     </fieldset>
     {error && <div className="write-msg error" role="alert">{error}</div>}
-    <div className="modal-actions"><button className="btn" type="button" disabled={busy} onClick={onClose}>{t('cancel')}</button><button className="btn primary" type="submit" disabled={busy || !opening.device || !!initial && (reading || !snapshot || !plan || destructive && !confirmed)}>{t(busy ? 'working' : 'save')}</button></div>
+    <div className="modal-actions"><button className="btn" type="button" disabled={busy} onClick={requestClose}>{t('cancel')}</button><button className="btn primary" type="submit" disabled={busy || detached.current || !opening.device || !!initial && (reading || !snapshot || !plan || destructive && !confirmed)}>{t(busy ? 'working' : 'save')}</button></div>
   </form></div>
 }

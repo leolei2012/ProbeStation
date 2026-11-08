@@ -1116,7 +1116,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
         </div>
       )})}
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
-      {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={warnings => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') }) }} get={(url, signal) => request(url, { signal })} put={api.put} create={api.post} />}
+      {modal && <GroupModal draftScope={draftScope} t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={warnings => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') }) }} get={(url, signal) => request(url, { signal })} put={api.put} create={api.post} />}
       {alarmReg && <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} point={alarmReg} onClose={() => setAlarmReg(null)} />}
       {settingsReg && <PointSettingsEditor draftScope={draftScope} guarded name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} typeGroups={TYPE_GROUPS} available={(() => { const group = groups.find(g => g.id === settingsReg.groupId); return group ? group.startAddress + group.quantity - settingsReg.startAddress : 0 })()} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
         const warnings = await saveGuardedPointSettings(settingsReg.editBaseline, fields, api.put)

@@ -114,6 +114,9 @@
     "scripts/test-config-write-entrypoints.ts",
     "scripts/test-destructive-write-outcomes.ts",
     "scripts/test-write-outcome-audit.ts",
-    "scripts/test-config-modal-loading.ts"
+    "scripts/test-config-modal-loading.ts",
+    "scripts/test-group-drafts.ts",
+    "scripts/test-group-create-active.ts",
+    "scripts/test-group-create-atomic.ts"
   ]
 }

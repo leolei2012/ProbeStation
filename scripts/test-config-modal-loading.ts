@@ -1,3 +1,4 @@
+import { groupEditorScope } from './fixtures/group-editor-scope.ts'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import React, { type ComponentProps, type ComponentType } from 'react'
@@ -89,7 +90,7 @@ await check('loaded group creates only on explicit submit and retains an uncerta
   const props = { ...groupProps, create: async () => { writes++; return pending.promise } }, view = wrapper(resource, props)
   try {
     await resource.load(); view.update(); const forwarded = view.driver.one(GroupModal).props
-    const editor = hookDriver('GroupModal.tsx', 'GroupModal', { captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }, forwarded)
+    const editor = hookDriver('GroupModal.tsx', 'GroupModal', groupEditorScope({ captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }), forwarded)
     try { assert.equal(writes, 0); editor.one('input').props.onChange({ target: { value: 'NEW GROUP DRAFT' } }); editor.render(); editor.one('form').props.onSubmit({ preventDefault() {} }); editor.one('form').props.onSubmit({ preventDefault() {} }); assert.equal(writes, 1); pending.resolve(Promise.reject(Error('synthetic response lost'))); await tick(); editor.render(); assert.equal(editor.one('input').props.value, 'NEW GROUP DRAFT'); assert.match(editor.one('div', value => value.role === 'alert').props.children, /待核实/); assert.equal(writes, 1) } finally { editor.dispose() }
   } finally { view.driver.dispose() }
 })
@@ -150,17 +151,16 @@ await check('group code retry after owner navigation uses only the new device ca
   const page = draftSurface(), late = deferred<typeof GroupModal>(); let imports = 0, oldWrites = 0, newWrites = 0
   const resource = new DeferredResource<typeof GroupModal>(() => ++imports === 1 ? late.promise : Promise.resolve(GroupModal), 5)
   const old = wrapper(resource, { ...groupProps, async create() { oldWrites++; assert.fail('closed group callback') } }); await resource.load(); old.update(); page.select(2); assert.equal(page.prompts.length, 0); old.driver.dispose()
-  const props = { ...groupProps, device: captureDeviceEditBaseline(page.render().props.device), onSaved() {}, async create(url: string) { assert.equal(url, '/api/monitor_objects/2/groups'); newWrites++; return {} } }, fresh = wrapper(resource, props)
+  const props = { ...groupProps, draftScope: page.registration(), device: captureDeviceEditBaseline(page.render().props.device), onSaved() {}, async create(url: string) { assert.equal(url, '/api/monitor_objects/2/groups'); newWrites++; return { id: 99 } } }, fresh = wrapper(resource, props)
   try {
     fresh.driver.one(ConfigModalLoading).props.retry(); await resource.load(); fresh.update(); const forwarded = fresh.driver.one(GroupModal).props; assert.equal(forwarded.device.id, 2)
-    const editor = hookDriver('GroupModal.tsx', 'GroupModal', { captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }, forwarded)
-    try { editor.one('input').props.onChange({ target: { value: 'B GROUP DRAFT' } }); editor.render(); late.resolve(GroupModal); await tick(); fresh.update(); assert.equal(editor.one('input').props.value, 'B GROUP DRAFT'); assert.equal(page.state().selectedId, 2); assert.equal(old.driver.lateWrites, 0); assert.equal(oldWrites + newWrites, 0); editor.one('form').props.onSubmit({ preventDefault() {} }); await tick(); assert.equal(oldWrites, 0); assert.equal(newWrites, 1) } finally { editor.dispose() }
+    const editor = hookDriver('GroupModal.tsx', 'GroupModal', groupEditorScope({ captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }), forwarded)
+    try { editor.one('input').props.onChange({ target: { value: 'B GROUP DRAFT' } }); editor.render(); late.resolve(GroupModal); await tick(); fresh.update(); assert.equal(editor.one('input').props.value, 'B GROUP DRAFT'); page.select(1); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 1); assert.equal(old.driver.lateWrites, 0); assert.equal(oldWrites + newWrites, 0); editor.one('form').props.onSubmit({ preventDefault() {} }); await tick(); assert.equal(oldWrites, 0); assert.equal(newWrites, 1) } finally { editor.dispose() }
   } finally { late.resolve(GroupModal); fresh.driver.dispose() }
 })
-await check('existing group navigation ownership gap is recorded without claiming protection', () => {
-  const source = fs.readFileSync(new URL('../apps/web/src/GroupModal.tsx', import.meta.url), 'utf8'); assert(!source.includes('draftScope'))
-  const page = draftSurface(), editor = hookDriver('GroupModal.tsx', 'GroupModal', { captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }, groupProps)
-  try { editor.one('input').props.onChange({ target: { value: 'UNREGISTERED GROUP DRAFT' } }); editor.render(); page.select(2); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 0); assert.equal(page.drafts.retained().length, 0); console.log('CONFIG MODAL LEGACY LIMIT: GroupModal has no shared draft registration before or after code splitting. Navigation can discard its draft; this audit does not claim group navigation or unload protection.') } finally { editor.dispose() }
+await check('loaded group draft blocks cancelled owner navigation after code loading', () => {
+  const page = draftSurface(), editor = hookDriver('GroupModal.tsx', 'GroupModal', groupEditorScope({ captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }), { ...groupProps, draftScope: page.registration() })
+  try { editor.one('input').props.onChange({ target: { value: 'PROTECTED GROUP DRAFT' } }); editor.render(); page.select(2); assert.equal(page.state().selectedId, 1); assert.equal(page.prompts.length, 1); assert.equal(editor.one('input').props.value, 'PROTECTED GROUP DRAFT'); assert.equal(page.drafts.retained().length, 0) } finally { editor.dispose() }
 })
 await deviceModalResource.load(); await groupModalResource.load(); assert.equal(deviceModalResource.snapshot().value, DeviceModal); assert.equal(groupModalResource.snapshot().value, GroupModal)
 console.log('CONFIG MODAL LOADING TEST OK: ' + passed + ' source/SSR and controlled loader/device/group/keyboard/focus lifecycle groups; no actual browser, network, storage, serial enumeration, model or hardware')

@@ -4,6 +4,11 @@ import ts from 'typescript'
 import Fastify from 'fastify'
 import { ConfigStore } from '../packages/config/src/index.ts'
 import * as client from '../apps/web/src/group-settings-save.ts'
+import { captureDeviceEditBaseline } from '../packages/core/src/device-settings-edit.ts'
+import { captureGroupOpening, parseGroupEditChanges, planGroupResize } from '../packages/core/src/group-settings-edit.ts'
+import { configurationWriteBlocked } from '../apps/web/src/configuration-write-outcome.ts'
+import { hookDriver } from './fixtures/component-hook-driver.ts'
+import { groupEditorScope } from './fixtures/group-editor-scope.ts'
 import { stageMemoryConfigurationRecovery } from './fixtures/config-recovery-driver.ts'
 let recovery: ReturnType<typeof stageMemoryConfigurationRecovery> | undefined
 
@@ -50,7 +55,14 @@ try {
   assert.deepEqual((client as any).groupCreateWarnings({ id: 1, name: 'legacy response' }), [])
   for (const value of [null, {}, [], { id: 0 }, { id: 1.5 }]) assert.throws(() => (client as any).groupCreateWarnings(value), /待核实.*重复/)
   for (const warnings of [null, 'bad', [1]]) assert.throws(() => (client as any).groupCreateWarnings({ id: 1, warnings }), /待核实.*重复/)
-  const ui = readFileSync(new URL('../apps/web/src/GroupModal.tsx', import.meta.url), 'utf8'); assert.match(ui, /onSaved\(groupCreateWarnings\(result\)\)/)
+  // Verify actual callback propagation rather than prescribing the source spelling of onSaved.
+  for (const { report, expected } of [
+    { report: warning.json(), expected: warnings }, { report: { id: 1 }, expected: [] }, { report: { id: 1, warnings: 'malformed' }, expected: null },
+  ] as Array<{ report: unknown; expected: readonly string[] | null }>) {
+    let calls = 0; const delivered: string[][] = []
+    const editor = hookDriver('GroupModal.tsx', 'GroupModal', groupEditorScope({ captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, ...client, configurationWriteBlocked }), { t: (key: string) => key, device: d, initial: null, onClose() { assert.fail('report handling must not request cancellation') }, onSaved(value: readonly string[]) { delivered.push([...value]) }, async get() { assert.fail('new group read') }, async put() { assert.fail('new group update') }, async create() { calls++; return report } })
+    try { editor.one('input').props.onChange({ target: { value: 'REPORT DRAFT' } }); editor.render(); editor.one('form').props.onSubmit({ preventDefault() {} }); await new Promise<void>(done => setImmediate(done)); editor.render(); assert.equal(calls, 1); assert.deepEqual(delivered, expected ? [[...expected]] : []); if (!expected) { assert.match(editor.one('div', props => props.role === 'alert').props.children, /待核实/); assert.equal(editor.one('input').props.value, 'REPORT DRAFT') } } finally { editor.dispose() }
+  }
 
   const committed = graph(); seen.length = 0
   db.exec = (sql: string) => { if (sql === 'COMMIT') throw new Error('synthetic commit failure'); return exec(sql) }

@@ -1,3 +1,4 @@
+import { groupEditorScope } from './fixtures/group-editor-scope.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
@@ -61,7 +62,7 @@ async function fixture(kind: Kind, options: { quarantine?: boolean; notify?: boo
       else if (kind === 'create-device') { const callback = compile('return (' + (add.initializer as ts.CallExpression).arguments[0].getText(web) + ')', { api: { post }, configurationWriteBlocked, setShowAdd() { successes++ }, refreshDevices() {}, operation: { setNotice() {} }, t: (key: string) => key }); await callback({ ...baseline, name: 'created' }); assert.equal(successes, 1) }
       else if (kind === 'create-group') {
         let pending: Promise<unknown> | undefined
-        const driver = hookDriver('GroupModal.tsx', 'GroupModal', { captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }, { device: baseline, initial: null, t: (key: string) => key, onClose() {}, onSaved() { successes++ }, get() { assert.fail() }, put() { assert.fail() }, create(url: string, body: unknown) { return pending = post(url, body) } })
+        const driver = hookDriver('GroupModal.tsx', 'GroupModal', groupEditorScope({ captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }), { device: baseline, initial: null, t: (key: string) => key, onClose() {}, onSaved() { successes++ }, get() { assert.fail() }, put() { assert.fail() }, create(url: string, body: unknown) { return pending = post(url, body) } })
         try { driver.one('input').props.onChange({ target: { value: 'created' } }); driver.render(); driver.one('form').props.onSubmit({ preventDefault() {} }); assert(pending); await pending.catch(() => {}); await tick(); driver.render(); if (!successes) return classify(Error(driver.one('div', props => props.role === 'alert').props.children)) } finally { driver.dispose() }
       } else if (kind === 'delete') { const page = draftSurface(); page.setAnswer(true); await page.deleteDevice(1, url => http(url, { method: 'DELETE' })); if (page.notices.at(-1)?.error) return classify(Error(page.notices.at(-1)!.text)); assert.equal(page.state().selectedId, null) }
       else { const report = await uploadPointBook(d.id, file, fetcher); return pointBookReportKind(report) === 'completed' ? 'success' : report.groups === 0 && report.registers === 0 && report.errors.some(text => text.includes('本次导入未执行')) ? 'not-started' : 'unknown' }

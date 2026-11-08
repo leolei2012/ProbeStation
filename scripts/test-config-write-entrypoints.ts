@@ -1,3 +1,4 @@
+import { groupEditorScope } from './fixtures/group-editor-scope.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
@@ -51,7 +52,7 @@ async function perform(kind: Kind, f: Awaited<ReturnType<typeof fixture>>, messa
   const start = f.stats().requests
   const create = (url: string, body: unknown) => pending = f.send('POST', url, body)
   if (kind === 'group') {
-    const driver = hookDriver('GroupModal.tsx', 'GroupModal', { captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }, { device: f.baseline, initial: null, t: (key: string) => english && key === 'cancel' ? 'Cancel' : key, onClose() { closed++ }, onSaved() { saved++ }, get() { assert.fail('new group GET') }, put() { assert.fail('new group PUT') }, create })
+    const driver = hookDriver('GroupModal.tsx', 'GroupModal', groupEditorScope({ captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }), { device: f.baseline, initial: null, t: (key: string) => english && key === 'cancel' ? 'Cancel' : key, onClose() { closed++ }, onSaved() { saved++ }, get() { assert.fail('new group GET') }, put() { assert.fail('new group PUT') }, create })
     try { driver.one('input').props.onChange({ target: { value: 'UNSAVED DRAFT' } }); driver.render(); driver.one('form').props.onSubmit({ preventDefault() {} }); assert(pending); await pending.catch(() => {}); await tick(); driver.render(); assert.match(driver.one('div', props => props.role === 'alert').props.children, message); assert.equal(driver.one('input').props.value, 'UNSAVED DRAFT') }
     finally { driver.dispose() }
   } else {

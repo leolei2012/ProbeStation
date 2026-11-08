@@ -1,4 +1,4 @@
-export type DraftKind = 'device' | 'live'
+export type DraftKind = 'device' | 'live' | 'group'
 export type DraftRange = 'all' | 'live'
 export interface DraftStatus { dirty: boolean; busy: boolean }
 export interface DraftSnapshot { readonly context: string; readonly text: string }
@@ -68,7 +68,7 @@ export class DraftNavigation {
     if (ownerId === null) return true
     let statuses: DraftStatus[]
     try {
-      statuses = [...this.entries.values()].filter(entry => entry.ownerId === ownerId && (range === 'all' || entry.kind === 'live')).map(entry => entry.read())
+      statuses = [...this.entries.values()].filter(entry => entry.ownerId === ownerId && (range === 'all' || entry.kind !== 'device')).map(entry => entry.read())
       if (statuses.some(state => typeof state?.dirty !== 'boolean' || typeof state?.busy !== 'boolean')) throw Error('Draft state unavailable')
     } catch { blocked(); return false }
     if (statuses.some(state => state.busy)) { blocked(); return false }
