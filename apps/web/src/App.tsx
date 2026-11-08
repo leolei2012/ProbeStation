@@ -254,10 +254,12 @@ const I18N: Record<Lang, Record<string, string>> = {
 async function request(url: string, options?: RequestInit): Promise<any> {
   const r = await fetch(url, options)
   if (!r.ok) {
-    let detail = ''
+    let detail = '', notStarted = false
     try { detail = await r.text() } catch { /* ignore */ }
-    try { const parsed = JSON.parse(detail); detail = typeof parsed.error === 'string' ? parsed.error : typeof parsed.message === 'string' ? parsed.message : detail } catch { /* plain text response */ }
-    throw new Error('HTTP ' + r.status + (detail ? ' ' + detail.slice(0, 200) : ''))
+    try { const parsed = JSON.parse(detail); notStarted = r.status === 503 && parsed?.version === 1 && parsed.code === 'CONFIG_WRITE_NOT_STARTED' && parsed.outcome === 'not-applied'; detail = typeof parsed.error === 'string' ? parsed.error : typeof parsed.message === 'string' ? parsed.message : detail } catch { /* plain text response */ }
+    const error = new Error('HTTP ' + r.status + (detail ? ' ' + detail.slice(0, 200) : ''))
+    if (notStarted) Object.assign(error, { statusCode: 503, version: 1, code: 'CONFIG_WRITE_NOT_STARTED', outcome: 'not-applied' })
+    throw error
   }
   if (r.status === 204) return null
   return r.json()

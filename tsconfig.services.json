@@ -109,6 +109,7 @@
     "scripts/audit-config-outer-transaction.ts",
     "scripts/audit-config-delete-callers.ts",
     "scripts/test-config-quarantine.ts",
-    "scripts/test-core-readiness.ts"
+    "scripts/test-core-readiness.ts",
+    "scripts/test-device-write-quarantine.ts"
   ]
 }
