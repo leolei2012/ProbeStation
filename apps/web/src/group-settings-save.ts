@@ -1,6 +1,17 @@
 import { acceptGroupEditSnapshot, groupDeletionAcknowledged, parseGroupEditChanges, parseGroupEditSnapshot, planGroupResize, type GroupEditSnapshot, type captureGroupOpening } from '../../../packages/core/src/group-settings-edit'
 import { runRequestWithTimeout } from './request-timeout'
 
+/** Valid legacy records have no warnings; malformed success must not encourage a duplicate create. */
+export function groupCreateWarnings(value: unknown): readonly string[] {
+  const uncertain = () => new Error('创建结果待核实，请核对分组及点位，勿重复创建。')
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw uncertain()
+  const result = value as Record<string, unknown>
+  if (!Number.isSafeInteger(result.id) || Number(result.id) < 1) throw uncertain()
+  if (result.warnings === undefined) return Object.freeze([])
+  if (!Array.isArray(result.warnings) || result.warnings.some(item => typeof item !== 'string')) throw uncertain()
+  return Object.freeze([...result.warnings] as string[])
+}
+
 /** Display filters contain only visible rows; editing must capture the complete configured group. */
 export function fullGroupForEditing<T extends { id: number }>(groups: readonly T[], id: number): T {
   const group = groups.find(value => value.id === id)

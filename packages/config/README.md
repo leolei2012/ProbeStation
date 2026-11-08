@@ -52,6 +52,8 @@ update 接受 **camelCase**（`isActive`、`functionCode`、`startAddress`、`da
 
 新建分组可用具名`options.isActive`传数字0/1，省略默认1；非法值在INSERT/通知前拒绝。直接在INSERT中保存，首次group/后续register通知即可观察到暂停状态，不先启用再更新。旧7参数调用不变；旧文档的第8个pollIntervalMs并未在该方法中实现，不应依赖，多余数字也不会被当作启用开关。参见[新增分组启用状态修复](../../docs/develop/77-新增分组启用状态保真.md)。
 
+REST使用`createGroupWithRegisters`（同参数）统一创建组和默认点位，BEGIN IMMEDIATE内暂缓通知，失败回滚，成功后按group→register原顺序各通知一次。返回原GroupRecord字段加`warnings: string[]`；同步通知回调异常不把已提交配置误报成创建失败。不能嵌套其他批量事务；回滚失败明确报结果未知。原createGroup仍只创建组，导入/备份等调用不会被自动补点。详见[创建事务](../../docs/develop/78-分组与默认点位创建事务.md)。
+
 ## 表结构
 
 `monitor_objects` / `register_groups` / `registers` 三张表，每台设备独立配置，无语义层字段。

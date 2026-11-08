@@ -153,10 +153,7 @@ export function apply(ctx: Context, config: Config): void {
     fastify.post('/api/monitor_objects/:id/groups', async (req: any) => {
       const oid = Number((req.params as any).id)
       const b = req.body as any
-      const g = cfg.createGroup(oid, b.name, b.functionCode ?? 3, b.startAddress ?? 0, b.quantity ?? 1, b.mode ?? 'read', b.slaveId ?? 1, { isActive: b.isActive })
-      // 按数量自动生成寄存器（每地址一个，默认 int16、无别名）
-      for (let i = 0; i < g.quantity; i++) cfg.createRegister(g.id, g.objectId, null, g.functionCode, g.startAddress + i, 'int16')
-      return g
+      return cfg.createGroupWithRegisters(oid, b.name, b.functionCode ?? 3, b.startAddress ?? 0, b.quantity ?? 1, b.mode ?? 'read', b.slaveId ?? 1, { isActive: b.isActive })
     })
     fastify.put('/api/groups/:id', async (req: any) => cfg.updateGroup(Number((req.params as any).id), req.body as any))
     fastify.delete('/api/groups/:id', async (req: any) => { cfg.deleteGroup(Number((req.params as any).id)); return { ok: true } })

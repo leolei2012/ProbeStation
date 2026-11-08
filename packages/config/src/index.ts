@@ -267,6 +267,28 @@ export class ConfigStore {
     this.notify('group', id)
     return this.getGroup(id)!
   }
+  /** REST creation owns group and default words together; primitive createGroup remains independent. */
+  createGroupWithRegisters(objectId: number, name: string, functionCode: number, startAddress: number, quantity: number, mode = 'read', slaveId = 1, options?: { isActive?: number }): GroupRecord & { warnings: string[] } {
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，不能嵌套新建分组。'), { statusCode: 409 })
+    const isActive = options?.isActive
+    if (isActive !== undefined && isActive !== 0 && isActive !== 1) throw Object.assign(new Error('分组启用状态必须为0或1。'), { statusCode: 400 })
+    let group!: GroupRecord
+    const registerIds: number[] = []
+    this.db.exec('BEGIN IMMEDIATE'); this.restoring = true
+    try {
+      group = this.createGroup(objectId, name, functionCode, startAddress, quantity, mode, slaveId, { isActive })
+      for (let i = 0; i < group.quantity; i++) registerIds.push(this.createRegister(group.id, group.objectId, null, group.functionCode, group.startAddress + i, 'int16').id)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '分组创建回滚失败，结果待核实，勿重复创建。') }
+      throw error
+    } finally { this.restoring = false }
+    let notificationFailed = false
+    const emit = (scope: string, id: number) => { try { this.notify(scope, id) } catch { notificationFailed = true } }
+    emit('group', group.id)
+    for (const id of registerIds) emit('register', id)
+    return { ...group, warnings: notificationFailed ? ['分组及点位已创建，但变更通知失败；请刷新核对，勿重复创建。'] : [] }
+  }
   updateGroup(id: number, fields: Record<string, unknown>): GroupRecord | undefined {
     if (this.restoring) return this.updateGroupRows(id, fields) // Existing bulk transaction owns rollback and notification.
     let result: GroupRecord | undefined
