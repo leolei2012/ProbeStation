@@ -29,7 +29,7 @@ class ConfigStore {
   deleteObject(id): void                                // 级联删 group + register
   toggleObject(id): DeviceRecord | undefined            // 切换 is_active
   // Groups（寄存器组）
-  listGroups(objectId) / getGroup(id) / createGroup(objectId, name, functionCode, startAddress, quantity, mode?, slaveId?, pollIntervalMs?) / updateGroup(id, fields) / deleteGroup(id) / toggleGroup(id)
+  listGroups(objectId) / getGroup(id) / createGroup(objectId, name, functionCode, startAddress, quantity, mode?, slaveId?, options?: { isActive?: number }) / updateGroup(id, fields) / deleteGroup(id) / toggleGroup(id)
   // Registers（寄存器）
   listRegisters(groupId) / listRegistersByObject(objectId) / getRegister(id)
   getHistoryExportConfiguration(objectId): HistoryExportConfigurationSnapshot // 只读；尚未接入导出API
@@ -49,6 +49,8 @@ class ConfigStore {
 ## 字段映射
 
 update 接受 **camelCase**（`isActive`、`functionCode`、`startAddress`、`dataType`），内部映射到 snake_case 列。参数化 SQL，无注入。
+
+新建分组可用具名`options.isActive`传数字0/1，省略默认1；非法值在INSERT/通知前拒绝。直接在INSERT中保存，首次group/后续register通知即可观察到暂停状态，不先启用再更新。旧7参数调用不变；旧文档的第8个pollIntervalMs并未在该方法中实现，不应依赖，多余数字也不会被当作启用开关。参见[新增分组启用状态修复](../../docs/develop/77-新增分组启用状态保真.md)。
 
 ## 表结构
 

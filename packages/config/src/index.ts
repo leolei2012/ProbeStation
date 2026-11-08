@@ -259,8 +259,10 @@ export class ConfigStore {
 
   listGroups(objectId: number): GroupRecord[] { return this.db.prepare(GROUP_SELECT + ' WHERE object_id = ? ORDER BY id').all(objectId) as unknown as GroupRecord[] }
   getGroup(id: number): GroupRecord | undefined { return this.db.prepare(GROUP_SELECT + ' WHERE id = ?').get(id) as unknown as GroupRecord | undefined }
-  createGroup(objectId: number, name: string, functionCode: number, startAddress: number, quantity: number, mode = 'read', slaveId = 1): GroupRecord {
-    const res = this.db.prepare('INSERT INTO register_groups (object_id, name, slave_id, function_code, start_address, quantity, mode) VALUES (?, ?, ?, ?, ?, ?, ?)').run(objectId, name, slaveId, functionCode, startAddress, quantity, mode)
+  createGroup(objectId: number, name: string, functionCode: number, startAddress: number, quantity: number, mode = 'read', slaveId = 1, options?: { isActive?: number }): GroupRecord {
+    const isActive = options?.isActive === undefined ? 1 : options.isActive
+    if (isActive !== 0 && isActive !== 1) throw Object.assign(new Error('分组启用状态必须为0或1。'), { statusCode: 400 })
+    const res = this.db.prepare('INSERT INTO register_groups (object_id, name, slave_id, function_code, start_address, quantity, mode, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(objectId, name, slaveId, functionCode, startAddress, quantity, mode, isActive)
     const id = Number(res.lastInsertRowid)
     this.notify('group', id)
     return this.getGroup(id)!

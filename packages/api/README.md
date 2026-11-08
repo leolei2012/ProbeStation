@@ -53,7 +53,7 @@ export const inject = ['config', 'store', 'poller']
 | DELETE | `/api/monitor_objects/:id` | 删除（级联） |
 | POST | `/api/monitor_objects/:id/toggle` | 切换启用 |
 | GET | `/api/monitor_objects/:id/groups` | 组列表 |
-| POST | `/api/monitor_objects/:id/groups` | 新建组 |
+| POST | `/api/monitor_objects/:id/groups` | 新建组；可选数字isActive=0/1，省略默认1，非法值400且不创建 |
 
 ### 组（groups）
 | 方法 | 路径 | 说明 |
