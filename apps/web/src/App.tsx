@@ -20,7 +20,7 @@ import { historyTimeRange, resolveHistoryTimeRange, editHistoryTime, changeHisto
 import { LivePointFilters } from './LivePointFilters'
 import { evaluateLivePoints, livePointFilterResult, type LivePointFilter } from './live-point-filter'
 import { pickerSources } from './register-picker'
-import { PointDiagnosticsPanel } from './PointDiagnostics'
+import { DeferredPointDiagnostics } from './DeferredPointDiagnostics'
 import { captureHistoryAnchor, historyComparisonContext, updateHistoryComparison, type HistoryComparisonState } from './history-comparison'
 import { HistoryNavigation } from './history-navigation'
 import { LatestConfigRead, readDeviceGroups, groupsForSelection, readConfigRequest, configReadFailure, type ConfigReadFailure } from './config-read'
@@ -905,7 +905,7 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
       {tab === 2 && <HistoryView navigation={historyNavigation.current} memory={queryMemory.current} configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
-      {tab === 5 && (configurationReady ? <PointDiagnosticsPanel key={pointCheckContext} deviceId={device.id} points={registers} groups={groups} pointLabels={pointCheckLabels} fetcher={fetchPointDiagnostics} english={t('cancel') === 'Cancel'} /> : <p role="status">{t('pointCheckWaiting')}</p>)}
+      {tab === 5 && (configurationReady ? <DeferredPointDiagnostics onClose={() => setTab(0)} key={pointCheckContext} deviceId={device.id} points={registers} groups={groups} pointLabels={pointCheckLabels} fetcher={fetchPointDiagnostics} english={t('cancel') === 'Cancel'} /> : <p role="status">{t('pointCheckWaiting')}</p>)}
       <div hidden={tab !== 1}><LiveCurve active={tab === 1} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
       {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f, expected) => { if (!expected) throw new Error(t('operationFailed')); await onEdit(device.id, f, expected); setShowEdit(false) }} />}
     </div>
