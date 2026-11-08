@@ -337,24 +337,37 @@ export class DuckDBStore {
       const global = this.retentionSeconds
       const now = Date.now()
       const overrideIds: number[] = []
+      const expiry = (seconds: number) => {
+        const cutoff = new Date(now - seconds * 1000)
+        if (!Number.isNaN(cutoff.getTime())) return { predicate: 'ts < CAST(? AS TIMESTAMP)', value: cutoff.toISOString() }
+        if (!Number.isFinite(seconds)) throw new RangeError('Invalid retention duration')
+        // Backups permit safe integer seconds beyond Date's range. Compare native microseconds
+        // without clipping the configured duration or rounding old DuckDB timestamps to doubles.
+        const whole = Math.trunc(seconds)
+        const micros = BigInt(now) * 1000n - BigInt(whole) * 1000000n - BigInt(Math.trunc((seconds - whole) * 1000000))
+        // epoch_us(TIMESTAMP) is BIGINT: no finite sample can precede its signed 64-bit floor.
+        // Bound only the SQL comparison operand, not the saved duration (even larger runtime values).
+        const floor = -(1n << 63n)
+        return { predicate: "(ts = TIMESTAMP '-infinity' OR epoch_us(ts) < CAST(? AS HUGEINT))", value: (micros < floor ? floor : micros).toString() }
+      }
 
       if (this.cfg) {
         for (const o of this.cfg.listObjects() as Array<{ id: number; dataRetainSeconds: number | null }>) {
           if (o.dataRetainSeconds == null) continue
           overrideIds.push(o.id)
           if (o.dataRetainSeconds > 0) {
-            const cutoff = new Date(now - o.dataRetainSeconds * 1000).toISOString()
-            await conn.run(`DELETE FROM poll_data WHERE object_id = ${o.id} AND ts < '${cutoff}'`)
+            const cutoff = expiry(o.dataRetainSeconds)
+            await conn.run(`DELETE FROM poll_data WHERE object_id = ${o.id} AND ${cutoff.predicate}`, [cutoff.value])
           }
         }
       }
 
       if (global > 0) {
-        const cutoff = new Date(now - global * 1000).toISOString()
+        const cutoff = expiry(global)
         if (overrideIds.length > 0) {
-          await conn.run(`DELETE FROM poll_data WHERE ts < '${cutoff}' AND object_id NOT IN (${overrideIds.join(',')})`)
+          await conn.run(`DELETE FROM poll_data WHERE ${cutoff.predicate} AND object_id NOT IN (${overrideIds.join(',')})`, [cutoff.value])
         } else {
-          await conn.run(`DELETE FROM poll_data WHERE ts < '${cutoff}'`)
+          await conn.run(`DELETE FROM poll_data WHERE ${cutoff.predicate}`, [cutoff.value])
         }
       }
     })
