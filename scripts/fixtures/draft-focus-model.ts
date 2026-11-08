@@ -10,7 +10,9 @@ let body!: ts.FunctionExpression
 const visit = (node: ts.Node) => { if (ts.isFunctionExpression(node) && node.name?.text === 'PointDraftDiscard') body = node; ts.forEachChild(node, visit) }; visit(source); assert(body)
 const discard = new Function('React', ts.transpileModule('return (' + body.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, jsx: ts.JsxEmit.React } }).outputText)(React)
 export function focusDocument() {
-  const document: any = { activeElement: null, body: null }
+  const document: any = { activeElement: null, body: null, dialogs: new Set<any>(),
+    querySelector(selector: string) { assert.equal(selector, '[aria-modal="true"]'); return [...this.dialogs].find((node: any) => node.isConnected) ?? null },
+  }
   document.body = { isConnected: true, focus() { document.activeElement = this } }
   document.activeElement = document.body
   return document
@@ -36,7 +38,7 @@ export function draftFocusModel(document = focusDocument()) {
         querySelectorAll(selector: string) { assert(selector.includes('button')); return current.filter(item => item !== this && this.contains(item) && ['input', 'select', 'button', 'textarea'].includes(item.tag) && !item.unavailable) },
       }
       Object.assign(node, { props, isConnected: true, parent, unavailable: inherited || !!props.disabled, disabled: !!props.disabled, tabIndex: props.tabIndex ?? 0 })
-      nodes.set(id, node); current.push(node); if (tag === 'form') form = node
+      nodes.set(id, node); current.push(node); if (tag === 'form') { form = node; document.dialogs.add(node) }
       const ref = (element as any).ref
       if (ref && typeof ref === 'object') { ref.current = node; refs.push(ref) }
       if (fresh && props.autoFocus) node.focus()

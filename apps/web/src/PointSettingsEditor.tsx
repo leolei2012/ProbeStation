@@ -1,7 +1,7 @@
 import type { DraftRegistration } from './draft-navigation'
 import { DetachedEditorNotice, ConfigurationSaveHint } from './RetainedDraftNotice'
 import { bindBeforeUnload } from './before-unload'
-import { restoreDialogFocus, trapDialogTab } from './dialog-focus'
+import { useDraftDialogFocus, draftDialogKey } from './dialog-focus'
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec'
 import { parsePointSettingsUpdate, type PointSettings, type PointSettingsUpdate } from './point-settings'
@@ -32,9 +32,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
   const lock = useRef(false)
   const [closeGuard] = useState(() => new PointDraftCloseGuard())
   const [discarding, setDiscarding] = useState(false)
-  const resumeButton = useRef<HTMLButtonElement>(null), closeTrigger = useRef<HTMLElement | null>(null)
-  const restoreFocus = useRef(false)
-  const dialog = useRef<HTMLFormElement>(null)
+  const [dialog, resumeButton, closeTrigger] = useDraftDialogFocus(busy, discarding)
   const dirty = pointDraftChanged(opening, { dataType, unit, factor, offset, decimalPlaces }, enums)
   const detached = useRef(draftScope?.removalPending?.() ?? false)
   const [, notifyDetached] = useState(false)
@@ -49,11 +47,10 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
   const closeAction = (action: PointCloseAction) => {
     if (action === 'none') return
     setDiscarding(closeGuard.confirming)
-    if (action === 'prompt') closeTrigger.current = document.activeElement as HTMLElement | null
-    if (action === 'resume') restoreFocus.current = true
+    if (action === 'prompt') closeTrigger[0] = document.activeElement as HTMLElement | null
+    if (action === 'resume') closeTrigger[1] = true
     if (action === 'close') onClose()
   }
-  useEffect(() => { if (busy) dialog.current?.focus(); else if (discarding) resumeButton.current?.focus(); else if (restoreFocus.current) { restoreFocus.current = false; restoreDialogFocus(dialog.current, closeTrigger.current) } }, [discarding, busy])
   const requestClose = () => closeAction(closeGuard.request(!detached.current && dirty, lock.current))
   const save = async () => {
     if (draftScope?.removalPending?.()) { detached.current = true; notifyDetached(true); return }
@@ -67,7 +64,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
     finally { lock.current = false; setBusy(false) }
   }
   return <div className="modal-mask">
-    <form ref={dialog} tabIndex={-1} className="modal enum-editor point-settings-editor" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); void save() }} onKeyDown={e => { if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); if (closeGuard.confirming) closeAction(closeGuard.resume(lock.current)); else requestClose() } else trapDialogTab(e) }}>
+    <form ref={dialog} tabIndex={-1} className="modal enum-editor point-settings-editor" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); void save() }} onKeyDown={e => draftDialogKey(e, closeGuard, lock.current, closeAction, requestClose)}>
       <div className="modal-head"><h3 id={titleId}>{t('pointSettings')}</h3><button className="modal-close" type="button" aria-label={t('cancel')} disabled={busy || discarding} onClick={requestClose}>×</button></div>
       <p className="enum-context">{name} · {t('colAddr')} {address}</p>
       {guarded && <ConfigurationSaveHint english={t('cancel') === 'Cancel'} />}

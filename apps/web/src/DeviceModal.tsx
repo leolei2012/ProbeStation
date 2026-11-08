@@ -1,7 +1,7 @@
 import type { DraftRegistration } from './draft-navigation'
 import { DetachedEditorNotice, ConfigurationSaveHint } from './RetainedDraftNotice'
 import { bindBeforeUnload } from './before-unload'
-import { restoreDialogFocus, trapDialogTab } from './dialog-focus'
+import { useDraftDialogFocus, draftDialogKey } from './dialog-focus'
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { captureDeviceEditBaseline, type DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { SerialPortPicker } from './SerialPortPicker'
@@ -32,8 +32,7 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher, draftSco
   const [busy, setBusy] = useState(false), [error, setError] = useState(opening.error)
   const locked = useRef(false)
   const [closeGuard] = useState(() => new PointDraftCloseGuard()), [discarding, setDiscarding] = useState(false)
-  const resumeButton = useRef<HTMLButtonElement>(null), closeTrigger = useRef<HTMLElement | null>(null), restoreFocus = useRef(false)
-  const dialog = useRef<HTMLFormElement>(null)
+  const [dialog, resumeButton, closeTrigger] = useDraftDialogFocus(busy, discarding)
   const dirty = deviceDraftChanged(opening.fields, { name, mode, transport, ip, port, serialPath, baudRate, parity, stopBits, flowControl, slaveId, pollInterval, timeout, dataBits })
   const detached = useRef(draftScope?.removalPending?.() ?? false)
   const [, notifyDetached] = useState(false)
@@ -47,11 +46,10 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher, draftSco
   const closeAction = (action: 'none' | 'prompt' | 'resume' | 'close') => {
     if (action === 'none') return
     setDiscarding(closeGuard.confirming)
-    if (action === 'prompt') closeTrigger.current = document.activeElement as HTMLElement | null
-    if (action === 'resume') restoreFocus.current = true
+    if (action === 'prompt') closeTrigger[0] = document.activeElement as HTMLElement | null
+    if (action === 'resume') closeTrigger[1] = true
     if (action === 'close') onClose()
   }
-  useEffect(() => { if (busy) dialog.current?.focus(); else if (discarding) resumeButton.current?.focus(); else if (restoreFocus.current) { restoreFocus.current = false; restoreDialogFocus(dialog.current, closeTrigger.current) } }, [discarding, busy])
   const requestClose = () => closeAction(closeGuard.request(!detached.current && dirty, locked.current))
   const save = async () => {
     if (draftScope?.removalPending?.()) { detached.current = true; notifyDetached(true); return }
@@ -72,10 +70,7 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher, draftSco
   )
   return (
     <div className="modal-mask">
-      <form ref={dialog} tabIndex={-1} className="modal device-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); if (!busy) void save() }} onKeyDown={e => {
-        if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); if (closeGuard.confirming) closeAction(closeGuard.resume(locked.current)); else requestClose(); return }
-        trapDialogTab(e)
-      }}>
+      <form ref={dialog} tabIndex={-1} className="modal device-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); if (!busy) void save() }} onKeyDown={e => draftDialogKey(e, closeGuard, locked.current, closeAction, requestClose)}>
         <div className="device-modal-header"><h3 id={titleId}>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3><button type="button" className="modal-close" aria-label={t('cancel')} disabled={busy || discarding} onClick={requestClose}>✕</button></div>
         <div className="device-modal-body">
           {initial && <ConfigurationSaveHint device english={t('cancel') === 'Cancel'} />}
