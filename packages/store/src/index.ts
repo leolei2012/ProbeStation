@@ -101,6 +101,24 @@ export class DuckDBStore {
     void task.then(() => this.reads.delete(task), () => this.reads.delete(task))
     return task
   }
+  /** Called inside an admitted read; the page's SELECTs share one MVCC snapshot. */
+  private async pageSnapshot<T>(action: (conn: DuckDBConnection) => Promise<T>): Promise<T> {
+    await this.mutations
+    await this.ready
+    const conn = await this.instance!.connect(), errors: unknown[] = []
+    let begun = false, value: T | undefined
+    try {
+      await conn.run('BEGIN TRANSACTION'); begun = true
+      value = await action(conn)
+      await conn.run('COMMIT'); begun = false
+    } catch (error) {
+      errors.push(error)
+      if (begun) try { await conn.run('ROLLBACK') } catch (rollback) { errors.push(rollback) }
+    }
+    try { conn.closeSync() } catch (cleanup) { errors.push(cleanup) }
+    throwCleanupErrors(errors, 'Historical page query and cleanup failed')
+    return value!
+  }
   /** Recovery snapshot only; an uncertain transaction must be investigated before any replay. */
   getPendingPoints(): PollPoint[] { return this.buffer.map(point => ({ ...point })) }
   /** Idempotent, terminal shutdown. Failed writes remain in memory and close errors are not swallowed. */
@@ -492,9 +510,7 @@ export class DuckDBStore {
   async queryObjectPage(
     objectId: number, start: string, end: string, page = 0, pageSize = 200,
   ): Promise<{ points: Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>; total: number; page: number; pageSize: number; hasMore: boolean }> {
-    return this.read(async () => {
-      await this.mutations
-      const conn = await this.ready
+    return this.read(() => this.pageSnapshot(async conn => {
       const startUtc = this.normalizeToUtc(start)
       const endUtc = this.normalizeToUtc(end)
       const size = Math.max(1, Math.min(10000, Math.trunc(pageSize) || 200))
@@ -537,7 +553,7 @@ export class DuckDBStore {
         quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id),
       }))
       return { points, total, page: p, pageSize: size, hasMore: p * size + pageTs.length < total }
-    })
+    }))
   }
 
   /** Query the cold tier for a single address over a time range. */
