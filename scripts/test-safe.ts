@@ -18,6 +18,7 @@ tests.push('device-write-quarantine')
 tests.push('config-write-entrypoints')
 tests.push('destructive-write-outcomes')
 tests.push('write-outcome-audit')
+tests.push('config-modal-loading')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {
@@ -25,7 +26,7 @@ for (const name of tests) {
   const code = await new Promise<number | null>((resolve, reject) => {
     // Full settings SSR includes existing browser components that rely on automatic JSX.
     // Use the actual web build configuration for this suite; retain all older suites' configuration.
-    const args = name === 'settings-loading' ? [cli, '--tsconfig', 'tsconfig.web.json', `scripts/test-${name}.ts`] : [cli, `scripts/test-${name}.ts`]
+    const args = ['settings-loading', 'config-modal-loading'].includes(name) ? [cli, '--tsconfig', 'tsconfig.web.json', `scripts/test-${name}.ts`] : [cli, `scripts/test-${name}.ts`]
     const child = spawn(process.execPath, args, { cwd: root, stdio: 'inherit' })
     child.on('error', reject); child.on('exit', resolve)
   })
