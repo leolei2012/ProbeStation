@@ -11,6 +11,7 @@ import * as configPlugin from '../packages/config/src/index.ts'
 import * as storePlugin from '../packages/store/src/index.ts'
 import * as apiPlugin from '../packages/api/src/index.ts'
 import { registerReadiness } from '../packages/api/src/readiness.ts'
+import { registerResourceCleanup } from '../packages/core/src/resource-close.ts'
 
 const tick = () => new Promise<void>(done => setImmediate(done))
 const goodConfiguration = { version: 1, phase: 'ready', failure: null }
@@ -119,11 +120,79 @@ try {
       try { const response = await app.inject('/ready/core'); assert.equal(response.statusCode, 503); assert.equal(response.json().configuration.phase, 'quarantined'); assert.equal(response.json().storage.phase, 'ready'); assert(!response.body.includes('PRIVATE')); assert.deepEqual(store.getSamplePersistenceStatus().available, before.available) }
       finally { db.prepare = prepare; db.exec = rawExec; methods.forEach((name, index) => { store![name] = saved[index] as never }) }
       exec('ROLLBACK'); assert.equal((await app.inject('/ready/core')).statusCode, 503)
+      const instance = (store as unknown as { instance: { connect: () => Promise<import('@duckdb/node-api').DuckDBConnection> } }).instance, connect = instance.connect.bind(instance)
+      let failWrite = true
+      instance.connect = async () => { const writer = await connect(), run = writer.run.bind(writer); writer.run = (async (...args: Parameters<typeof run>) => { if (failWrite && String(args[0]).startsWith('INSERT INTO poll_data')) throw Error('PRIVATE storage path'); return run(...args) }) as typeof run; return writer }
+      store.write([{ objectId: d.id, area: 'holding-register', address: 0, timestamp: new Date().toISOString(), rawValue: 1, quality: 'good', batchId: 'synthetic', slaveId: 1 }])
+      await assert.rejects(store.flush(), /PRIVATE/)
+      const bothFailed = await app.inject('/ready/core'); assert.equal(bothFailed.statusCode, 503); assert.equal(bothFailed.json().storage.failure, 'flush-failed'); assert.equal(bothFailed.json().configuration.phase, 'quarantined'); assert(!bothFailed.body.includes('PRIVATE'))
       assert.throws(() => cfg!.reopen(dir)); assert.equal((await app.inject('/ready/core')).statusCode, 503)
-      cfg.reopen(join(dir, 'synthetic.sqlite')); assert.equal((await app.inject('/ready/core')).statusCode, 200)
+      cfg.reopen(join(dir, 'synthetic.sqlite')); const oneRecovered = await app.inject('/ready/core'); assert.equal(oneRecovered.statusCode, 503); assert.equal(oneRecovered.json().configuration.phase, 'ready'); assert.equal(oneRecovered.json().storage.failure, 'flush-failed')
+      failWrite = false; await store.flush(); instance.connect = connect; assert.equal(store.getPendingPoints().length, 0); assert.equal((await app.inject('/ready/core')).statusCode, 200)
+      let entered!: () => void, release!: () => void
+      const held = new Promise<void>(done => { entered = done }), released = new Promise<void>(done => { release = done }), flush = store.flush.bind(store)
+      store.flush = async () => { entered(); await released; await flush() }
+      const reopening = store.reopen(':memory:')
+      try {
+        await held; let response = await app.inject('/ready/core'); assert.equal(response.statusCode, 503); assert.equal(response.json().storage.phase, 'switching')
+        assert.throws(() => cfg!.reopen(dir)); response = await app.inject('/ready/core'); assert.equal(response.statusCode, 503); assert.equal(response.json().configuration.phase, 'quarantined'); assert.equal(response.json().storage.phase, 'switching'); assert(!response.body.includes(dir))
+        cfg.reopen(join(dir, 'synthetic.sqlite')); response = await app.inject('/ready/core'); assert.equal(response.statusCode, 503); assert.equal(response.json().configuration.phase, 'ready'); assert.equal(response.json().storage.phase, 'switching')
+      } finally { release(); await reopening; store.flush = flush }
+      assert.equal((await app.inject('/ready/core')).statusCode, 200)
       assert.deepEqual((await app.inject('/health')).json(), { status: 'ok', version: '0.1.0' })
       await app.close(); await assert.rejects(app.inject('/ready/core'), { code: 'FST_ERR_REOPENED_CLOSE_SERVER' })
     } finally { if (db?.isOpen && exec) { db.exec = exec; if (db.isTransaction) exec('ROLLBACK') }; await ctx.fiber.dispose(); await app?.close(); await store?.close(); await cfg?.close(); remove(dir) }
+  })
+  await check('configuration-close-remains-unready-while-storage-recovers', async () => {
+    const cfg = new configPlugin.ConfigStore({ dbPath: ':memory:' }), store = new storePlugin.DuckDBStore({ dbPath: ':memory:', flushIntervalMs: 0, flushBatchSize: 1000, retentionSeconds: 0, retentionCheckMs: 0 }), app = Fastify(), ctx = new Context()
+    let entered!: () => void, release!: () => void
+    const held = new Promise<void>(done => { entered = done }), released = new Promise<void>(done => { release = done })
+    const stop = registerResourceCleanup(ctx, [cfg], async () => { entered(); await released })
+    register(app, () => store, () => cfg)
+    const startup = store as unknown as { ready: Promise<void>; mutations: Promise<void> }
+    let closing: Promise<void> | undefined
+    try {
+      await startup.ready; await startup.mutations; assert.equal((await app.inject('/ready/core')).statusCode, 200)
+      const db = native(cfg), instance = (store as unknown as { instance: { connect: () => Promise<import('@duckdb/node-api').DuckDBConnection> } }).instance, connect = instance.connect.bind(instance)
+      let fail = true
+      instance.connect = async () => { const writer = await connect(), run = writer.run.bind(writer); writer.run = (async (...args: Parameters<typeof run>) => { if (fail && String(args[0]).startsWith('INSERT INTO poll_data')) throw Error('PRIVATE close storage'); return run(...args) }) as typeof run; return writer }
+      store.write([{ objectId: 1, area: 'holding-register', address: 0, timestamp: new Date().toISOString(), rawValue: 1, quality: 'good', batchId: 'synthetic', slaveId: 1 }]); await assert.rejects(store.flush(), /PRIVATE/)
+      closing = cfg.close(); assert.equal(cfg.close(), closing); await held; assert.equal(db.isOpen, true, 'cleanup gate leaves physical connection open')
+      let response = await app.inject('/ready/core'); assert.equal(response.statusCode, 503); assert.equal(response.json().configuration.failure, 'lifecycle-unavailable'); assert.equal(response.json().storage.failure, 'flush-failed'); assert(!response.body.includes('PRIVATE'))
+      fail = false; await store.flush(); instance.connect = connect
+      response = await app.inject('/ready/core'); assert.equal(response.statusCode, 503); assert.equal(response.json().storage.phase, 'ready'); assert.equal(response.json().configuration.phase, 'unavailable'); assert.equal((await app.inject('/ready')).statusCode, 200)
+      assert.throws(() => cfg.reopen(':memory:'), /closing or closed/); assert.equal((await app.inject('/ready/core')).statusCode, 503)
+      release(); await closing; assert.equal(db.isOpen, false); assert.equal((await app.inject('/ready/core')).statusCode, 503)
+    } finally { release(); await (closing ?? cfg.close()); await stop(); await ctx.fiber.dispose(); await app.close(); await store.close() }
+  })
+  await check('completed-observation-is-not-a-response-delivery-lease', async () => {
+    const cfg = new configPlugin.ConfigStore({ dbPath: ':memory:' }), app = Fastify()
+    let observed!: () => void, release!: () => void, first = true
+    const held = new Promise<void>(done => { observed = done }), released = new Promise<void>(done => { release = done })
+    app.addHook('onSend', async (_request, reply, payload) => { if (first && reply.statusCode === 200) { first = false; observed(); await released }; return payload })
+    register(app, () => ({ getSamplePersistenceStatus: () => goodStorage }), () => cfg)
+    let response: Promise<Awaited<ReturnType<typeof app.inject>>> | undefined
+    try {
+      response = Promise.resolve(app.inject('/ready/core')); await held; await cfg.close()
+      const after = await app.inject('/ready/core'); assert.equal(after.statusCode, 503); assert.equal(after.json().configuration.phase, 'unavailable')
+      release(); const before = await response; assert.equal(before.statusCode, 200); assert.equal(before.json().configuration.phase, 'ready'); assert.equal(before.headers['cache-control'], 'no-store')
+    } finally { release(); await response; await app.close(); await cfg.close() }
+  })
+  await check('real-plugin-dependency-unload-replacement-and-api-disposal', async () => {
+    const dir = directory(), ctx = new Context(), apps: FastifyInstance[] = [], stores: storePlugin.DuckDBStore[] = []
+    try {
+      await ctx.plugin(configPlugin, { dbPath: join(dir, 'synthetic.sqlite') })
+      await ctx.plugin({ name: 'inert-core-replacement-services', apply(context: Context) { for (const name of ['poller', 'sink', 'importer', 'ota'] as const) context.provide(name, {} as never) } })
+      const options = { dbPath: ':memory:', flushIntervalMs: 0, flushBatchSize: 1000, retentionSeconds: 0, retentionCheckMs: 0 }
+      let fork = await ctx.plugin(storePlugin, options)
+      const api = await ctx.plugin(apiPlugin, { host: '127.0.0.1', port: 0, dataDir: dir })
+      const current = async () => { const app = ctx.get('api', false), store = ctx.get('store', false); assert(app && store); apps.push(app); stores.push(store); const startup = store as unknown as { ready: Promise<void>; mutations: Promise<void> }; await startup.ready; await startup.mutations; await app.ready(); assert.equal((await app.inject('/ready/core')).statusCode, 200); return app }
+      await api.await(); const old = await current(); await fork.dispose(); assert.equal(ctx.get('api', false), undefined)
+      for (const route of ['/ready/core', '/ready']) await assert.rejects(old.inject(route), { code: 'FST_ERR_REOPENED_CLOSE_SERVER' })
+      fork = await ctx.plugin(storePlugin, options); await api; const fresh = await current(); assert.notEqual(fresh, old)
+      await assert.rejects(old.inject('/ready/core'), { code: 'FST_ERR_REOPENED_CLOSE_SERVER' })
+      await api.dispose(); assert.equal(ctx.get('api', false), undefined); await assert.rejects(fresh.inject('/ready/core'), { code: 'FST_ERR_REOPENED_CLOSE_SERVER' }); await api.dispose(); await fork.dispose()
+    } finally { await ctx.fiber.dispose(); for (const app of apps) await app.close(); for (const store of stores) await store.close(); remove(dir) }
   })
   await tick(); assert.deepEqual(unhandled, []); assert.deepEqual(denied, []); assert.deepEqual(failures, [])
 } finally { net.Server.prototype.listen = listen; net.Socket.prototype.connect = connect; globalThis.fetch = fetch; process.off('unhandledRejection', collect) }
