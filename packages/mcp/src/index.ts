@@ -718,6 +718,7 @@ export function apply(ctx: Context, config: Config): void {
             createdTransport = t; ownedTransports.add(t)
             t.onclose = () => { ownedTransports.delete(t); const sid = t.sessionId; if (sid) transports.delete(sid) }
             await srv.connect(t)
+            if (req.aborted || res.destroyed) return
             if (closing) { res.statusCode = 503; res.end(); return }
             transport = t
           }

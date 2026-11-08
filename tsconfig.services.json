@@ -56,6 +56,7 @@
     "scripts/test-api-types.ts",
     "scripts/test-mcp-types.ts",
     "scripts/test-mcp-lifecycle.ts",
+    "scripts/test-mcp-disconnect.ts",
     "scripts/fixtures/draft-focus-model.ts",
     "scripts/fixtures/unload-events.ts",
     "scripts/fixtures/draft-navigation-driver.ts",
