@@ -13,6 +13,7 @@ import { parsePointSettingsUpdate } from '../apps/web/src/point-settings.ts'
 import { isBinType, isHexType, registerWidth } from '../packages/core/src/codec.ts'
 import { PointDraftDiscard } from '../apps/web/src/PointDraftDiscard.tsx'
 import { PointEnumEditor } from '../apps/web/src/PointEnumEditor.tsx'
+import { hookDriver } from './fixtures/component-hook-driver.ts'
 import { DeferredResource } from '../apps/web/src/deferred-resource.ts'
 import { DeferredPointDiagnostics, DeferredPointDiagnosticsView, pointDiagnosticsResource, type PointDiagnosticsProps, type PointDiagnosticsRenderer } from '../apps/web/src/DeferredPointDiagnostics.tsx'
 
@@ -120,21 +121,6 @@ await check('actual module exports load without mounting report effects or chang
 // Small deterministic hook driver: actual component/effect/event bodies, not React DOM.
 // Setters after disposal are counted; all effects are explicitly cleaned up.
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
-const elements = (node: any): any[] => Array.isArray(node) ? node.flatMap(elements) : React.isValidElement(node) ? [node, ...elements((node.props as any).children)] : []
-function hookDriver(file: string, name: string, scope: Record<string, unknown>, initialProps: any) {
-  const fileSource = ts.createSourceFile(file, readFileSync(new URL('../apps/web/src/' + file, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-  const declaration = find(fileSource, node => ts.isFunctionDeclaration(node) && node.name?.text === name)!
-  const cells: any[] = [], dependencies: any[][] = [], cleanup = new Map<number, () => void>()
-  let cursor = 0, effects: Array<() => void> = [], tree: any, currentProps = initialProps, disposed = false, lateWrites = 0
-  const useState = (init: any) => { const id = cursor++; if (!(id in cells)) cells[id] = typeof init === 'function' ? init() : init; return [cells[id], (value: any) => { if (disposed) { lateWrites++; return }; cells[id] = typeof value === 'function' ? value(cells[id]) : value }] }
-  const useRef = (init: any) => useState(() => ({ current: init }))[0]
-  const useEffect = (effect: () => void | (() => void), deps: any[]) => { const id = cursor++; if (!dependencies[id] || deps.some((v, i) => !Object.is(v, dependencies[id][i]))) effects.push(() => { cleanup.get(id)?.(); const next = effect(); if (next) cleanup.set(id, next); else cleanup.delete(id) }); dependencies[id] = deps }
-  const env = { React, useState, useRef, useEffect, useId: () => useState('mock-title')[0], ...scope }
-  const component = new Function(...Object.keys(env), compile('return (' + declaration.getText(fileSource).replace(/^export /, '') + ')'))(...Object.values(env))
-  const render = (next = currentProps) => { assert(!disposed); currentProps = next; cursor = 0; effects = []; tree = component(currentProps); for (const effect of effects) effect(); return tree }
-  render()
-  return { render, get tree() { return tree }, get lateWrites() { return lateWrites }, dispose() { if (disposed) return; disposed = true; for (const fn of cleanup.values()) fn(); cleanup.clear() }, one(type: any, predicate: (props: any) => boolean = () => true) { const item = elements(tree).find(node => node.type === type && predicate(node.props)); assert(item, 'control missing'); return item } }
-}
 const fakeDocument = { activeElement: { isConnected: true, focus() {} } }
 const settingsScope = { isBinType, isHexType, registerWidth, parsePointSettingsUpdate, createPointEnumDraft, updatePointEnumDraft, pointDraftFields, pointDraftChanged, PointDraftCloseGuard, PointDraftDiscard, PointEnumEditor, document: fakeDocument }
 await check('failed interface retry, actual report effect and device A/B/A late-response recovery compose safely', async () => {
