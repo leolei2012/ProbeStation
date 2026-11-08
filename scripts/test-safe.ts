@@ -8,6 +8,7 @@ tests.push('database-upgrade', 'backup-retention', 'retention-triggers', 'histor
 tests.push('mcp-lifecycle')
 tests.push('mcp-disconnect')
 tests.push('mcp-write-outcome')
+tests.push('mcp-auxiliary')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {

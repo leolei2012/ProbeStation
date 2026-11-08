@@ -55,6 +55,16 @@ export function apply(ctx: Context, config: Config): void {
     const task = Promise.resolve().then(() => { if (closing) throw new Error('MCP is closing or closed'); return action() })
     active.add(task); void task.then(() => active.delete(task), () => active.delete(task)); return task
   }
+  const logCompleted = (message: string): void => {
+    try { cfg.log('INFO', 'mcp', message) }
+    catch {
+      try { ctx.logger('mcp').warn('操作调用已完成，但操作日志结果待核实；勿因日志故障重复操作。') } catch { /* Diagnostics cannot change a completed operation. */ }
+    }
+  }
+  const syncCommittedDevice = async (): Promise<void> => {
+    try { await ctx.get('deviceSlaves', false)?.sync() }
+    catch (error) { throw new Error('配置操作已提交，但从站运行时同步未完成；请核对当前配置和运行状态，勿重复操作。', { cause: error }) }
+  }
   const timeRange = (start: string, end: string) => {
     if (!/(Z|[+-]\d{2}:\d{2})$/i.test(start) || !/(Z|[+-]\d{2}:\d{2})$/i.test(end)) throw new Error('时间必须为带时区的 ISO 字符串')
     const from = new Date(start), to = new Date(end)
@@ -126,8 +136,8 @@ export function apply(ctx: Context, config: Config): void {
         port = args.port ?? 8899
       }
       const obj = cfg.createObject(name, ip, port, args.mode ?? 'master', conn)
-      await ctx.get('deviceSlaves', false)?.sync()
-      cfg.log('INFO', 'mcp', 'create device ' + obj.id + ' ' + name)
+      await syncCommittedDevice()
+      logCompleted('create device ' + obj.id + ' ' + name)
       // createObject 已 emit config/changed，poller 若在跑会自动 refreshSchedule 纳入该设备
       return { content: [{ type: 'text', text: JSON.stringify(obj) }] }
     })
@@ -138,8 +148,8 @@ export function apply(ctx: Context, config: Config): void {
     }, async args => {
       if (!cfg.getObject(args.device_id)) throw new Error('设备不存在')
       cfg.deleteObject(args.device_id)
-      await ctx.get('deviceSlaves', false)?.sync()
-      cfg.log('INFO', 'mcp', 'delete device ' + args.device_id)
+      await syncCommittedDevice()
+      logCompleted('delete device ' + args.device_id)
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, device_id: args.device_id, history_preserved: true }) }] }
     })
 
@@ -190,8 +200,8 @@ export function apply(ctx: Context, config: Config): void {
     }, async (args) => {
       if (!cfg.getObject(args.device_id)) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
       const updated = cfg.updateObject(args.device_id, { isActive: args.active ? 1 : 0 })
-      await ctx.get('deviceSlaves', false)?.sync()
-      cfg.log('INFO', 'mcp', (args.active ? 'connect' : 'disconnect') + ' device ' + args.device_id)
+      await syncCommittedDevice()
+      logCompleted((args.active ? 'connect' : 'disconnect') + ' device ' + args.device_id)
       return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
     })
 
@@ -205,7 +215,7 @@ export function apply(ctx: Context, config: Config): void {
         return { content: [{ type: 'text', text: 'poll_interval_ms must be an integer >= 1' }], isError: true }
       }
       cfg.updateObject(args.device_id, { pollIntervalMs: args.poll_interval_ms })
-      cfg.log('INFO', 'mcp', 'set poll interval ' + args.poll_interval_ms + 'ms for device ' + args.device_id)
+      logCompleted('set poll interval ' + args.poll_interval_ms + 'ms for device ' + args.device_id)
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, device_id: args.device_id, poll_interval_ms: args.poll_interval_ms }) }] }
     })
 
@@ -215,7 +225,7 @@ export function apply(ctx: Context, config: Config): void {
     }, async (args) => {
       if (!cfg.getGroup(args.group_id)) return { content: [{ type: 'text', text: 'group not found' }], isError: true }
       const updated = cfg.updateGroup(args.group_id, { isActive: args.active ? 1 : 0 })
-      cfg.log('INFO', 'mcp', (args.active ? 'resume' : 'pause') + ' group ' + args.group_id)
+      logCompleted((args.active ? 'resume' : 'pause') + ' group ' + args.group_id)
       return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
     })
 
@@ -359,7 +369,7 @@ export function apply(ctx: Context, config: Config): void {
     }, async args => {
       const range = timeRange(args.start, args.end)
       const result = await store.deleteHistory(args.device_id, range.start, range.end, args.dry_run ?? true)
-      if (!result.dryRun) cfg.log('INFO', 'mcp', `delete history device ${args.device_id}: ${range.start} - ${range.end}, ${result.affectedRows} rows`)
+      if (!result.dryRun) logCompleted(`delete history device ${args.device_id}: ${range.start} - ${range.end}, ${result.affectedRows} rows`)
       return { content: [{ type: 'text', text: JSON.stringify({ device_id: args.device_id, ...range, dry_run: result.dryRun, affected_rows: result.affectedRows }) }] }
     })
 
@@ -371,7 +381,7 @@ export function apply(ctx: Context, config: Config): void {
       const device = cfg.getObject(args.device_id)
       const g = cfg.createGroup(args.device_id, args.name, args.function_code ?? 3, args.start_address, args.quantity, 'read', device.mode === 'slave' ? device.slaveId : args.slave_id ?? 1)
       for (let i = 0; i < g.quantity; i++) cfg.createRegister(g.id, g.objectId, null, g.functionCode, g.startAddress + i, 'int16')
-      cfg.log('INFO', 'mcp', 'create group ' + g.id + ' "' + g.name + '"')
+      logCompleted('create group ' + g.id + ' "' + g.name + '"')
       return { content: [{ type: 'text', text: JSON.stringify(g) }] }
     })
 
@@ -444,7 +454,7 @@ export function apply(ctx: Context, config: Config): void {
         offset: args.offset ?? 0,
         enumJson: args.enum ? JSON.stringify(args.enum) : null,
       })
-      cfg.log('INFO', 'mcp', 'create register ' + r.id)
+      logCompleted('create register ' + r.id)
       return { content: [{ type: 'text', text: JSON.stringify(r) }] }
     })
 
@@ -454,7 +464,7 @@ export function apply(ctx: Context, config: Config): void {
     }, async (args) => {
       if (!cfg.getRegister(args.register_id)) return { content: [{ type: 'text', text: 'register not found' }], isError: true }
       cfg.deleteRegister(args.register_id)
-      cfg.log('INFO', 'mcp', 'delete register ' + args.register_id)
+      logCompleted('delete register ' + args.register_id)
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, register_id: args.register_id }) }] }
     })
 
@@ -464,7 +474,7 @@ export function apply(ctx: Context, config: Config): void {
     }, async (args) => {
       if (!cfg.getGroup(args.group_id)) return { content: [{ type: 'text', text: 'group not found' }], isError: true }
       cfg.deleteGroup(args.group_id)
-      cfg.log('INFO', 'mcp', 'delete group ' + args.group_id)
+      logCompleted('delete group ' + args.group_id)
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, group_id: args.group_id }) }] }
     })
 
@@ -506,7 +516,7 @@ export function apply(ctx: Context, config: Config): void {
       } else {
         store.setRetentionSeconds(args.retention_seconds)
       }
-      cfg.log('INFO', 'mcp', 'set data retention ' + args.retention_seconds + 's' + (args.device_id != null ? ' for device ' + args.device_id : ' (global)'))
+      logCompleted('set data retention ' + args.retention_seconds + 's' + (args.device_id != null ? ' for device ' + args.device_id : ' (global)'))
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] }
     })
 
