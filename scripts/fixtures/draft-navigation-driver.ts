@@ -5,6 +5,8 @@ import ts from 'typescript'
 import { hookDriver } from './component-hook-driver.ts'
 import { DraftNavigation, type DraftRegistration } from '../../apps/web/src/draft-navigation.ts'
 import { LatestConfigRead } from '../../apps/web/src/config-read.ts'
+import { ActivationUncertainError } from '../../apps/web/src/activation-settings-save.ts'
+import { DetachedEditorNotice } from '../../apps/web/src/RetainedDraftNotice.tsx'
 import { captureDeviceEditBaseline } from '../../packages/core/src/device-settings-edit.ts'
 import { deviceDraftFields, deviceDraftChanged } from '../../apps/web/src/device-draft-close.ts'
 import { pointDraftFields, pointDraftChanged, PointDraftCloseGuard } from '../../apps/web/src/point-draft-close.ts'
@@ -33,7 +35,7 @@ const refreshRead = find(refreshDevices, node => ts.isCallExpression(node) && no
 export const syntheticDevice = { id: 1, name: 'synthetic A', mode: 'master', ip: 'mock.invalid', port: 502, transport: 'tcp', serialPath: 'MOCK_PORT', baudRate: 9600, parity: 'even', stopBits: 1, dataBits: 8, flowControl: 'none', slaveId: 1, pollIntervalMs: 1000, timeoutMs: 3000 }
 const t = (key: string) => key === 'cancel' ? '取消' : key
 const document = { activeElement: { isConnected: true, focus() {} } }
-const base = { PointDraftCloseGuard, PointDraftDiscard, document }
+const base = { PointDraftCloseGuard, PointDraftDiscard, DetachedEditorNotice, document }
 const pointScope = { ...base, pointDraftFields, pointDraftChanged, createPointEnumDraft, updatePointEnumDraft, parsePointSettingsUpdate, isBinType, isHexType, registerWidth, PointEnumEditor }
 const deviceScope = { ...base, captureDeviceEditBaseline, deviceDraftFields, deviceDraftChanged, SerialPortPicker: () => null }
 export type EditorKind = 'point' | 'device'
@@ -52,7 +54,7 @@ export function draftEditor(kind: EditorKind, draftScope?: DraftRegistration, on
   }
 }
 export function draftSurface(options: { english?: boolean; slave?: boolean; mobile?: boolean } = {}) {
-  let selectedId = 1, view = 'monitor', target: any = null, tab = 0, collapsed = 0, cancelledHistory = 0, answer: boolean | Error = false
+  let selectedId: number | null = 1, view = 'monitor', target: any = null, tab = 0, collapsed = 0, cancelledHistory = 0, answer: boolean | Error = false
   let devices = [{ ...syntheticDevice, mode: options.slave ? 'slave' : 'master' }, { ...syntheticDevice, id: 2, name: 'synthetic B' }]
   const prompts: string[] = [], notices: Array<{ error: boolean; text: string }> = [], changes: string[] = [], sequence = { current: 0 }
   const drafts = evaluate(variable('draftNavigation'), { useMemo: (fn: () => unknown) => fn(), DraftNavigation }) as DraftNavigation
@@ -60,8 +62,10 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
   let records = drafts.retained()
   const setRetainedDrafts = (next: typeof records) => { records = next }
   const acceptDevices = { draftNavigation: drafts, setRetainedDrafts, setDevices(next: typeof devices) { devices = next }, setDeviceConnected() {}, setDeviceLoadError() {} }
-  const setters = { setSelectedId(id: number) { changes.push('device'); selectedId = id }, setView(next: string) { changes.push('view'); view = next }, setDataTarget(next: unknown) { changes.push('target'); target = next } }
+  const setters = { setSelectedId(id: number | null | ((current: number | null) => number | null)) { changes.push('device'); selectedId = typeof id === 'function' ? id(selectedId) : id }, setView(next: string) { changes.push('view'); view = next }, setDataTarget(next: unknown) { changes.push('target'); target = next } }
   const window = { innerWidth: options.mobile ? 640 : 1200, confirm(text: string) { prompts.push(text); if (answer instanceof Error) throw answer; return answer } }
+  const operationNode = find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === 'useOperation')!
+  const operation = evaluate(operationNode, { useState: (value: unknown) => [value, () => {}], useRef: (value: unknown) => ({ current: value }), showOperationNotice: (value: { error: boolean; text: string }) => notices.push(value), ActivationUncertainError })(t)
   const confirmDraftLeave = (...args: unknown[]) => evaluate(variable('confirmDraftLeave'), { draftNavigation: drafts, lang: options.english ? 'en' : 'zh', window, operation: { setNotice: (value: { error: boolean; text: string }) => notices.push(value) } })(...args)
   const canNavigate = (...args: unknown[]) => evaluate(variable('canNavigate'), { selectedId, view, devices, confirmDraftLeave })(...args)
   const discardRetainedDraft = (id: number) => evaluate(variable('discardRetainedDraft'), { draftNavigation: drafts, setRetainedDrafts, lang: options.english ? 'en' : 'zh', window })(id)
@@ -86,6 +90,9 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
       await pending
     },
     cancelRefresh() { read.cancel() },
+    deleteDevice(id: number, send: (url: string) => Promise<unknown>, refresh: () => void = () => {}) {
+      return evaluate(variable('deleteDevice'), { ...setters, devices, selectedId, selectedIdRef: { get current() { return selectedId } }, draftNavigation: drafts, setRetainedDrafts, window, t, lang: options.english ? 'en' : 'zh', operation, api: { del: send }, refreshDevices: refresh })(id) as Promise<void>
+    },
     retentionNotice() {
       const notice = find(app, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'RetainedDraftNotice')!
       return evaluate(notice, { React, RetainedDraftNotice: 'mock-retained-notice', retainedDrafts: records, lang: options.english ? 'en' : 'zh', discardRetainedDraft }) as React.ReactElement<any>

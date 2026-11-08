@@ -194,6 +194,7 @@ try {
   const formExpected = capture(), formSettings = cfg.getRegister(point.id)!, closeGuard = new PointDraftCloseGuard()
   let formError = '', busy = false, closed = 0, formRequests = 0, successfulSaves = 0
   const env = {
+    draftScope: undefined,
     detached: { current: false },
     lock: { current: false }, closeGuard, dataType: formSettings.dataType, unit: 'form committed response lost', factor: '0', offset: String(formSettings.offset), decimalPlaces: formSettings.decimalPlaces == null ? '' : String(formSettings.decimalPlaces),
     enums: createPointEnumDraft(formSettings.enumJson), settings: formSettings, available: group.quantity, t: (key: string) => key, parsePointSettingsUpdate,

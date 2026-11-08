@@ -364,11 +364,11 @@ function useOperation(t: T) {
   const [busy, setBusy] = useState(false)
   const locked = useRef(false)
   const setNotice = (notice: { error: boolean; text: string }) => showOperationNotice(notice, t('dismiss'))
-  const run = async (action: () => Promise<unknown>, successText?: (result: unknown) => string) => {
+  const run = async (action: () => Promise<unknown>, successText?: (result: unknown) => string, errorText?: (error: unknown) => string) => {
     if (locked.current) return false
     locked.current = true; setBusy(true)
     try { const result = await action(); setNotice({ error: false, text: successText ? successText(result) : t('operationOk') }); return true }
-    catch (error) { setNotice({ error: true, text: error instanceof ActivationUncertainError ? error.message : t('operationFailed') + ': ' + (error instanceof Error ? error.message : String(error)) }); return false }
+    catch (error) { setNotice({ error: true, text: errorText ? errorText(error) : error instanceof ActivationUncertainError ? error.message : t('operationFailed') + ': ' + (error instanceof Error ? error.message : String(error)) }); return false }
     finally { locked.current = false; setBusy(false) }
   }
   return { busy, setNotice, run }
@@ -675,12 +675,21 @@ export default function App() {
   }, [refreshDevices])
   const deleteDevice = async (id: number) => {
     const device = devices.find((d) => d.id === id)
-    if (!window.confirm(t('confirmDeleteDevice').replace('{name}', device?.name ?? String(id)))) return
+    const waiting = lang === 'en' ? 'Removal is pending or an editor/save/capture is unverified. No new deletion started; check records and results.' : '移除进行中，或编辑器/保存/留存待核实；本次未发新删除，请先核对记录与结果。'
+    if (draftNavigation.removalPending(id)) { operation.setNotice({ error: true, text: waiting }); return }
+    if (!draftNavigation.allow(id, 'all', () => true, () => operation.setNotice({ error: true, text: waiting }))) return
+    try { if (window.confirm(t('confirmDeleteDevice').replace('{name}', device?.name ?? String(id)) + (lang === 'en' ? '\nDrafts stay read-only in this page; old editors stay disabled on failure. Cancel keeps editing.' : '\n草稿先只读留存在本页；失败时旧编辑器也停用。取消继续编辑。')) !== true) return } catch { return }
+    let phase = 0
     await operation.run(async () => {
-      await api.del('/api/monitor_objects/' + id)
-      if (selectedId === id) setSelectedId(null)
-      refreshDevices()
-    })
+      const prepared = draftNavigation.beginRemoval(id)
+      setRetainedDrafts(draftNavigation.retained())
+      if (!prepared) throw new Error(waiting)
+      try {
+        phase = 1; await api.del('/api/monitor_objects/' + id); phase = 2
+        setSelectedId(current => current === id ? null : current)
+        refreshDevices()
+      } finally { draftNavigation.endRemoval(id); setRetainedDrafts(draftNavigation.retained()) }
+    }, undefined, error => phase === 0 || error instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(error.message) ? (error instanceof Error ? error.message : String(error)) : phase === 2 ? (lang === 'en' ? 'Deletion returned success; page refresh failed. Check the device list; do not repeat automatically.' : '删除请求返回成功，但页面未同步；请核对设备清单，勿自动重删。') : (lang === 'en' ? 'Deletion outcome unverified; it may have applied. Check capture results and configuration; do not repeat automatically.' : '删除结果待核实，可能已生效；请核对本页留存及设备配置，勿自动重删。'))
   }
 
   const selected = devices.find((d) => d.id === selectedId) ?? null

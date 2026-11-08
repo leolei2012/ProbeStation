@@ -1,4 +1,5 @@
 import type { DraftRegistration } from './draft-navigation'
+import { DetachedEditorNotice } from './RetainedDraftNotice'
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { captureDeviceEditBaseline, type DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { SerialPortPicker } from './SerialPortPicker'
@@ -31,11 +32,12 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher, draftSco
   const [closeGuard] = useState(() => new PointDraftCloseGuard()), [discarding, setDiscarding] = useState(false)
   const resumeButton = useRef<HTMLButtonElement>(null), closeTrigger = useRef<HTMLElement | null>(null), restoreFocus = useRef(false)
   const dirty = deviceDraftChanged(opening.fields, { name, mode, transport, ip, port, serialPath, baudRate, parity, stopBits, flowControl, slaveId, pollInterval, timeout, dataBits })
-  const detached = useRef(false)
+  const detached = useRef(draftScope?.removalPending?.() ?? false)
+  const [, notifyDetached] = useState(false)
   const navigationState = useRef(() => ({ dirty: false, busy: false }))
   navigationState.current = () => ({ dirty: !detached.current && dirty && (closeGuard.canSave || closeGuard.confirming), busy: locked.current })
   const snapshotState = useRef(() => ({ context: '', text: '' }))
-  snapshotState.current = () => { detached.current = true; return { context: opening.fields.name, text: JSON.stringify({ opening: opening.fields, fields: { name, mode, transport, ip, port, serialPath, baudRate, parity, stopBits, flowControl, slaveId, pollInterval, timeout, dataBits } }, null, 2) } }
+  snapshotState.current = () => { detached.current = true; notifyDetached(true); return { context: opening.fields.name, text: JSON.stringify({ opening: opening.fields, fields: { name, mode, transport, ip, port, serialPath, baudRate, parity, stopBits, flowControl, slaveId, pollInterval, timeout, dataBits } }, null, 2) } }
   useEffect(() => draftScope?.register('device', () => navigationState.current(), () => snapshotState.current()), [draftScope])
   const closeAction = (action: 'none' | 'prompt' | 'resume' | 'close') => {
     if (action === 'none') return
@@ -47,6 +49,7 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher, draftSco
   useEffect(() => { if (discarding) resumeButton.current?.focus(); else if (restoreFocus.current) { restoreFocus.current = false; if (closeTrigger.current?.isConnected) closeTrigger.current.focus() } }, [discarding])
   const requestClose = () => closeAction(closeGuard.request(!detached.current && dirty, locked.current))
   const save = async () => {
+    if (draftScope?.removalPending?.()) { detached.current = true; notifyDetached(true); return }
     if (detached.current || locked.current || !closeGuard.canSave || initial && !opening.expected) return
     locked.current = true; setBusy(true); setError('')
     try { await onSave({ mode, name: name.trim(), ip: ip.trim(), port: transport === 'tcp' ? Number(port) : opening.expected?.port ?? 8899, transport, serialPath: serialPath.trim(), baudRate: Number(baudRate), parity, stopBits: Number(stopBits), dataBits: Number(dataBits), flowControl, slaveId: Number(slaveId), pollIntervalMs: Number(pollInterval), timeoutMs: Number(timeout) }, opening.expected) }
@@ -76,7 +79,7 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher, draftSco
         <div className="device-modal-body">
           {initial && <p className="device-field-hint">{t('cancel') === 'Cancel' ? 'Saving checks the opening configuration. Conflicts reject the save and keep drafts; record changes, close and refresh before editing again. Saved configuration may have separate runtime warnings.' : '保存时核对打开时的配置；冲突会拒绝保存并保留草稿。请先记录修改，关闭并刷新后重新编辑。已保存配置的运行状态警告会单独提示。'}</p>}
           {error && <div className="write-msg error" role="alert">{error}</div>}
-          {detached.current && <p role="alert">{t('cancel') === 'Cancel' ? 'This editor was detached after the device disappeared. Editing and new saves are disabled. See the read-only page record; close and review the current configuration before opening a new editor.' : '设备曾从清单移除，此旧编辑器已停用编辑与新保存。请查看页面只读记录，关闭并核对当前配置后重新打开编辑器。'}</p>}
+          {detached.current && <DetachedEditorNotice english={t('cancel') === 'Cancel'} />}
 
           <fieldset disabled={busy || discarding || detached.current}>
             <legend>基本信息 / General</legend>

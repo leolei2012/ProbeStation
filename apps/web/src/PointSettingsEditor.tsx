@@ -1,4 +1,5 @@
 import type { DraftRegistration } from './draft-navigation'
+import { DetachedEditorNotice } from './RetainedDraftNotice'
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec'
 import { parsePointSettingsUpdate, type PointSettings, type PointSettingsUpdate } from './point-settings'
@@ -32,12 +33,13 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
   const resumeButton = useRef<HTMLButtonElement>(null), closeTrigger = useRef<HTMLElement | null>(null)
   const restoreFocus = useRef(false)
   const dirty = pointDraftChanged(opening, { dataType, unit, factor, offset, decimalPlaces }, enums)
-  const detached = useRef(false)
+  const detached = useRef(draftScope?.removalPending?.() ?? false)
+  const [, notifyDetached] = useState(false)
   const navigationState = useRef(() => ({ dirty: false, busy: false }))
   navigationState.current = () => ({ dirty: !detached.current && dirty && (closeGuard.canSave || closeGuard.confirming), busy: lock.current })
   const [draftContext] = useState(() => ({ name, address }))
   const snapshotState = useRef(() => ({ context: '', text: '' }))
-  snapshotState.current = () => { detached.current = true; return { context: draftContext.name + ' · ' + draftContext.address, text: JSON.stringify({ context: draftContext, opening, fields: { dataType, unit, factor, offset, decimalPlaces }, enums: { original: enums.original, intent: enums.intent, rows: enums.rows.map(row => ({ value: row.value, label: row.label })) } }, null, 2) } }
+  snapshotState.current = () => { detached.current = true; notifyDetached(true); return { context: draftContext.name + ' · ' + draftContext.address, text: JSON.stringify({ context: draftContext, opening, fields: { dataType, unit, factor, offset, decimalPlaces }, enums: { original: enums.original, intent: enums.intent, rows: enums.rows.map(row => ({ value: row.value, label: row.label })) } }, null, 2) } }
   useEffect(() => draftScope?.register('live', () => navigationState.current(), () => snapshotState.current()), [draftScope])
   const closeAction = (action: PointCloseAction) => {
     if (action === 'none') return
@@ -49,6 +51,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
   useEffect(() => { if (discarding) resumeButton.current?.focus(); else if (restoreFocus.current) { restoreFocus.current = false; if (closeTrigger.current?.isConnected) closeTrigger.current.focus() } }, [discarding])
   const requestClose = () => closeAction(closeGuard.request(!detached.current && dirty, lock.current))
   const save = async () => {
+    if (draftScope?.removalPending?.()) { detached.current = true; notifyDetached(true); return }
     if (detached.current || lock.current || !closeGuard.canSave) return
     let next: PointSettingsUpdate
     try { next = parsePointSettingsUpdate({ dataType, unit, factor, offset, decimalPlaces }, enums, settings.dataType, available, t) }
@@ -63,7 +66,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
       <div className="modal-head"><h3 id={titleId}>{t('pointSettings')}</h3><button className="modal-close" type="button" aria-label={t('cancel')} disabled={busy || discarding} onClick={requestClose}>×</button></div>
       <p className="enum-context">{name} · {t('colAddr')} {address}</p>
       {guarded && <p className="enum-hint" role="note">{t('cancel') === 'Cancel' ? 'Saving checks the opening values and source. Conflicts are rejected and drafts kept; record your changes, close and refresh before editing again. There is no automatic overwrite.' : '保存时核对打开时的字段和来源；冲突会拒绝保存并保留草稿。请先记录修改，关闭并刷新配置后重新编辑，不会自动覆盖。'}</p>}
-      {detached.current && <p role="alert">{t('cancel') === 'Cancel' ? 'This editor was detached after the device disappeared. Editing and new saves are disabled. See the read-only page record; close and review the current configuration before opening a new editor.' : '设备曾从清单移除，此旧编辑器已停用编辑与新保存。请查看页面只读记录，关闭并核对当前配置后重新打开编辑器。'}</p>}
+      {detached.current && <DetachedEditorNotice english={t('cancel') === 'Cancel'} />}
       <fieldset disabled={busy || discarding || detached.current} className="point-draft-fields" aria-label={t('cancel') === 'Cancel' ? 'Point settings draft' : '点位设置草稿'}>
       <label>{t('colType')}<select autoFocus aria-label={t('colType')} value={dataType} disabled={busy} onChange={e => { setDataType(e.target.value); setError('') }}>
         {typeGroups.map(group => <optgroup key={group.key} label={t(group.key)}>{group.types.map(type => <option key={type} value={type} disabled={type !== settings.dataType && registerWidth(type) > available}>{type}</option>)}</optgroup>)}
