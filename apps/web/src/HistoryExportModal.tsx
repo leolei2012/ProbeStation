@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { HistoryExportContextChangedError, historyExportRangeLabel, type HistoryExportRequest } from './history-export'
-import { HistoryExportLimitError } from '../../../packages/core/src/history-export-policy'
+import { HISTORY_XLSX_POINT_LIMIT, HistoryExportLimitError } from '../../../packages/core/src/history-export-policy'
 import { HistoryQueryTimeoutError, runHistoryQuery } from './history-query'
 
 export function HistoryExportModal({ request, t, onClose, onPick, contextCurrent = true }: {
@@ -44,7 +44,11 @@ export function HistoryExportModal({ request, t, onClose, onPick, contextCurrent
       <h3 id={titleId}>{t(request.scope === 'viewport' ? 'histExportViewport' : 'histExportFull')}</h3>
       <p className="history-export-range">{historyExportRangeLabel(request)}</p>
       <p>{t('histExportSelected').replace('{n}', String(request.registerIds.length))}</p>
-      <p id={hintId} className="chart-hint">{t('histExportHint')}</p>
+      <div id={hintId}>
+        <p className="chart-hint">{t('histExportHint')}</p>
+        <p className="chart-hint">{t('histExportCapacityNote').replace('{n}', String(HISTORY_XLSX_POINT_LIMIT))}</p>
+        <p className="chart-hint">{t('histExportCancellationNote')}</p>
+      </div>
       <p className="chart-hint">{t('histExportDefinitionNote')}</p>
       {blocked && <p role="alert">{t('histExportContextChanged')}</p>}
       {busy && <p role="status">{t('histExportPreparing')}</p>}

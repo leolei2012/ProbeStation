@@ -8,7 +8,7 @@ import ExcelJS from 'exceljs'
 import { Sink } from '../packages/sink/src/index.ts'
 import { registerHistoryExport } from '../packages/api/src/history-export.ts'
 import { captureHistoryExport, downloadHistoryExport, HistoryExportContextChangedError, historyExportRangeLabel } from '../apps/web/src/history-export.ts'
-import { HistoryExportLimitError } from '../packages/core/src/history-export-policy.ts'
+import { HISTORY_XLSX_POINT_LIMIT, HistoryExportLimitError } from '../packages/core/src/history-export-policy.ts'
 import { runHistoryQuery, HistoryQueryTimeoutError } from '../apps/web/src/history-query.ts'
 import { startHistoryQuery, historyQueryPlan } from '../apps/web/src/history-query-task.ts'
 import { reduceHistoryRead, historyReadView, type HistoryReadState } from '../apps/web/src/history-read-context.ts'
@@ -35,7 +35,7 @@ function driver(pick: (format: 'csv' | 'xlsx', signal: AbortSignal) => Promise<v
   const useState = (initial: any) => { const index = cursor++; if (!(index in cells)) cells[index] = typeof initial === 'function' ? initial() : initial; return [cells[index], (value: any) => { if (!mounted) { lateUpdates++; return }; const next = typeof value === 'function' ? value(cells[index]) : value; if (!Object.is(next, cells[index])) { cells[index] = next; dirty = true } }] }
   const useRef = (initial: any) => useState(() => ({ current: initial }))[0]
   const useEffect = (effect: () => void | (() => void), next: any[]) => { const index = cursor++; if (!deps[index] || next.some((value, i) => !Object.is(value, deps[index][i]))) effects.push(() => { cleanups.get(index)?.(); const cleanup = effect(); if (cleanup) cleanups.set(index, cleanup) }); deps[index] = next }
-  const env = { React, useState, useRef, useEffect, useId: () => { const id = cursor; return useState('synthetic-' + id)[0] }, document: { activeElement: { focus() {} } }, HistoryExportContextChangedError, historyExportRangeLabel, HistoryExportLimitError, HistoryQueryTimeoutError, runHistoryQuery: (fetcher: (signal: AbortSignal) => Promise<void>, signal: AbortSignal) => runHistoryQuery(fetcher, signal, timeoutMs) }
+  const env = { React, useState, useRef, useEffect, useId: () => { const id = cursor; return useState('synthetic-' + id)[0] }, document: { activeElement: { focus() {} } }, HistoryExportContextChangedError, historyExportRangeLabel, HISTORY_XLSX_POINT_LIMIT, HistoryExportLimitError, HistoryQueryTimeoutError, runHistoryQuery: (fetcher: (signal: AbortSignal) => Promise<void>, signal: AbortSignal) => runHistoryQuery(fetcher, signal, timeoutMs) }
   const Component = new Function(...Object.keys(env), compile(source) + ';return HistoryExportModal')(...Object.values(env))
   const props = { request: captured, contextCurrent: true, t: (key: string) => messages[english ? 'en' : 'zh'][key] ?? key, onClose() { closes++ }, async onPick(format: 'csv' | 'xlsx', signal: AbortSignal) { calls++; await pick(format, signal) } }
   const render = () => { for (let i = 0; i < 5; i++) { dirty = false; cursor = 0; effects = []; tree = Component(props); for (const effect of effects) effect(); if (!dirty) return tree }; throw new Error('synthetic hook render did not settle') }
@@ -86,6 +86,7 @@ try {
       try {
         modal.click(format === 'csv' ? 'exportCsv' : 'exportXlsx'); await modal.wait(() => modal.state().alerts.some(text => text.includes('HTTP 503')))
         assert.equal(modal.closes, 0); assert.equal(saves.length, 0); assert.deepEqual(modal.state().disabled, [false, false]); assert.equal(modal.calls, 1)
+        assert(modal.state().html.includes(messages.zh.histExportCancellationNote), 'failure must not hide the backend-work warning before retry')
         failing = false; modal.click(format === 'csv' ? 'exportCsv' : 'exportXlsx'); await modal.wait(() => modal.closes === 1)
         assert.equal(modal.calls, 2); assert.equal(saves.length, 1)
         if (format === 'csv') assert.equal((await saves[0].text()).split('\n').length, 1)
@@ -115,6 +116,7 @@ try {
     try {
       modal.click('exportCsv'); await entered.promise; await modal.wait(() => modal.state().alerts.includes(messages.zh.histExportTimeout))
       assert.equal(modal.closes, 0); assert.deepEqual(modal.state().disabled, [false, false]); assert.equal(saves.length, 0)
+      assert(modal.state().html.includes(messages.zh.histExportCancellationNote))
       fetcher = adapter; modal.deadline(30000); modal.click('exportCsv'); await modal.wait(() => modal.closes === 1)
       body.resolve(new Blob(['timestamp\n'])); await Promise.allSettled(pending); await tick()
       assert.equal(saves.length, 1); assert.equal(modal.closes, 1)
@@ -138,6 +140,29 @@ try {
       const reopened = driver((format, signal) => downloadHistoryExport(format, fresh, signal, () => context, adapter, () => { saves++ }), english, 30000, fresh)
       try { reopened.click('exportCsv'); await reopened.wait(() => reopened.closes === 1); assert.equal(saves, 1) } finally { reopened.unmount() }
     }
+  })
+  await check('bilingual capacity and cancel guidance is described before work and while busy without changing accepted selections', async () => {
+    for (const english of [false, true]) for (const count of [1, HISTORY_XLSX_POINT_LIMIT, HISTORY_XLSX_POINT_LIMIT + 1]) {
+      const t = messages[english ? 'en' : 'zh'], held = deferred<void>(), captured = captureHistoryExport(1, { start, end: start + 1000 }, Array.from({ length: count }, (_, i) => i + 1), 0, 'full', context)
+      const modal = driver(async () => held.promise, english, 30000, captured)
+      try {
+        assert.equal(typeof t.histExportCapacityNote, 'string'); assert.equal(typeof t.histExportCancellationNote, 'string')
+        const guidance = () => {
+          const html = modal.state().html, id = /aria-describedby="([^"]+)"/.exec(html)![1], description = /<div id="([^"]+)">([\s\S]*?)<\/div>/.exec(html)
+          assert(description, 'capacity/cancel guidance must be part of the modal description')
+          assert.equal(description[1], id)
+          assert(description[2].includes(t.histExportCapacityNote.replace('{n}', String(HISTORY_XLSX_POINT_LIMIT))))
+          assert(description[2].includes(t.histExportCancellationNote))
+        }
+        guidance(); assert.deepEqual(modal.state().disabled, [false, false]); assert.equal(modal.calls, 0)
+        modal.click('exportXlsx'); await modal.wait(() => modal.state().html.includes(t.histExportPreparing)); guidance()
+        assert.equal(modal.calls, 1); modal.click('cancel'); held.resolve(); await tick(); assert.equal(modal.closes, 1)
+      } finally { held.resolve(); modal.unmount() }
+    }
+    // Requested IDs can outnumber the definitions still present on the backend. Do not add a client-only rejection.
+    const ids = Array.from({ length: HISTORY_XLSX_POINT_LIMIT + 1 }, (_, i) => i + 1), book = new ExcelJS.Workbook()
+    await book.xlsx.load(await sink.exportXlsx(1, request.start, request.end, ids) as any)
+    assert.equal(book.getWorksheet('data')!.columnCount, 4, 'existing backend filters unknown IDs before applying its actual definition limit')
   })
 } finally { await app.close() }
 if (failures.length) throw new AggregateError(failures, `${failures.length} feedback cases failed; ${passed} passed`)
