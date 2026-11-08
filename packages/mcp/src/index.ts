@@ -678,40 +678,62 @@ export function apply(ctx: Context, config: Config): void {
 
   // 每个会话一个 transport（有状态模式）：客户端断开后会话被清理，新连接可正常重新 initialize，不再「already initialized」卡死。
   const transports = new Map<string, StreamableHTTPServerTransport>()
+  // Ownership begins before initialization supplies a session ID.
+  const ownedTransports = new Set<StreamableHTTPServerTransport>()
+  const transportCloseTasks = new WeakMap<StreamableHTTPServerTransport, Promise<void>>()
+  const transportCloseErrors: unknown[] = []
+  const closeTransport = (transport: StreamableHTTPServerTransport): Promise<void> => {
+    let task = transportCloseTasks.get(transport)
+    if (!task) {
+      task = Promise.resolve().then(() => transport.close())
+      transportCloseTasks.set(transport, task)
+      void task.catch(error => { transportCloseErrors.push(error) })
+    }
+    return task
+  }
 
   const httpServer = http.createServer((req, res) => {
     if (closing) { res.statusCode = 503; res.end(); return }
     const handle = (parsed?: unknown) => {
       if (closing) { res.statusCode = 503; res.end(); return }
-      const sessionId = (req.headers['mcp-session-id'] as string | undefined) ?? undefined
-      let transport: StreamableHTTPServerTransport | undefined = sessionId ? transports.get(sessionId) : undefined
-
-      if (!transport) {
-        const isInit = Array.isArray(parsed) ? parsed.some(isInitializeRequest) : isInitializeRequest(parsed)
-        if (!isInit) {
-          res.statusCode = 400
-          res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Bad Request: No valid session ID provided' }, id: null }))
-          return
+      let createdTransport: StreamableHTTPServerTransport | undefined
+      void track(async () => {
+        let failed = false
+        try {
+          const sessionId = (req.headers['mcp-session-id'] as string | undefined) ?? undefined
+          let transport: StreamableHTTPServerTransport | undefined = sessionId ? transports.get(sessionId) : undefined
+          if (!transport) {
+            const isInit = Array.isArray(parsed) ? parsed.some(isInitializeRequest) : isInitializeRequest(parsed)
+            if (!isInit) {
+              res.statusCode = 400
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Bad Request: No valid session ID provided' }, id: null }))
+              return
+            }
+            const srv = createServer()
+            const t = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => randomUUID(),
+              onsessioninitialized: sid => { transports.set(sid, t) },
+            })
+            createdTransport = t; ownedTransports.add(t)
+            t.onclose = () => { ownedTransports.delete(t); const sid = t.sessionId; if (sid) transports.delete(sid) }
+            await srv.connect(t)
+            if (closing) { res.statusCode = 503; res.end(); return }
+            transport = t
+          }
+          await transport.handleRequest(req, res, parsed)
+        } catch (error) {
+          failed = true
+          const errors = [error]
+          if (createdTransport) { try { await closeTransport(createdTransport) } catch (closeError) { errors.push(closeError) } }
+          throwCleanupErrors(errors, 'MCP initialization/request failed')
+        } finally {
+          // SDK validation can reject initialization without assigning a session.
+          if (!failed && createdTransport && !createdTransport.sessionId) await closeTransport(createdTransport)
         }
-        const srv = createServer()
-        const t = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (sid) => { transports.set(sid, t) },
-        })
-        t.onclose = () => { const sid = t.sessionId; if (sid) transports.delete(sid) }
-        const connecting = srv.connect(t)
-        active.add(connecting)
-        void connecting.then(() => active.delete(connecting), error => {
-          active.delete(connecting); ctx.logger('mcp').error(error)
-          if (!res.headersSent) { res.statusCode = 500; res.end() }
-        })
-        transport = t
-      }
-
-      void track(() => transport!.handleRequest(req, res, parsed)).catch((e: any) => {
+      }).catch((e: any) => {
         console.error('MCP handleRequest error:', e?.message ?? e, '| stack:', e?.stack?.split('\n')[1] ?? '')
-        if (!res.headersSent) { res.statusCode = 500; res.end() }
+        if (!res.headersSent) { res.statusCode = closing ? 503 : 500; res.end() }
       })
     }
     if (req.method === 'POST') {
@@ -736,13 +758,14 @@ export function apply(ctx: Context, config: Config): void {
     const errors: unknown[] = []
     try { await recorder.close() } catch (error) { errors.push(error) }
     try { await starting } catch (error) { errors.push(error) }
-    for (const transport of transports.values()) { try { await transport.close() } catch (error) { errors.push(error) } }
-    transports.clear()
+    for (const transport of ownedTransports) { try { await closeTransport(transport) } catch (error) { errors.push(error) } }
+    transports.clear(); ownedTransports.clear()
     try {
       if (httpServer.listening) await new Promise<void>((resolve, reject) => httpServer.close(error => error ? reject(error) : resolve()))
     } catch (error) { errors.push(error) }
     const results = await Promise.allSettled([...active])
     errors.push(...results.flatMap(result => result.status === 'rejected' ? [result.reason] : []))
+    errors.push(...transportCloseErrors)
     throwCleanupErrors(errors, 'MCP shutdown failed')
   })
   try {
