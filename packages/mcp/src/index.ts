@@ -332,7 +332,11 @@ export function apply(ctx: Context, config: Config): void {
       const method = words.length > 1 ? 'multiple' : (args.method ?? 'multiple')
       const grp = cfg.getGroup(reg.groupId)
       await poller.write(reg.objectId, reg.startAddress, words, method, grp?.slaveId ?? 1, area)
-      cfg.log('INFO', 'mcp', 'write ' + area + ' addr ' + args.address + ' = ' + args.value)
+      try { cfg.log('INFO', 'mcp', 'write ' + area + ' addr ' + args.address + ' = ' + args.value) }
+      catch {
+        // The write has returned; a later diagnostics failure must not encourage replay.
+        try { ctx.logger('mcp').warn(`device ${args.device_id}: 写调用已完成，但操作日志记录失败；勿因此重复写入。`) } catch { /* Diagnostics cannot change the completed write result. */ }
+      }
       return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, address: reg.startAddress, area, value: args.value, method }) }] }
     })
 

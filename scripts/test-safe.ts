@@ -7,6 +7,7 @@ const tests = ['codec', 'register-write-value', 'ui-preferences', 'settings-load
 tests.push('database-upgrade', 'backup-retention', 'retention-triggers', 'history-page-snapshot', 'history-pagination', 'history-feedback', 'history-capacity', 'device-connection-view', 'live-curve-context', 'source-transition', 'diagnostics-loading', 'draft-navigation', 'retained-drafts', 'device-removal-drafts', 'before-unload', 'draft-composition', 'draft-accessibility', 'communication-loading', 'alarm-log-failure', 'api-types', 'mcp-types')
 tests.push('mcp-lifecycle')
 tests.push('mcp-disconnect')
+tests.push('mcp-write-outcome')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {
