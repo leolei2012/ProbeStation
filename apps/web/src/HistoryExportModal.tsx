@@ -19,7 +19,10 @@ export function HistoryExportModal({ request, t, onClose, onPick, contextCurrent
       await runHistoryQuery(signal => onPick(format, signal), current.signal)
       if (!current.signal.aborted) onClose()
     } catch (e) {
-      if (!current.signal.aborted) setError(e instanceof HistoryExportContextChangedError ? t('histExportContextChanged') : e instanceof HistoryExportLimitError ? t('histExportTooLarge').replace('{n}', String(e.limit)) : e instanceof HistoryQueryTimeoutError ? t('histExportTimeout') : e instanceof Error ? e.message : String(e))
+      if (!current.signal.aborted) {
+        if (e instanceof HistoryExportContextChangedError) setInvalidated(true)
+        else setError(e instanceof HistoryExportLimitError ? t('histExportTooLarge').replace('{n}', String(e.limit)) : e instanceof HistoryQueryTimeoutError ? t('histExportTimeout') : e instanceof Error ? e.message : String(e))
+      }
     } finally { if (!current.signal.aborted) setBusy(false) }
   }
   useEffect(() => { if (!contextCurrent) { setInvalidated(true); controller.current?.abort(); setBusy(false) } }, [contextCurrent])
