@@ -63,7 +63,7 @@ import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
 import { DeferredSettingsModal } from './DeferredSettingsModal'
 import { decodeHistorySeries, historySampleStats, historyLineStarts, historyQueryRange, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
-import { sampleCurve, type CurveBuffer } from './live-curve'
+import { curveTrackFor, sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, sampleAgeSeconds, staleAfterMs, type Sample } from './observation'
 import { sameResponseBatch } from '../../../packages/core/src/sample-batch.ts'
 import { decodeRawByAddr, decodeRegister, formatNumber, formatRegisterValue, isBinType, isHexType, parseEnum, registerWidth } from '../../../packages/core/src/codec.ts'
@@ -116,7 +116,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     histIntegrityHint: '历史按点位当前分组的从站筛选。批次/来源未验证的值仅供查看，不作为自动 PASS/FAIL 依据；无法归属从站、混批、缺字或异常显示未知。图中统计包含兼容显示值，不等于已验证采样数。', histQualityVerified: '批次/来源已验证', histQualityUnverified: '批次/来源未验证', histQualityUnknown: '未知',
     histQualityTitle: '采样质量摘要', histQualityHint: '统计当前查询区间内、降采样前的解码采样。未知包括混批、质量异常、缺字或无法表示的数值；可显示数包含批次/来源未验证的兼容值，没有采样的断线时段不计入分母。可显示率不是批次验证率或设备在线率。', histQualityPoint: '点位', histQualitySource: '采样数', histQualityValid: '可显示', histQualityInvalid: '无效', histQualityRate: '可显示率',
     histMinutes: "最近 {n} 分钟", histHours: "最近 {n} 小时", histNoNumeric: "所选点位没有可绘制的数值数据，请检查类型或选择其他点位。", histZoomIn: "放大", histZoomOut: "缩小", histMoveEarlier: "向前移动时间窗口", histMoveLater: "向后移动时间窗口", histQueryZoom: "查询放大区间", histRelative: "各曲线相对量程", histInteractionHint: "悬停查看读数 · 左右拖动框选时间范围 · 双击恢复全范围", histNoVisible: "当前范围没有可见曲线，可重置缩放或点击下方图例显示曲线。", histNearest: "最近采样点（实际时间）", histLegendHint: "点击图例隐藏 / 显示曲线", histStatsHint: "当前可见时间范围的显示数据统计", histLastValue: "末值", histSamplingNote: "曲线按完整查询区间解码，每桶保留首值、末值、峰谷和无效读数；缩放会自动查询细节。Min / Max 统计当前可见显示点，末次采样无效时末值显示为 —。", histRelativeNote: "相对量程将每条曲线映射为 0–100%，恒定值显示在 50%；悬停和统计仍按所选原始值或物理值显示。",
-    liveCurve: '实时曲线', liveWindow: '时间窗口', freezeCurve: '暂停画面', resumeCurve: '继续实时', clearCurve: '清空曲线', curveWaiting: '等待新的有效采样数据…', liveCurveHint: '本次打开设备期间缓存；每 250ms 取最新值，最多 8 条曲线、每条 2400 点，保留最近 10 分钟。暂停仅冻结画面，不停止采集。', liveRawHint: '按寄存器类型解码原始值，不应用倍率/偏移；不绘制非有限数和无法精确表示的 64 位整数。', curvePaused: '画面已暂停，后台继续缓存', curveTracking: '实时跟随', curveNoNumeric: '暂无可绘制的数值点位，请先配置寄存器。', curveSelectLimit: '最多选择 {n} 个点位', curveTime: '时间',
+    liveCurve: '实时曲线', liveWindow: '时间窗口', freezeCurve: '暂停画面', resumeCurve: '继续实时', clearCurve: '清空曲线', curveWaiting: '等待新的有效采样数据…', curveSourceChanged: '点位来源或解码类型已变化，已隐藏不匹配的旧曲线和读数；等待新的有效采样。若画面已暂停，请继续实时。', liveCurveHint: '本次打开设备期间缓存；每 250ms 取最新值，最多 8 条曲线、每条 2400 点，保留最近 10 分钟。暂停仅冻结画面，不停止采集。', liveRawHint: '按寄存器类型解码原始值，不应用倍率/偏移；不绘制非有限数和无法精确表示的 64 位整数。', curvePaused: '画面已暂停，后台继续缓存', curveTracking: '实时跟随', curveNoNumeric: '暂无可绘制的数值点位，请先配置寄存器。', curveSelectLimit: '最多选择 {n} 个点位', curveTime: '时间',
 
     groupOldValues: '存在旧值', groupPartialData: '数据不完整', groupCommunicationError: '通信异常', slaveServiceError: '从站服务异常', groupTimeHint: '按组内最早的采样时间显示，避免部分数据未更新被掩盖',
     resizeSidebar: '调整侧边栏宽度', resizeSidebarHint: '拖动调整宽度，双击恢复默认；也可使用左右方向键',
@@ -194,7 +194,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     histIntegrityHint: 'History follows the point’s current group slave. Unverified values are view-only, never automatic PASS/FAIL evidence. Mixed, incomplete or bad samples are unknown. Display statistics include compatibility values, not only verified samples.', histQualityVerified: 'Batch/source verified', histQualityUnverified: 'Batch/source unverified', histQualityUnknown: 'Unknown',
     histQualityTitle: 'Sample quality summary', histQualityHint: 'Counts cover decoded samples in the queried range before downsampling. Unknown includes mixed batches, bad quality, missing words and unrepresentable values. Displayable counts include unverified compatibility values. Outages with no samples are excluded; this is neither verification rate nor uptime.', histQualityPoint: 'Point', histQualitySource: 'Samples', histQualityValid: 'Displayable', histQualityInvalid: 'Invalid', histQualityRate: 'Displayable rate',
     histMinutes: "Last {n} minutes", histHours: "Last {n} hours", histNoNumeric: "No plottable numeric data. Check types or select other points.", histZoomIn: "Zoom in", histZoomOut: "Zoom out", histMoveEarlier: "Move earlier", histMoveLater: "Move later", histQueryZoom: "Query zoomed range", histRelative: "Relative scale per series", histInteractionHint: "Hover for values · Drag horizontally to select time · Double-click to reset", histNoVisible: "No visible series in this range. Reset zoom or enable a legend item.", histNearest: "Nearest samples (actual times)", histLegendHint: "Click a legend item to hide / show", histStatsHint: "Statistics of displayed samples in the visible range", histLastValue: "Last", histSamplingNote: "Decoded samples retain the first, last, extrema and invalid readings per bucket. Zooming automatically queries finer detail. Min / Max describe visible display samples; Last is — if the final sample is invalid.", histRelativeNote: "Each series maps to 0–100%; constant values appear at 50%. Readouts and statistics retain values in the selected display mode.",
-    liveCurve: 'Live curves', liveWindow: 'Time window', freezeCurve: 'Freeze view', resumeCurve: 'Resume live', clearCurve: 'Clear curves', curveWaiting: 'Waiting for new valid samples…', liveCurveHint: 'Buffered while this device is open. Latest values sampled every 250ms; up to 8 series, 2400 points each, retained for 10 minutes. Freezing does not stop acquisition.', liveRawHint: 'Raw values decoded by register type, without factor/offset. Non-finite values and unsafe 64-bit integers are omitted.', curvePaused: 'View frozen; buffering continues', curveTracking: 'Following live data', curveNoNumeric: 'No numeric points available. Configure registers first.', curveSelectLimit: 'Select up to {n} points', curveTime: 'Time',
+    liveCurve: 'Live curves', liveWindow: 'Time window', freezeCurve: 'Freeze view', resumeCurve: 'Resume live', clearCurve: 'Clear curves', curveWaiting: 'Waiting for new valid samples…', curveSourceChanged: 'Point source or decoding type changed. Mismatched old curves and readings are hidden; waiting for valid samples. Resume live if the view is frozen.', liveCurveHint: 'Buffered while this device is open. Latest values sampled every 250ms; up to 8 series, 2400 points each, retained for 10 minutes. Freezing does not stop acquisition.', liveRawHint: 'Raw values decoded by register type, without factor/offset. Non-finite values and unsafe 64-bit integers are omitted.', curvePaused: 'View frozen; buffering continues', curveTracking: 'Following live data', curveNoNumeric: 'No numeric points available. Configure registers first.', curveSelectLimit: 'Select up to {n} points', curveTime: 'Time',
 
     groupOldValues: 'Stale data present', groupPartialData: 'Incomplete data', groupCommunicationError: 'Communication error', slaveServiceError: 'Slave service error', groupTimeHint: 'Shows the oldest sample in the group so partial updates do not hide stale data',
     resizeSidebar: 'Resize sidebar', resizeSidebarHint: 'Drag to resize, double-click to reset, or use Left and Right arrow keys',
@@ -1417,6 +1417,8 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
     return () => clearInterval(timer)
   }, [])
   const visible = frozen ?? frame
+  const visibleBuffer = Object.fromEntries(chosen.map(r => [r.id, curveTrackFor(visible.buffer, r, device.id)]))
+  const sourceChanged = chosen.some(r => visible.buffer[r.id] && !visibleBuffer[r.id])
   const endTime = visible.now, startTime = endTime - seconds * 1000
   const [size, setSize] = useState({ w: 800, h: 360 })
   const observer = useRef<ResizeObserver | null>(null)
@@ -1429,7 +1431,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
   useEffect(() => () => observer.current?.disconnect(), [])
   const [hover, setHover] = useState<number | null>(null)
   const mixedUnits = valueMode === 'physical' && new Set(chosen.map(r => r.unit?.trim() || '')).size > 1
-  const series = chosen.map(r => ({ r, color: CHART_COLORS[Math.abs(r.id) % CHART_COLORS.length], points: (visible.buffer[r.id]?.points ?? []).filter(p => p[0] >= startTime && p[0] <= endTime).map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) }))
+  const series = chosen.map(r => ({ r, color: CHART_COLORS[Math.abs(r.id) % CHART_COLORS.length], points: (visibleBuffer[r.id]?.points ?? []).filter(p => p[0] >= startTime && p[0] <= endTime).map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) }))
   let low = Infinity, high = -Infinity
   for (const s of series) for (const [, v] of s.points) if (v !== null) { low = Math.min(low, v); high = Math.max(high, v) }
   const hasData = Number.isFinite(low) && Number.isFinite(high)
@@ -1453,7 +1455,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
   const liveReadings = series.map(s => {
     const at = cursorTime ?? endTime
     let sample: [number, number | null] | undefined
-    for (const p of visible.buffer[s.r.id]?.points ?? []) if (p[0] <= at) sample = p
+    for (const p of visibleBuffer[s.r.id]?.points ?? []) if (p[0] <= at) sample = p
     const value = sample && at - sample[0] <= threshold ? curveValue(sample[1], s.r, valueMode) : null
     return { id: s.r.id, label: pointLabels.get(s.r.id)!, color: s.color, value: value === null ? '—' : displayNumber(value, valueMode === 'physical' ? s.r : undefined) + (valueMode === 'physical' && s.r.unit ? ' ' + s.r.unit : ''), time: value !== null && sample ? sample[0] : null, point: sample && value !== null ? [sample[0], value] as [number, number] : null }
   })
@@ -1472,6 +1474,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
       <span className={'status-badge' + (!frozen ? ' on' : '')}>{t(frozen ? 'curvePaused' : 'curveTracking')}</span>
     </div>
     <p className="chart-hint">{t('liveCurveHint')}</p>
+    {sourceChanged && <p className="chart-hint" role="status">{t('curveSourceChanged')}</p>}
     <div className="chart-wrap">
       <ChartReadout t={t} time={cursorTime} rows={liveReadings} />
       <div className="live-curve-plot" ref={setPlot}>

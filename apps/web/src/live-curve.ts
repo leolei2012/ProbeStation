@@ -8,13 +8,23 @@ export interface CurveTrack { signature: string; times: number[]; points: Array<
 export type CurveBuffer = Record<number, CurveTrack>
 export const CURVE_LIMIT = 2400
 
+function curveSignature(r: CurveRegister, objectId: number): string {
+  return JSON.stringify([objectId, r.functionCode, r.startAddress, r.dataType, r.slaveId ?? null])
+}
+
+/** Frozen/published frames must still match the current logical point source and decoder. */
+export function curveTrackFor(buffer: CurveBuffer, r: CurveRegister, objectId: number): CurveTrack | undefined {
+  const track = buffer[r.id]
+  return track?.signature === curveSignature(r, objectId) ? track : undefined
+}
+
 /** Bounded display sampling; never repeat an unchanged snapshot or join partial multiword updates. */
 export function sampleCurve(previous: CurveBuffer, registers: CurveRegister[], latest: Record<string, Sample>, objectId: number, now: number, staleMs: number, blocked: Set<number>): CurveBuffer {
   const next: CurveBuffer = {}
   for (const r of registers) {
     const area = r.functionCode === 1 ? 'coil' : r.functionCode === 2 ? 'discrete-input' : r.functionCode === 4 ? 'input-register' : 'holding-register'
-    const signature = `${area}:${r.startAddress}:${r.dataType}:${r.slaveId ?? "unknown"}`
-    const old = previous[r.id]?.signature === signature ? previous[r.id] : undefined
+    const signature = curveSignature(r, objectId)
+    const old = curveTrackFor(previous, r, objectId)
     const track: CurveTrack = { signature, times: old?.times ?? [], batchId: old?.batchId, points: (old?.points ?? []).filter(p => p[0] >= now - 600_000) }
     const words = Array.from({ length: registerWidth(r.dataType) }, (_, i) => sourceSample(latest, objectId, area, r.startAddress + i, r.slaveId))
     const times = words.map(sampleTime)
