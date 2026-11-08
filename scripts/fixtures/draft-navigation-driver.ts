@@ -4,6 +4,7 @@ import React from 'react'
 import ts from 'typescript'
 import { hookDriver } from './component-hook-driver.ts'
 import { DraftNavigation, type DraftRegistration } from '../../apps/web/src/draft-navigation.ts'
+import { LatestConfigRead } from '../../apps/web/src/config-read.ts'
 import { captureDeviceEditBaseline } from '../../packages/core/src/device-settings-edit.ts'
 import { deviceDraftFields, deviceDraftChanged } from '../../apps/web/src/device-draft-close.ts'
 import { pointDraftFields, pointDraftChanged, PointDraftCloseGuard } from '../../apps/web/src/point-draft-close.ts'
@@ -36,10 +37,10 @@ const base = { PointDraftCloseGuard, PointDraftDiscard, document }
 const pointScope = { ...base, pointDraftFields, pointDraftChanged, createPointEnumDraft, updatePointEnumDraft, parsePointSettingsUpdate, isBinType, isHexType, registerWidth, PointEnumEditor }
 const deviceScope = { ...base, captureDeviceEditBaseline, deviceDraftFields, deviceDraftChanged, SerialPortPicker: () => null }
 export type EditorKind = 'point' | 'device'
-export function draftEditor(kind: EditorKind, draftScope?: DraftRegistration, onSave: (...args: any[]) => Promise<void> = async () => {}) {
+export function draftEditor(kind: EditorKind, draftScope?: DraftRegistration, onSave: (...args: any[]) => Promise<void> = async () => {}, enumJson: string | null = null) {
   const calls = { close: 0, save: 0 }
   const callbacks = { onClose() { calls.close++ }, async onSave(...args: any[]) { calls.save++; await onSave(...args) } }
-  const input = kind === 'point' ? { draftScope, name: 'synthetic point', address: 0, settings: { dataType: 'uint16', unit: 'V', factor: 1, offset: 0, enumJson: null, decimalPlaces: null }, available: 1, typeGroups: [{ key: 'types', types: ['uint16'] }], t, guarded: true, ...callbacks } : { draftScope, initial: syntheticDevice, t, ...callbacks }
+  const input = kind === 'point' ? { draftScope, name: 'synthetic point', address: 0, settings: { dataType: 'uint16', unit: 'V', factor: 1, offset: 0, enumJson, decimalPlaces: null }, available: 1, typeGroups: [{ key: 'types', types: ['uint16'] }], t, guarded: true, ...callbacks } : { draftScope, initial: syntheticDevice, t, ...callbacks }
   const driver = hookDriver(kind === 'point' ? 'PointSettingsEditor.tsx' : 'DeviceModal.tsx', kind === 'point' ? 'PointSettingsEditor' : 'DeviceModal', kind === 'point' ? pointScope : deviceScope, input)
   const label = kind === 'point' ? 'pointUnit' : 'name', original = kind === 'point' ? 'V' : syntheticDevice.name
   return { driver, calls, original, value: () => driver.one('input', props => props['aria-label'] === label).props.value,
@@ -55,10 +56,15 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
   let devices = [{ ...syntheticDevice, mode: options.slave ? 'slave' : 'master' }, { ...syntheticDevice, id: 2, name: 'synthetic B' }]
   const prompts: string[] = [], notices: Array<{ error: boolean; text: string }> = [], changes: string[] = [], sequence = { current: 0 }
   const drafts = evaluate(variable('draftNavigation'), { useMemo: (fn: () => unknown) => fn(), DraftNavigation }) as DraftNavigation
+  const read = new LatestConfigRead()
+  let records = drafts.retained()
+  const setRetainedDrafts = (next: typeof records) => { records = next }
+  const acceptDevices = { draftNavigation: drafts, setRetainedDrafts, setDevices(next: typeof devices) { devices = next }, setDeviceConnected() {}, setDeviceLoadError() {} }
   const setters = { setSelectedId(id: number) { changes.push('device'); selectedId = id }, setView(next: string) { changes.push('view'); view = next }, setDataTarget(next: unknown) { changes.push('target'); target = next } }
   const window = { innerWidth: options.mobile ? 640 : 1200, confirm(text: string) { prompts.push(text); if (answer instanceof Error) throw answer; return answer } }
   const confirmDraftLeave = (...args: unknown[]) => evaluate(variable('confirmDraftLeave'), { draftNavigation: drafts, lang: options.english ? 'en' : 'zh', window, operation: { setNotice: (value: { error: boolean; text: string }) => notices.push(value) } })(...args)
   const canNavigate = (...args: unknown[]) => evaluate(variable('canNavigate'), { selectedId, view, devices, confirmDraftLeave })(...args)
+  const discardRetainedDraft = (id: number) => evaluate(variable('discardRetainedDraft'), { draftNavigation: drafts, setRetainedDrafts, lang: options.english ? 'en' : 'zh', window })(id)
   const emit = evaluate(variable('navigateData'), { ...setters, navigationSequence: sequence, canNavigate })
   const render = () => {
     const selected = evaluate(variable('selected'), { devices, selectedId })
@@ -72,7 +78,18 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
     reference(deviceId = 2, view = 'history') { emit({ deviceId, view, registerId: 7, start: '2026-11-08T00:00:00Z', end: '2026-11-08T01:00:00Z', label: 'mock' }) },
     applyTarget() { const frame = render(); evaluate(targetEffect.arguments[0], { target, device: frame.props.device, setTab: (next: number) => { tab = next } })() },
     localTab(next: number) { const frame = render(); evaluate(attribute(tabs, 'onChange'), { tab, onLeaveDrafts: frame.props.onLeaveDrafts, historyNavigation: { current: { cancelPending() { cancelledHistory++ } } }, setTab: (next: number) => { changes.push('tab'); tab = next } })(next) },
-    remove() { evaluate(refreshRead.arguments[1], { setDevices(next: typeof devices) { devices = next }, setDeviceConnected() {}, setDeviceLoadError() {} })({ objs: devices.filter(value => value.id !== selectedId), map: {} }) },
+    remove() { evaluate(refreshRead.arguments[1], acceptDevices)({ objs: devices.filter(value => value.id !== selectedId), map: {} }) },
+    async refresh(fetcher: (signal: AbortSignal) => Promise<unknown>) {
+      let pending!: Promise<void>
+      const run = (...args: any[]) => { pending = (read.run as any)(...args); return pending }
+      evaluate(variable('refreshDevices'), { ...acceptDevices, useCallback: (fn: unknown) => fn, deviceRead: { current: { run } }, readConfigRequest: (_url: string, signal: AbortSignal) => fetcher(signal), request() { throw Error('No network permitted') }, configReadFailure() { return 'failed' } })()
+      await pending
+    },
+    cancelRefresh() { read.cancel() },
+    retentionNotice() {
+      const notice = find(app, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'RetainedDraftNotice')!
+      return evaluate(notice, { React, RetainedDraftNotice: 'mock-retained-notice', retainedDrafts: records, lang: options.english ? 'en' : 'zh', discardRetainedDraft }) as React.ReactElement<any>
+    },
     deviceSaveHandler(onEdit: (...args: any[]) => Promise<void>, close: () => void) {
       const modal = find(deviceView, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'DeviceModal') as ts.JsxSelfClosingElement
       return evaluate(attribute(modal, 'onSave'), { device: render().props.device, t, onEdit, setShowEdit: (value: boolean) => { assert.equal(value, false); close() } }) as (...args: any[]) => Promise<void>

@@ -1,18 +1,46 @@
 export type DraftKind = 'device' | 'live'
 export type DraftRange = 'all' | 'live'
 export interface DraftStatus { dirty: boolean; busy: boolean }
-export interface DraftRegistration { register(kind: DraftKind, read: () => DraftStatus): () => void }
+export interface DraftSnapshot { readonly context: string; readonly text: string }
+export interface RetainedDraft { readonly id: number; readonly ownerId: number; readonly kind: DraftKind; readonly busy: boolean | null; readonly snapshot: DraftSnapshot | null }
+/** Capture runs once on observed removal; an editor must revoke new saves before returning its snapshot. */
+export interface DraftRegistration { register(kind: DraftKind, read: () => DraftStatus, capture?: () => DraftSnapshot): () => void }
 
-/** Current mounted editors only. No draft values, persistent storage or navigation side effects. */
+/** Mounted editor ownership plus detached read-only records. Never restores, saves or persists drafts. */
 export class DraftNavigation {
-  private entries = new Map<symbol, { ownerId: number; kind: DraftKind; read: () => DraftStatus }>()
+  private entries = new Map<symbol, { ownerId: number; kind: DraftKind; read: () => DraftStatus; capture?: () => DraftSnapshot; retained?: boolean }>()
+  private records = new Map<number, RetainedDraft>()
+  private sequence = 0
   scope(ownerId: number): DraftRegistration {
-    return { register: (kind, read) => {
+    return { register: (kind, read, capture) => {
       const token = Symbol()
-      this.entries.set(token, { ownerId, kind, read })
+      this.entries.set(token, { ownerId, kind, read, capture })
       return () => { this.entries.delete(token) }
     } }
   }
+  /** Run only for an accepted full device list, before React can unmount missing owners. */
+  retainMissing(presentIds: readonly number[]): void {
+    const present = new Set(presentIds)
+    for (const entry of this.entries.values()) {
+      if (present.has(entry.ownerId) || entry.retained) continue
+      let busy: boolean | null = null, snapshot: DraftSnapshot | null = null
+      try {
+        const state = entry.read()
+        if (typeof state?.dirty !== 'boolean' || typeof state?.busy !== 'boolean') throw Error('Unknown draft state')
+        if (!state.dirty && !state.busy) continue
+        busy = state.busy
+        const value = entry.capture?.()
+        if (typeof value?.context !== 'string' || typeof value.text !== 'string') throw Error('Snapshot unavailable')
+        // Copy strings only: no live props, save callbacks, mutable fields or replacement-device references.
+        snapshot = Object.freeze({ context: value.context, text: value.text })
+      } catch { /* Preserve an explicit unavailable record, without exposing thrown details or blocking refresh. */ }
+      entry.retained = true
+      const id = ++this.sequence
+      this.records.set(id, Object.freeze({ id, ownerId: entry.ownerId, kind: entry.kind, busy, snapshot }))
+    }
+  }
+  retained(): readonly RetainedDraft[] { return [...this.records.values()] }
+  discardRetained(id: number): void { this.records.delete(id) }
   allow(ownerId: number | null, range: DraftRange, confirm: () => boolean, blocked: () => void): boolean {
     if (ownerId === null) return true
     let statuses: DraftStatus[]

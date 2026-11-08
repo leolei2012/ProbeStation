@@ -194,6 +194,7 @@ try {
   const formExpected = capture(), formSettings = cfg.getRegister(point.id)!, closeGuard = new PointDraftCloseGuard()
   let formError = '', busy = false, closed = 0, formRequests = 0, successfulSaves = 0
   const env = {
+    detached: { current: false },
     lock: { current: false }, closeGuard, dataType: formSettings.dataType, unit: 'form committed response lost', factor: '0', offset: String(formSettings.offset), decimalPlaces: formSettings.decimalPlaces == null ? '' : String(formSettings.decimalPlaces),
     enums: createPointEnumDraft(formSettings.enumJson), settings: formSettings, available: group.quantity, t: (key: string) => key, parsePointSettingsUpdate,
     setError(value: string) { formError = value }, setBusy(value: boolean) { busy = value }, setEnumIssueIndex() {}, setEnumIssueRevision() {},
@@ -214,6 +215,7 @@ try {
   const formGraph = snapshot(); count = events
   await Promise.resolve(); assert.equal(formRequests, 1, 'settling never retries the unknown save')
   await save(); assert.match(formError, /HTTP 409/); assert.equal(formRequests, 2); assert.equal(events, count); assert.equal(snapshot(), formGraph); assert.equal(closed, 0)
+  env.detached.current = true; await save(); assert.equal(formRequests, 2, 'detached form cannot start another request'); assert.equal(snapshot(), formGraph); env.detached.current = false
   assert.equal(closeGuard.request(true, false), 'prompt'); env.closeAction(closeGuard.discard(false))
   assert.equal(closed, 1); assert.equal(formRequests, 2); assert.equal(snapshot(), formGraph, 'discard is no write or undo')
   const deleted = capture(); cfg.deleteRegister(point.id); count = events

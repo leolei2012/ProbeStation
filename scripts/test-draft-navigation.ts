@@ -114,4 +114,4 @@ await check('already missing device view ignores delayed registrations without p
     page.select(2); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 0)
   } finally { old.driver.dispose() }
 })
-console.log('DRAFT NAVIGATION TEST OK: ' + passed + ' scoped registry/actual callback/editor groups; mock-only, no browser or data writes; background removal not protected')
+console.log('DRAFT NAVIGATION TEST OK: ' + passed + ' scoped registry/actual callback/editor groups; mock-only, no browser or data writes; detached records tested separately')

@@ -4,6 +4,7 @@ import ts from 'typescript'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import * as reads from '../apps/web/src/config-read.ts'
+import { DraftNavigation } from '../apps/web/src/draft-navigation.ts'
 
 const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 const nodes: ts.VariableDeclaration[] = []
@@ -22,7 +23,7 @@ const classify = (error: unknown) => (reads as any).configReadFailure(error)
 const deviceRead = { current: new reads.LatestConfigRead() }, signals: AbortSignal[] = []
 const old = deferred<any>(), accepted: any[] = [], errors: unknown[] = [], connected: any[] = []
 let get = (_url: string, options: RequestInit) => { signals.push(options.signal!); return old.promise }
-const refreshDevices = compile('refreshDevices', { deviceRead, request: (url: string, options: RequestInit) => { assert.equal(url, '/api/monitor_objects'); assert.equal(options.method, undefined); return get(url, options) }, readConfigRequest: timeoutRead, configReadFailure: classify, setDevices: (value: any) => accepted.push(value), setDeviceConnected: (value: any) => connected.push(value), setDeviceLoadError: (value: unknown) => errors.push(value) })
+const refreshDevices = compile('refreshDevices', { deviceRead, draftNavigation: new DraftNavigation(), setRetainedDrafts: (records: unknown[]) => { assert.deepEqual(records, []) }, request: (url: string, options: RequestInit) => { assert.equal(url, '/api/monitor_objects'); assert.equal(options.method, undefined); return get(url, options) }, readConfigRequest: timeoutRead, configReadFailure: classify, setDevices: (value: any) => accepted.push(value), setDeviceConnected: (value: any) => connected.push(value), setDeviceLoadError: (value: unknown) => errors.push(value) })
 try {
   refreshDevices(); await tick()
   assert.equal(errors.at(-1), 'timeout', 'a hung actual device-list callback must reach a visible retryable error')

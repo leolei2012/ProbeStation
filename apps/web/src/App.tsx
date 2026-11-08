@@ -1,4 +1,5 @@
-import { DraftNavigation, type DraftRange, type DraftRegistration } from './draft-navigation'
+import { DraftNavigation, type DraftRange, type DraftRegistration, type RetainedDraft } from './draft-navigation'
+import { RetainedDraftNotice } from './RetainedDraftNotice'
 import { RecordingIntervalNotice } from './RecordingIntervalNotice'
 import { PersistenceStatus } from './PersistenceStatus'
 import { RetentionSummary } from './RetentionSummary'
@@ -474,6 +475,11 @@ export default function App() {
   const [dataTarget, setDataTarget] = useState<DataTarget | null>(null)
   const navigationSequence = useRef(0)
   const draftNavigation = useMemo(() => new DraftNavigation(), [])
+  const [retainedDrafts, setRetainedDrafts] = useState<readonly RetainedDraft[]>([])
+  const discardRetainedDraft = (id: number) => {
+    try { if (window.confirm(lang === 'en' ? 'Permanently discard this read-only record from page memory? Cancel keeps it. This does not change device configuration.' : '从当前页内存永久丢弃此只读记录？取消可保留，不会修改设备配置。') !== true) return } catch { return }
+    draftNavigation.discardRetained(id); setRetainedDrafts(draftNavigation.retained())
+  }
   const navigateData = (target: DataTarget) => { if (!canNavigate('monitor', target.deviceId, target.view)) return; setSelectedId(target.deviceId); setView('monitor'); setDataTarget({ ...target, token: ++navigationSequence.current }) }
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
@@ -512,7 +518,7 @@ export default function App() {
         map[object.id] = object.connected === true
       }
       return { objs, map }
-    }, ({ objs, map }) => { setDevices(objs); setDeviceConnected(map); setDeviceLoadError(null) }, error => setDeviceLoadError(configReadFailure(error)))
+    }, ({ objs, map }) => { draftNavigation.retainMissing(objs.map(object => object.id)); setRetainedDrafts(draftNavigation.retained()); setDevices(objs); setDeviceConnected(map); setDeviceLoadError(null) }, error => setDeviceLoadError(configReadFailure(error)))
   }, [])
   const refreshRegisters = useCallback((id: number) => {
     void groupRead.current!.run(signal => readDeviceGroups<Register>(id, signal, (url, requestSignal) => readConfigRequest(url, requestSignal, (path, innerSignal) => request(path, { signal: innerSignal }))),
@@ -767,6 +773,7 @@ export default function App() {
         <div className="mobile-header"><button className="btn" aria-label={t('expandNav')} onClick={() => setCollapsed(false)}>☰ {t('devices')}</button><strong>ProbeStation</strong><button className="btn" aria-label={t('settings')} onClick={() => { setSettingsSection('general'); setShowSettings(true) }}>⚙</button></div>
 
         <ConfigLoadNotice deviceError={deviceLoadError} groupError={groupLoadError} english={lang === 'en'} onRetry={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }} />
+        <RetainedDraftNotice records={retainedDrafts} english={lang === 'en'} onDiscard={discardRetainedDraft} />
         <DeviceIssues onNavigate={navigateData} english={lang === 'en'} />
         <GlobalTabBar t={t} view={view} onChange={next => { if (!canNavigate(next)) return; if (next === 'database') setDataTarget(null); setView(next) }} />
         {view === 'database'

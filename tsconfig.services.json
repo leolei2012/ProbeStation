@@ -43,6 +43,7 @@
     "scripts/test-diagnostics-loading.ts",
     "scripts/audit-draft-unmount.ts",
     "scripts/test-draft-navigation.ts",
+    "scripts/test-retained-drafts.ts",
     "scripts/fixtures/draft-navigation-driver.ts",
     "scripts/fixtures/component-hook-driver.ts",
     "scripts/test-history-capacity.ts",
