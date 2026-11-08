@@ -10,6 +10,7 @@ import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
 import { HistoryReadNotice } from './HistoryReadNotice'
+import { HistoryPaginationNotice } from './HistoryPaginationNotice'
 import { HistoryCurveSelection } from './HistoryCurveSelection'
 import { planHistoryCurve } from '../../../packages/core/src/history-curve-plan'
 import { historyReadContextKey, reduceHistoryRead, historyReadView, type HistoryReadState } from './history-read-context'
@@ -1291,13 +1292,15 @@ function HistoryView({ navigation, memory, configurationReady, target, t, device
 function HistoryTableBody({ pointLabels, t, rows, selectedRegisters, status, error, page, total, pageSize, onPageChange }: { t: T; rows: Array<{ ts: string; values: Record<number, string> }>; selectedRegisters: Register[]; status: 'idle' | 'loading' | 'done' | 'error'; error: string | null; page: number; total: number; pageSize: number; onPageChange: (page: number) => void; pointLabels: Map<number, PointLabelData> }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const currentPage = Math.min(Math.max(0, page), totalPages - 1)
+  const pageOutOfRange = page > 0 && page >= totalPages
   const shown = rows
   if (!selectedRegisters.length) return <div className="hist-empty">{t('histNoRegs')}</div>
 
   return (
     <>
+      {status === 'done' && (totalPages > 1 || page > 0) && <HistoryPaginationNotice outOfRange={pageOutOfRange} onRestart={() => onPageChange(0)} english={t('cancel') === 'Cancel'} />}
       {status === 'idle' && <div className="hist-empty" role="status">{t('histCancelled')}</div>}
-      {status === 'done' && rows.length === 0 && <div className="hist-empty">{t('histEmpty')}</div>}
+      {status === 'done' && rows.length === 0 && !pageOutOfRange && <div className="hist-empty">{t('histEmpty')}</div>}
       {status === 'error' && <div className="hist-empty warn">{t('histError')} {error}</div>}
       {status === 'done' && rows.length > 0 && (
         <>
