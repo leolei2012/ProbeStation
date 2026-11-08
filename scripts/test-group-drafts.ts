@@ -78,4 +78,41 @@ await check('success callback and bilingual read-only records distinguish page m
     try { await editor.ready(); editor.change('SUCCESS GROUP'); editor.submit(); await editor.ready(); assert.equal(editor.counts().writes, 1); assert.equal(editor.counts().saves, 1); assert.equal(editor.counts().closes, 0); page.remove(); const html = renderToStaticMarkup(React.createElement(RetainedDraftNotice, { records: page.drafts.retained(), english, onDiscard() {} })); assert(html.includes(english ? 'Group editor' : '分组编辑')); assert(html.includes(english ? 'page memory only' : '当前页内存')); assert(html.includes(english ? 'not saved configuration' : '不是已保存配置')) } finally { editor.driver.dispose() }
   }
 })
+await check('native unload warns only for current raw input risk and cleans up on revert or disposal', async () => {
+  for (const editing of [false, true]) {
+    const page = draftSurface(), editor = groupEditor(page, editing)
+    try {
+      await editor.ready(); const original = editor.value(); assert.equal(page.window.count(), 0); assert.equal(page.window.fire().prevented, 0)
+      editor.change('UNLOAD GROUP INPUT'); assert.equal(page.window.count(), 1); const event = page.window.fire(); assert.equal(event.prevented, 1); assert.equal(event.returnValue, ' '); page.window.fire(); assert.equal(editor.value(), 'UNLOAD GROUP INPUT'); assert.equal(editor.counts().writes, 0); assert.equal(editor.counts().closes, 0); assert.equal(page.prompts.length, 0, 'native event handler never opens a custom confirmation')
+      editor.change(original); assert.equal(page.window.count(), 0); assert.equal(page.window.fire().prevented, 0)
+      editor.change('DISPOSE GROUP INPUT'); editor.driver.dispose(); assert.equal(page.window.count(), 0); assert.equal(page.window.fire().prevented, 0); assert.equal(page.drafts.retained().length, 0, 'ordinary disposal does not invent persistence or a removal record')
+    } finally { editor.driver.dispose() }
+  }
+})
+await check('clean pending edit save requests a native warning without cancelling or replaying the write', async () => {
+  for (const result of ['success', 'unknown'] as const) {
+    const page = draftSurface(), wait = deferred<unknown>(), editor = groupEditor(page, true, { wait })
+    try {
+      await editor.ready(); assert.equal(page.window.count(), 0); const original = editor.value(); editor.submit(); assert.equal(editor.counts().writes, 1); assert.equal(page.window.count(), 1)
+      for (let i = 0; i < 2; i++) { const event = page.window.fire(); assert.equal(event.prevented, 1); assert.equal(event.returnValue, ' ') }
+      assert.equal(editor.value(), original); assert.equal(editor.counts().writes, 1); assert.equal(editor.counts().closes, 0); assert.equal(editor.counts().saves, 0); assert.equal(page.prompts.length, 0)
+      if (result === 'success') wait.resolve({ warnings: [], addedRegisterIds: [], deletedRegisterIds: [], deletedRuleIds: [], snapshot: editor.snapshot }); else wait.reject(Error('synthetic clean save outcome unverified'))
+      await editor.ready(); assert.equal(editor.counts().writes, 1); assert.equal(editor.counts().saves, result === 'success' ? 1 : 0); assert.equal(page.window.count(), 0); assert.equal(page.window.fire().prevented, 0, 'settled request without changed input has no pending-write or unsaved-input warning')
+    } finally { editor.driver.dispose() }
+  }
+})
+await check('read-only group records take over unload risk after editor disposal and release only on explicit last discard', async () => {
+  for (const editing of [false, true]) for (const pending of [false, true]) {
+    const page = draftSurface(), wait = deferred<unknown>(), editor = groupEditor(page, editing, pending ? { wait } : {}); let release: undefined | (() => void)
+    try {
+      await editor.ready(); editor.change('RETAINED GROUP UNLOAD'); if (pending) editor.submit(); page.remove(); const records = page.drafts.retained(), frozen = JSON.stringify(records); assert.equal(records.length, 1); assert.equal(records[0].kind, 'group'); assert.equal(records[0].busy, pending)
+      editor.driver.dispose(); assert.equal(page.window.count(), 0, 'unmounted editor releases only its listener'); release = page.mountUnload(); assert.equal(page.window.count(), 1); assert.equal(page.window.fire().prevented, 1)
+      page.select(2); page.global('database'); assert.equal(page.window.fire().prevented, 1); assert.equal(JSON.stringify(page.drafts.retained()), frozen)
+      if (pending) { wait.reject(Error('late unknown save')); await tick(); assert.equal(editor.driver.lateWrites, 0); assert.equal(editor.counts().saves, 0); assert.equal(page.window.fire().prevented, 1); assert.equal(JSON.stringify(page.drafts.retained()), frozen) }
+      page.setAnswer(false); page.retentionNotice().props.onDiscard(records[0].id); assert.equal(page.drafts.retained().length, 1); assert.equal(page.window.fire().prevented, 1)
+      page.setAnswer(true); page.retentionNotice().props.onDiscard(records[0].id); assert.equal(page.drafts.retained().length, 0); assert.equal(page.window.fire().prevented, 0, 'root listener reads current records even before effect cleanup'); assert.equal(page.window.count(), 1); assert.equal(editor.counts().writes, pending ? 1 : 0)
+      release?.(); release = page.mountUnload(); assert.equal(page.window.count(), 0); assert.equal(page.window.fire().prevented, 0)
+    } finally { release?.(); editor.driver.dispose() }
+  }
+})
 console.log('GROUP DRAFT TEST OK: ' + passed + ' actual editor/navigation/mock-event groups for create/edit, close, pending/unknown, removal and late outcomes; page memory only, no real DOM/browser, persistence, database, network, hardware or model')
