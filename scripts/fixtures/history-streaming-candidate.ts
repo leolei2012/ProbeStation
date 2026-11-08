@@ -29,10 +29,11 @@ export async function candidateHistoryXlsx(sink: Sink, args: Parameters<Sink['ex
   const { registers, tsOrder, formatted, verification } = await (sink as any).collect(objectId, start, end, registerIds, 'xlsx')
   options.onPhase?.('afterCollect'); check()
   const names = historyColumnNames(registers, [`timestamp(${timezone(offset)})`, `timestamp (${timezone(offset)})`])
-  const chunks: Buffer[] = []; let error: unknown, returnedBytes = 0, acceptedBytes = 0, complete = false
+  const chunks: Buffer[] = []; let error: unknown, failed = false, returnedBytes = 0, acceptedBytes = 0, complete = false, stopped = false
+  const cleanupErrors: unknown[] = []
   let rejectFailure!: (reason: unknown) => void
   const failure = new Promise<never>((_resolve, reject) => { rejectFailure = reject }); void failure.catch(() => {})
-  const fail = (reason: unknown) => { if (!error) { error = reason; rejectFailure(reason) } }
+  const fail = (reason: unknown) => { if (!failed) { failed = true; error = reason; rejectFailure(reason) } }
   const stream = new Writable({ write(chunk: Buffer, _encoding, done) {
     if (options.outputError && acceptedBytes >= (options.failAfterOutputBytes ?? 0)) return done(options.outputError)
     if (options.signal?.aborted) return done(options.signal.reason)
@@ -43,12 +44,17 @@ export async function candidateHistoryXlsx(sink: Sink, args: Parameters<Sink['ex
   // ExcelJS has no public writer abort. This private dependency is a production adoption risk.
   const zip = (writer as any).zip
   zip.on('error', fail)
-  const stop = () => { zip.abort(); if (!stream.destroyed) stream.destroy() }
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    try { zip.abort() } catch (reason) { cleanupErrors.push(reason) }
+    try { if (!stream.destroyed) stream.destroy() } catch (reason) { cleanupErrors.push(reason) }
+  }
   const abort = () => { fail(options.signal!.reason); stop() }
   options.signal?.addEventListener('abort', abort, { once: true })
   const pending = <T,>(work: Promise<T>) => Promise.race([work, failure])
   try {
-    check(); if (error) throw error
+    check(); if (failed) throw error
     const data = writer.addWorksheet('data')
     data.columns = [
       { header: `timestamp (${timezone(offset)})`, key: 'ts', width: 24 },
@@ -57,7 +63,7 @@ export async function candidateHistoryXlsx(sink: Sink, args: Parameters<Sink['ex
     data.getRow(1).commit()
     let count = 0
     for (const ts of tsOrder) {
-      check(); if (error) throw error
+      check(); if (failed) throw error
       const row: Record<string, unknown> = { ts: localTimestamp(ts, offset) }, values = formatted.get(ts)!
       for (const r of registers) { const state = verification.get(ts)!.get(r.id)!; row[`r${r.id}`] = values.get(r.id) ?? null; row[`s${r.id}`] = historyVerificationLabel[state as keyof typeof historyVerificationLabel]; row[`a${r.id}`] = state === 'verified' }
       data.addRow(row).commit(); options.onRow?.(++count)
@@ -75,14 +81,16 @@ export async function candidateHistoryXlsx(sink: Sink, args: Parameters<Sink['ex
     const header = notes.addRow(['数据列', '点位ID', '分组ID', '从站（当前配置）', '数据区', '地址', 'dtype', '原始别名(JSON)']); header.font = { bold: true }; header.commit()
     registers.forEach((r: any, i: number) => notes.addRow([names[i], r.id, r.groupId ?? null, r.slaveId ?? null, areaForFunction(r.functionCode), r.startAddress, r.dataType, JSON.stringify(r.alias ?? null)]).commit())
     notes.commit(); options.onPhase?.('beforeCommit')
-    await options.beforeCommit?.(); check(); if (error) throw error
-    await pending(writer.commit()); check(); if (error) throw error
+    await options.beforeCommit?.(); check(); if (failed) throw error
+    await pending(writer.commit()); check(); if (failed) throw error
     if (!stream.writableFinished) throw new Error('Candidate output did not finish')
     const output = Buffer.concat(chunks); returnedBytes = output.length; complete = true; options.onPhase?.('output'); return output
-  } finally {
+  } catch (reason) { fail(reason); throw reason }
+  finally {
     options.signal?.removeEventListener('abort', abort)
     if (!complete) stop()
     chunks.length = 0
-    options.onCleanup?.({ finished: stream.writableFinished, destroyed: stream.destroyed, returnedBytes, bufferedBytes: acceptedBytes })
+    try { options.onCleanup?.({ finished: stream.writableFinished, destroyed: stream.destroyed, returnedBytes, bufferedBytes: acceptedBytes }) } catch (reason) { cleanupErrors.push(reason) }
+    if (cleanupErrors.length) throw new AggregateError(failed ? [error, ...cleanupErrors] : cleanupErrors, 'Candidate cleanup failed', { cause: failed ? error : undefined })
   }
 }

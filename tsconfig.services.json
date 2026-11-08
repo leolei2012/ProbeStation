@@ -41,6 +41,8 @@
     "scripts/fixtures/history-streaming-candidate.ts",
     "scripts/test-history-streaming-candidate.ts",
     "scripts/audit-history-streaming.ts",
+    "scripts/fixtures/history-disconnect-candidate.ts",
+    "scripts/test-streaming-cleanup.ts",
     "scripts/diagnose-points.ts",
     "scripts/preview-register-picker.ts",
     "scripts/fixtures/register-picker-preview.tsx",
