@@ -30,6 +30,7 @@
     "scripts/audit-history-export-version.ts",
     "scripts/audit-export-entry.ts",
     "scripts/audit-sink-condition.ts",
+    "scripts/test-database-upgrade.ts",
     "scripts/diagnose-points.ts",
     "scripts/preview-register-picker.ts",
     "scripts/fixtures/register-picker-preview.tsx",

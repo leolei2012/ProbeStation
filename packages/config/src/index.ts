@@ -105,7 +105,18 @@ export class ConfigStore {
   private open(dbPath: string): DatabaseSync {
     if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true })
     const db = new DatabaseSync(dbPath)
-    try { db.exec(this.schema()); this.migrate(db); return db }
+    try {
+      // Keep CREATEs and legacy ALTERs atomic; a failed BEGIN owns no transaction.
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        db.exec(this.schema()); this.migrate(db); db.exec('COMMIT')
+      } catch (error) {
+        try { db.exec('ROLLBACK') }
+        catch (rollback) { throw new AggregateError([error, rollback], 'Configuration migration and rollback failed') }
+        throw error
+      }
+      return db
+    }
     catch (error) {
       const errors: unknown[] = [error]
       try { db.close() } catch (cleanup) { errors.push(cleanup) }
@@ -113,8 +124,13 @@ export class ConfigStore {
     }
   }
 
-  /** 旧库补列（幂等，列已存在则忽略）。 */
+  /** 旧库按实际列元数据补列；失败交由 open 回滚并报告，不猜测异常原因。 */
   private migrate(db: DatabaseSync): void {
+    const columns = (table: string) => new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(row => String(row.name)))
+    const addMissing = (table: string, additions: Array<[string, string]>) => {
+      const existing = columns(table)
+      for (const [col, ddl] of additions) if (!existing.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`)
+    }
     const cols: Array<[string, string]> = [
       ['transport', "TEXT DEFAULT 'tcp'"],
       ['serial_path', 'TEXT'],
@@ -128,9 +144,10 @@ export class ConfigStore {
       ['timeout_ms', 'INTEGER DEFAULT 3000'],
       ['data_retain_seconds', 'INTEGER'],
     ]
-    for (const [col, ddl] of cols) {
-      try { db.exec(`ALTER TABLE monitor_objects ADD COLUMN ${col} ${ddl}`) } catch { /* 列已存在 */ }
-    }
+    addMissing('monitor_objects', cols)
+    // Earliest point tables predate per-group slave selection (the historical default is 1).
+    // This is configuration compatibility, never a backfill of historical sample identity.
+    addMissing('register_groups', [['slave_id', 'INTEGER DEFAULT 1']])
     // registers 语义列（幂等）
     const regCols: Array<[string, string]> = [
       ['unit', 'TEXT'],
@@ -139,11 +156,9 @@ export class ConfigStore {
       ['enum_json', 'TEXT'],
       ['decimal_places', 'INTEGER'],
     ]
-    for (const [col, ddl] of regCols) {
-      try { db.exec(`ALTER TABLE registers ADD COLUMN ${col} ${ddl}`) } catch { /* 列已存在 */ }
-    }
+    addMissing('registers', regCols)
     // 已废弃：分组级扫描间隔列，改用设备级采样周期统一轮询（幂等删除）
-    try { db.exec('ALTER TABLE register_groups DROP COLUMN poll_interval_ms') } catch { /* 列已不存在 */ }
+    if (columns('register_groups').has('poll_interval_ms')) db.exec('ALTER TABLE register_groups DROP COLUMN poll_interval_ms')
   }
 
   /** 切换工作区：关闭旧库、打开新库（幂等，CREATE TABLE IF NOT EXISTS）。 */
