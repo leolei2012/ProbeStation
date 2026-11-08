@@ -67,14 +67,14 @@ let opened = 0, resolved = 0
 assert.equal(openAlarmHistory(() => { resolved++; return state(observation, now + 6000) }, () => opened++).kind, 'time'); assert.equal(opened, 0)
 openAlarmHistory(() => { resolved++; return ready }, target => { opened++; assert.equal(target, ready.target) }); assert.equal(resolved, 2); assert.equal(opened, 1)
 const gate = new HistoryNavigation(), target = { ...ready.target, token: 1 }
-const action = gate.consume(target, 7, [101, 202], true)!
+const action = gate.consume(target, 7, [101, 202], true, [{ ...point, slaveId: 2 }])!
 assert.equal(action.valueMode, 'raw'); assert.deepEqual(action.focus, { state: 'found', id: 101 })
 const range = resolveHistoryTimeRange(historyTimeRange(action.range!.start, action.range!.end, 'local'))
 const plan = historyQueryPlan({ objectId: 7, ...range, mode: 'chart', page: 0, registerIds: [action.focus!.id] })!
 const params = new URL(plan.url, 'http://example.invalid').searchParams
 assert.equal(params.get('register_ids'), '101'); assert.equal(params.get('end'), ready.sampledAt)
 assert.equal(gate.consume(target, 7, [101, 202], true), null, 'metadata refresh does not reapply raw mode or the captured range')
-assert.equal(gate.consume({ ...target, token: 2 }, 7, [101, 202], true)!.valueMode, 'raw', 'explicit repeated click is a new intent')
+assert.equal(gate.consume({ ...target, token: 2 }, 7, [101, 202], true, [{ ...point, slaveId: 2 }])!.valueMode, 'raw', 'explicit repeated click is a new intent')
 assert.deepEqual(new HistoryNavigation().consume(target, 7, [202], true)!.focus, { state: 'missing', id: 101 }, 'missing current ID is not remapped by address/alias')
 const previousTZ = process.env.TZ
 try {

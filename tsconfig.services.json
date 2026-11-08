@@ -38,6 +38,7 @@
     "scripts/test-history-feedback.ts",
     "scripts/test-device-connection-view.ts",
     "scripts/test-live-curve-context.ts",
+    "scripts/test-source-transition.ts",
     "scripts/test-history-capacity.ts",
     "scripts/audit-history-export-memory.ts",
     "scripts/fixtures/history-streaming-candidate.ts",

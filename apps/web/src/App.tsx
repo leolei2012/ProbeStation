@@ -91,7 +91,7 @@ const I18N: Record<Lang, Record<string, string>> = {
   zh: {
     pointCheckTab: '点表检查', pointCheckWaiting: '正在等待点表配置；加载失败时可使用顶部重试。',
     histCompareTitle: 'A/B 两点对比', histCompareHint: '先在图中移动指针或点击选择时刻，再设置 A、B。逐点取最近的显示采样，不插值；请核对每点实际采样时间。', histCompareSetA: '当前时刻设为 A', histCompareSetB: '当前时刻设为 B', histCompareClear: '清空对比', histCompareCursorDelta: '游标时间差 B − A', histCompareA: 'A 最近显示采样', histCompareB: 'B 最近显示采样', histCompareDifference: '数值差 B − A', histCompareSampleDelta: '实际采样时间差', histCompareNoSample: '无可用显示采样', histCompareEmpty: '设置 A/B 后在这里比较；可先设置任意一端。', histCompareLimit: '基于显示采样快照，放大可获取更细数据；断线/无效处显示未知，不跨缺口取值。未验证端点仅供查看，不作自动 PASS/FAIL。缩放或刷新不会改写已设点；更改点位、图例、配置、数值模式或完整时间范围会清空。相对量程仅影响绘图。',
-    histNavigationWaiting: '正在等待点表加载以定位点位 #{id}；加载失败时可使用顶部重试。', histNavigationMissing: '当前已加载点表中未找到点位 #{id}，请刷新配置后再次点击引用，或重新选择点位。', histNavigationInvalid: '历史跳转参数无效，请手动选择时间与点位。',
+    histNavigationWaiting: '正在等待点表加载以定位点位 #{id}；加载失败时可使用顶部重试。', histNavigationMissing: '当前已加载点表中未找到点位 #{id}，请刷新配置后再次点击引用，或重新选择点位。', histNavigationChanged: '点位 #{id} 的来源或类型已变化，未自动定位；请核对当前点位后重新点击告警引用。', histNavigationInvalid: '历史跳转参数无效，请手动选择时间与点位。',
     pointBookReport: '点表导入结果', pointBookFile: '文件', pointBookCompleted: '导入已完成', pointBookRejected: '导入未完成', pointBookUncertain: '导入结果待核实', pointBookCounts: '{g} 个分组 · {r} 个点位', pointBookWarnings: '需要核对的提示', pointBookErrors: '错误详情', pointBookUncertainHint: '请求或返回异常，配置可能已更新。请核对当前配置后再决定是否重新导入。', pointBookInvalidReport: '服务端返回的导入结果格式无效。',
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
@@ -169,7 +169,7 @@ const I18N: Record<Lang, Record<string, string>> = {
   en: {
     pointCheckTab: 'Point table check', pointCheckWaiting: 'Waiting for point definitions. Use the retry control above if loading fails.',
     histCompareTitle: 'A/B sample comparison', histCompareHint: 'Move or tap in the plot, then set A and B. Use nearest displayed samples without interpolation; check each actual sample time.', histCompareSetA: 'Set A at cursor', histCompareSetB: 'Set B at cursor', histCompareClear: 'Clear comparison', histCompareCursorDelta: 'Cursor elapsed B − A', histCompareA: 'A nearest displayed sample', histCompareB: 'B nearest displayed sample', histCompareDifference: 'Value B − A', histCompareSampleDelta: 'Actual sample elapsed', histCompareNoSample: 'No usable displayed sample', histCompareEmpty: 'Set either endpoint to begin comparing.', histCompareLimit: 'Frozen displayed-sample snapshots; zoom for detail. Gaps and invalid data stay unknown. Unverified endpoints are view-only, never automatic PASS/FAIL evidence. Zoom/refresh keeps snapshots; changes to points, legend, configuration, value mode or full range clear them. Relative scaling affects the plot only.',
-    histNavigationWaiting: 'Waiting for point definitions to locate #{id}. Use the retry control above if loading fails.', histNavigationMissing: 'Point #{id} was not found in the loaded definitions. Refresh configuration and reopen the reference, or select a point.', histNavigationInvalid: 'Invalid history navigation parameters. Select the time range and points manually.',
+    histNavigationWaiting: 'Waiting for point definitions to locate #{id}. Use the retry control above if loading fails.', histNavigationMissing: 'Point #{id} was not found in the loaded definitions. Refresh configuration and reopen the reference, or select a point.', histNavigationChanged: 'Point #{id} source or type changed; automatic focus blocked. Check the point and click its alarm reference again.', histNavigationInvalid: 'Invalid history navigation parameters. Select the time range and points manually.',
     pointBookReport: 'Point table import result', pointBookFile: 'File', pointBookCompleted: 'Import completed', pointBookRejected: 'Import not completed', pointBookUncertain: 'Import outcome unconfirmed', pointBookCounts: '{g} groups · {r} points', pointBookWarnings: 'Items to review', pointBookErrors: 'Error details', pointBookUncertainHint: 'The request or response failed; configuration may have changed. Check the current configuration before deciding to import again.', pointBookInvalidReport: 'The server returned an invalid import report.',
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
@@ -1196,9 +1196,9 @@ function HistoryView({ navigation, memory, configurationReady, target, t, device
   const [exportRequest, setExportRequest] = useState<HistoryExportRequest | null>(null)
   const [selected, setSelected] = useRegisterSelection(device.id, registers)
   const [navigationRevision, setNavigationRevision] = useState(0)
-  const [navigationNotice, setNavigationNotice] = useState<{ kind: 'waiting' | 'missing' | 'invalid'; id?: number } | null>(null)
+  const [navigationNotice, setNavigationNotice] = useState<{ kind: 'waiting' | 'missing' | 'changed' | 'invalid'; id?: number } | null>(null)
   useEffect(() => {
-    const action = navigation.consume(target, device.id, registers.map(r => r.id), configurationReady)
+    const action = navigation.consume(target, device.id, registers.map(r => r.id), configurationReady, registers)
     if (!target || target.view !== 'history') setNavigationNotice(null)
     if (!action) return
     if (action.invalid) { setNavigationNotice({ kind: 'invalid' }); setSelected(new Set()); return }
@@ -1264,7 +1264,7 @@ function HistoryView({ navigation, memory, configurationReady, target, t, device
     </div>
     <p className="chart-hint" role="note">{t('histIntegrityHint')}</p>
     <HistoryReadNotice reason={!configurationReady ? 'waiting' : contextKey === null ? 'invalid' : contextChanged ? 'changed' : null} english={t('cancel') === 'Cancel'} />
-    {navigationNotice && <p className={'chart-hint' + (navigationNotice.kind !== 'waiting' ? ' warn' : '')} role={navigationNotice.kind === 'waiting' ? 'status' : 'alert'}>{t(navigationNotice.kind === 'waiting' ? 'histNavigationWaiting' : navigationNotice.kind === 'missing' ? 'histNavigationMissing' : 'histNavigationInvalid').replace('{id}', String(navigationNotice.id ?? ''))}</p>}
+    {navigationNotice && <p className={'chart-hint' + (navigationNotice.kind !== 'waiting' ? ' warn' : '')} role={navigationNotice.kind === 'waiting' ? 'status' : 'alert'}>{t(navigationNotice.kind === 'waiting' ? 'histNavigationWaiting' : navigationNotice.kind === 'missing' ? 'histNavigationMissing' : navigationNotice.kind === 'changed' ? 'histNavigationChanged' : 'histNavigationInvalid').replace('{id}', String(navigationNotice.id ?? ''))}</p>}
     {valueMode === 'physical' && <p className="chart-hint">{t('physicalHistoryHint')}</p>}
     <div className="hist-quick history-presets">
       {[5, 30, 60, 360, 1440, 0].map(minutes => <button key={minutes} className={'btn' + (preset === minutes ? ' selected' : '')} onClick={() => applyPreset(minutes)}>{minutes === 0 ? t('histToday') + (t('cancel') === 'Cancel' ? ' (local)' : '（本地）') : minutes < 60 ? t('histMinutes').replace('{n}', String(minutes)) : t('histHours').replace('{n}', String(minutes / 60))}</button>)}

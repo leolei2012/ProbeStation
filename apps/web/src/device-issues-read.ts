@@ -1,7 +1,7 @@
 import { LatestConfigRead } from './config-read'
 import { runRequestWithTimeout, RequestTimeoutError } from './request-timeout'
 
-export type DataTarget = { deviceId: number; view: 'live' | 'history' | 'diagnostics'; label: string; registerId?: number; start?: string; end?: string; valueMode?: 'raw' | 'physical'; token?: number }
+export type DataTarget = { deviceId: number; view: 'live' | 'history' | 'diagnostics'; label: string; registerId?: number; start?: string; end?: string; valueMode?: 'raw' | 'physical'; token?: number; pointSource?: string }
 export type DeviceIssue = Omit<DataTarget, 'token'> & { readonly reason: string }
 class InvalidDeviceIssues extends Error {}
 const id = (value: unknown) => Number.isSafeInteger(value) && Number(value) > 0
