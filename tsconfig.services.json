@@ -112,6 +112,7 @@
     "scripts/test-core-readiness.ts",
     "scripts/test-device-write-quarantine.ts",
     "scripts/test-config-write-entrypoints.ts",
-    "scripts/test-destructive-write-outcomes.ts"
+    "scripts/test-destructive-write-outcomes.ts",
+    "scripts/test-write-outcome-audit.ts"
   ]
 }

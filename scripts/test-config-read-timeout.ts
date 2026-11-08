@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { CONFIG_WRITE_NOT_STARTED, configurationWriteReceipt } from '../apps/web/src/configuration-write-outcome.ts'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { createElement } from 'react'
@@ -62,7 +63,7 @@ assert.equal(progressing.length, 3); assert(Date.now() - began >= 15)
 
 // Include the real response JSON/text body waits, not merely a mock network-header wait.
 const requestNode = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'request')!
-const bodyRequest = new Function('fetch', ts.transpileModule('return (' + requestNode.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)
+const bodyRequest = (fetcher: unknown) => new Function('fetch', 'configurationWriteReceipt', 'CONFIG_WRITE_NOT_STARTED', ts.transpileModule('return (' + requestNode.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(fetcher, configurationWriteReceipt, CONFIG_WRITE_NOT_STARTED)
 for (const ok of [true, false]) {
   let aborted = false
   const actualRequest = bodyRequest(async (_url: string, options: RequestInit) => { options.signal!.addEventListener('abort', () => { aborted = true }); return { ok, status: ok ? 200 : 503, json: () => new Promise(() => {}), text: () => new Promise(() => {}) } })

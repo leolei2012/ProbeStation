@@ -9,7 +9,7 @@ import { captureDeviceEditBaseline } from '../packages/core/src/device-settings-
 import { captureGroupOpening, parseGroupEditChanges, planGroupResize } from '../packages/core/src/group-settings-edit.ts'
 import { saveGuardedPointSettings } from '../apps/web/src/point-settings-save.ts'
 import { readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings } from '../apps/web/src/group-settings-save.ts'
-import { configurationWriteBlocked } from '../apps/web/src/configuration-write-outcome.ts'
+import { CONFIG_WRITE_NOT_STARTED, configurationWriteBlocked, configurationWriteReceipt } from '../apps/web/src/configuration-write-outcome.ts'
 import { draftEditor } from './fixtures/draft-navigation-driver.ts'
 import { hookDriver } from './fixtures/component-hook-driver.ts'
 
@@ -37,7 +37,7 @@ async function fixture(quarantine = true) {
     if (response) assert(!JSON.stringify(body).includes('PRIVATE'))
     if (lose) throw Error('synthetic lost response')
     return { ok: status < 400, status, text: async () => JSON.stringify(body), json: async () => body }
-  } })
+  }, configurationWriteReceipt, CONFIG_WRITE_NOT_STARTED })
   const send = (method: 'PUT' | 'POST', url: string, body: unknown) => request(url, { method, body: JSON.stringify(body) })
   if (quarantine) { db.exec = sql => { if (sql === 'COMMIT' || sql === 'ROLLBACK') throw Error('PRIVATE transaction'); return exec(sql) }; assert.throws(() => cfg.updateGroup(group.id, { quantity: 3 }), AggregateError); db.exec = exec }
   return { cfg, http, db, exec, prepare, device, baseline, expected, send,

@@ -1,3 +1,5 @@
+import { CONFIG_WRITE_NOT_STARTED, configurationWriteReceipt } from './configuration-write-outcome'
+
 export interface PointBookReport { groups: number; registers: number; errors: string[]; warnings: string[] }
 export class InvalidPointBookReportError extends Error {
   constructor() { super('Invalid point book import report'); this.name = 'InvalidPointBookReportError' }
@@ -16,13 +18,14 @@ export async function uploadPointBook(objectId: number, file: Blob, fetcher: typ
   const response = await fetcher('/api/monitor_objects/' + objectId + '/points/book', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file })
   if (!response.ok) {
     const data = await response.json().catch(() => null)
-    if (response.status === 503 && data?.version === 1 && data.code === 'CONFIG_WRITE_NOT_STARTED' && data.outcome === 'not-applied') {
+    if (configurationWriteReceipt(data, response.status, true)) {
       try { const report = parsePointBookReport(data.report); if (report.groups === 0 && report.registers === 0 && report.errors.length > 0) return report } catch { /* An incomplete or contradictory receipt stays uncertain. */ }
     }
-    const detail = typeof data?.error === 'string' ? data.error : typeof data?.message === 'string' ? data.message : ''
+    const detail = data?.code === CONFIG_WRITE_NOT_STARTED ? '' : typeof data?.error === 'string' ? data.error : typeof data?.message === 'string' ? data.message : ''
     throw new Error(`HTTP ${response.status}${detail ? ': ' + detail.slice(0, 1000) : ''}`)
   }
   let data: unknown
   try { data = await response.json() } catch { throw new InvalidPointBookReportError() }
+  if ((data as { code?: unknown } | null)?.code === CONFIG_WRITE_NOT_STARTED) throw new InvalidPointBookReportError()
   return parsePointBookReport(data)
 }

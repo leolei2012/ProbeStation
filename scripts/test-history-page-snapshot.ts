@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { CONFIG_WRITE_NOT_STARTED, configurationWriteReceipt } from '../apps/web/src/configuration-write-outcome.ts'
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -116,7 +117,7 @@ try {
     const transpile = (text: string) => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, jsx: ts.JsxEmit.React } }).outputText
     const app = Fastify(); let active = failed
     new Function('fastify', 'store', transpile(route.getText(apiSource)))(app, { queryObjectPage: (...args: Parameters<DuckDBStore['queryObjectPage']>) => active.queryObjectPage(...args) })
-    const request = new Function('fetch', transpile(declaration('request').getText(uiSource)) + ';return request')(async (url: string) => { const result = await app.inject(url); return { ok: result.statusCode < 400, status: result.statusCode, text: async () => result.body, json: async () => result.json() } })
+    const request = new Function('fetch', 'configurationWriteReceipt', 'CONFIG_WRITE_NOT_STARTED', transpile(declaration('request').getText(uiSource)) + ';return request')(async (url: string) => { const result = await app.inject(url); return { ok: result.statusCode < 400, status: result.statusCode, text: async () => result.body, json: async () => result.json() } }, configurationWriteReceipt, CONFIG_WRITE_NOT_STARTED)
     const body = new Function('React', 'chartCursorLabel', 'PointLabel', transpile(declaration('HistoryTableBody').getText(uiSource)) + ';return HistoryTableBody')(React, String, () => null)
     let state: HistoryReadState<any> | null = null
     const run = async (revision: number) => {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { CONFIG_WRITE_NOT_STARTED, configurationWriteReceipt } from '../apps/web/src/configuration-write-outcome.ts'
 import { readFileSync } from 'node:fs'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -48,7 +49,7 @@ const failures: unknown[] = []; let passed = 0
 async function check(name: string, action: () => Promise<void>) { try { await action(); passed++; console.log('HISTORY FEEDBACK OK:', name) } catch (error) { failures.push(error); console.error('HISTORY FEEDBACK FAILED:', name, error) } }
 
 await check('actual query request/task/table distinguish empty, HTTP failure, cancellation and late error', async () => {
-  const Request = new Function('fetch', compile(fn(appSource, 'request')) + ';return request')
+  const Request = (fetcher: unknown) => new Function('fetch', 'configurationWriteReceipt', 'CONFIG_WRITE_NOT_STARTED', compile(fn(appSource, 'request')) + ';return request')(fetcher, configurationWriteReceipt, CONFIG_WRITE_NOT_STARTED)
   const Table = new Function('React', 'PointLabel', 'chartCursorLabel', compile(fn(appSource, 'HistoryTableBody')) + ';return HistoryTableBody')(React, () => null, String)
   let response: () => Promise<Response> = async () => new Response(JSON.stringify({ points: [], total: 0 }))
   const request = Request(() => response())

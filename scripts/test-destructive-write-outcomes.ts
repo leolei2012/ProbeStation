@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { CONFIG_WRITE_NOT_STARTED, configurationWriteReceipt } from '../apps/web/src/configuration-write-outcome.ts'
 import { readFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
 import ts from 'typescript'
@@ -42,7 +43,7 @@ async function fixture(quarantine = true) {
     if (lost) throw Error('synthetic response lost after admission')
     return new Response(JSON.stringify(lastBody), { status: lastStatus, headers: { 'Content-Type': 'application/json' } })
   }) as typeof fetch
-  const actualRequest = compile('return (' + request.getText(web) + ')', { fetch: fetcher })
+  const actualRequest = compile('return (' + request.getText(web) + ')', { fetch: fetcher, configurationWriteReceipt, CONFIG_WRITE_NOT_STARTED })
   if (quarantine) { db.exec = query => { if (query === 'COMMIT' || query === 'ROLLBACK') throw Error('PRIVATE transaction'); return exec(query) }; assert.throws(() => cfg.updateGroup(g.id, { quantity: 2 }), AggregateError); db.exec = exec }
   return { cfg, db, exec, prepare, target, file, fetcher, actualRequest, stats: () => ({ notifications, syncs, imports, requests, sql, lastStatus, lastBody }), force(value?: typeof force) { force = value }, lose(value: boolean) { lost = value },
     forbidSQL() { db.exec = () => { sql++; assert.fail('new refused request SQL') }; db.prepare = () => { sql++; assert.fail('new refused request prepare') } },

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { CONFIG_WRITE_NOT_STARTED, configurationWriteReceipt } from '../apps/web/src/configuration-write-outcome.ts'
 import { readFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
 import Fastify from 'fastify'
@@ -11,7 +12,7 @@ import { draftEditor } from './fixtures/draft-navigation-driver.ts'
 
 const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 const request = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'request')!
-const adapter = new Function('fetch', ts.transpileModule('return (' + request.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)
+const adapter = (fetcher: unknown) => new Function('fetch', 'configurationWriteReceipt', 'CONFIG_WRITE_NOT_STARTED', ts.transpileModule('return (' + request.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(fetcher, configurationWriteReceipt, CONFIG_WRITE_NOT_STARTED)
 const tick = () => new Promise<void>(done => setImmediate(done))
 const failures: string[] = [], unhandled: unknown[] = [], passed: string[] = []
 const collect = (error: unknown) => unhandled.push(error)
