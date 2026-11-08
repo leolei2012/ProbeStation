@@ -5,6 +5,7 @@ import { registerRegisterWrite } from './register-write.ts'
 import { registerLogCleanup } from './log-cleanup.ts'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import type { Context } from 'cordis'
+import type {} from './events.ts'
 import z from 'schemastery'
 import Fastify, { type FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
@@ -329,19 +330,19 @@ export function apply(ctx: Context, config: Config): void {
   })
 
   // ── 事件中继（同步注册，供 WS 广播） ──────────────────────
-  ctx.on('poller/result', ({ objectId, points }: any) => {
+  ctx.on('poller/result', ({ objectId, points }) => {
     const msg = JSON.stringify({ type: 'poller/result', objectId, points })
     broadcast(msg)
   })
-  ctx.on('rule/trigger', (payload: any) => {
+  ctx.on('rule/trigger', payload => {
     const msg = JSON.stringify({ type: 'rule/trigger', ...payload })
     broadcast(msg)
   })
-  ctx.on('poller/group-error', (payload: any) => {
+  ctx.on('poller/group-error', payload => {
     const msg = JSON.stringify({ type: 'group-error', ...payload })
     broadcast(msg)
   })
-  ctx.on('poller/group-ok', (payload: any) => {
+  ctx.on('poller/group-ok', payload => {
     const msg = JSON.stringify({ type: 'group-ok', ...payload })
     broadcast(msg)
   })
@@ -349,7 +350,7 @@ export function apply(ctx: Context, config: Config): void {
     const msg = JSON.stringify({ type: 'config/changed', ...payload })
     broadcast(msg)
   })
-  ctx.on('device/status', (payload: any) => {
+  ctx.on('device/status', payload => {
     const msg = JSON.stringify({ type: 'device/status', ...payload })
     broadcast(msg)
   })

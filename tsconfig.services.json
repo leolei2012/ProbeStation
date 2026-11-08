@@ -1,6 +1,7 @@
 {
   "extends": "./tsconfig.web.json",
   "include": [
+    "packages/api/src",
     "packages/config/src",
     "packages/poller/src",
     "packages/slave/src/devices.ts",
@@ -50,6 +51,7 @@
     "scripts/test-draft-accessibility.ts",
     "scripts/test-communication-loading.ts",
     "scripts/test-alarm-log-failure.ts",
+    "scripts/test-api-types.ts",
     "scripts/fixtures/draft-focus-model.ts",
     "scripts/fixtures/unload-events.ts",
     "scripts/fixtures/draft-navigation-driver.ts",

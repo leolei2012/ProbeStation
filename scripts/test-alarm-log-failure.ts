@@ -7,8 +7,7 @@ import { Context } from 'cordis'
 import * as configPlugin from '../packages/config/src/index.ts'
 import * as storePlugin from '../packages/store/src/index.ts'
 import * as rulePlugin from '../packages/rule/src/index.ts'
-// Execute the actual API assembly without expanding this selective typecheck to its legacy entry tree.
-const apiPlugin = await import(new URL('../packages/api/src/index.ts', import.meta.url).href)
+import * as apiPlugin from '../packages/api/src/index.ts'
 
 class Socket extends EventEmitter {
   readyState = 1; terminated = 0; messages: any[] = []
@@ -34,7 +33,7 @@ async function scenario(mode: 'insert' | 'prune' | 'exporter' | 'normal', test: 
     app = ctx.get('api', false); let ws: ((socket: Socket) => void) | undefined
     app.addHook('onRoute', (route: any) => { if (route.url === '/ws' && route.websocket) ws = route.handler })
     await app.ready(); assert(ws); ws(socket)
-    ;(ctx as any).on('rule/trigger', (event: any) => events.push(event))
+    ctx.on('rule/trigger', event => events.push(event))
     if (mode === 'insert' || mode === 'exporter') cfg.db.exec("CREATE TRIGGER synthetic_log_insert BEFORE INSERT ON logs BEGIN SELECT RAISE(ABORT, 'synthetic-private-log-failure'); END")
     if (mode === 'prune') {
       cfg.db.exec("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10099) INSERT INTO logs(ts,level,source,message) SELECT '2026-11-08T00:00:00Z','INFO','synthetic','seed' FROM n")

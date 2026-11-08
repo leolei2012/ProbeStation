@@ -26,7 +26,7 @@ type Turn = { entryIndex: number; startedAt: number; endedAt?: number; state: 'r
 type Session = { sources?: Source[]; activity?: string; partial?: string; compacting?: boolean; turns: Turn[]; id: string; deviceId: number | null; messages: any[]; entries: Entry[]; proposals: Proposal[]; touched: number; running: boolean; controller?: AbortController; error?: string }
 const areas = ['coil', 'discrete-input', 'holding-register', 'input-register']
 const json = (value: unknown) => JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-const fail = (message: string, statusCode = 400): never => { throw Object.assign(new Error(message), { statusCode }) }
+const fail: (message: string, statusCode?: number) => never = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }) }
 const integer = (n: unknown, min = 1, max = 2147483647): number => typeof n === 'number' && Number.isSafeInteger(n) && n >= min && n <= max ? n : fail('整数参数超出范围')
 const string = (v: unknown, max = Number.MAX_SAFE_INTEGER): string => typeof v === 'string' && v.trim() && v.length <= max ? v.trim() : fail('文本参数为空或过长')
 const object = (v: any) => v && typeof v === 'object' && !Array.isArray(v) ? v : fail('参数必须是对象')
