@@ -95,6 +95,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointBookReport: '点表导入结果', pointBookFile: '文件', pointBookCompleted: '导入已完成', pointBookRejected: '导入未完成', pointBookUncertain: '导入结果待核实', pointBookCounts: '{g} 个分组 · {r} 个点位', pointBookWarnings: '需要核对的提示', pointBookErrors: '错误详情', pointBookUncertainHint: '请求或返回异常，配置可能已更新。请核对当前配置后再决定是否重新导入。', pointBookInvalidReport: '服务端返回的导入结果格式无效。',
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
+    connectionUnverified: '设备连接状态未核实',
     histExportTooLarge: '超过 {n} 条原始行，导出会被截断，已停止生成文件。请取消并减少点位或缩小时间范围后重试。', histExportPreparing: '正在生成导出，可取消本页等待…', histExportTimeout: '导出等待超过 30 秒，本页已停止等待，后台可能继续生成。请缩小时间范围后重试。',
     histExportFull: '导出完整时间范围', histExportViewport: '导出当前缩放区间', histExportSelected: '{n} 个已选点位 · 原始历史（含批次状态）', histExportHint: '按所示时间范围导出，不受图例显隐、Y 轴范围或降采样影响。只读取已选点位所需的数据区和原始字，每次最多 20 万条；超过时请减少点位或缩小时间范围。上限不是导出表格的行数。',
     histExportCapacityNote: 'XLSX 最多 {n} 个点位（每点位 3 列）。原始行上限不等于内存上限，点位多、时间长仍可能消耗大量内存。建议先减少点位、缩短范围；CSV 也有内存风险。', histExportCancellationNote: '取消或超时只停止本页等待及下载，后台可能继续生成；立即重复导出可能叠加资源占用。',
@@ -171,6 +172,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointBookReport: 'Point table import result', pointBookFile: 'File', pointBookCompleted: 'Import completed', pointBookRejected: 'Import not completed', pointBookUncertain: 'Import outcome unconfirmed', pointBookCounts: '{g} groups · {r} points', pointBookWarnings: 'Items to review', pointBookErrors: 'Error details', pointBookUncertainHint: 'The request or response failed; configuration may have changed. Check the current configuration before deciding to import again.', pointBookInvalidReport: 'The server returned an invalid import report.',
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
+    connectionUnverified: 'Device connection unverified',
     histExportTooLarge: 'More than {n} raw rows: exporting would truncate the data, so no file was generated. Cancel, select fewer points or narrow the time range and retry.', histExportPreparing: 'Preparing an export. You can stop waiting…', histExportTimeout: 'This page stopped waiting after 30 seconds. Backend generation may continue. Narrow the range before retrying.',
     histExportFull: 'Export full time range', histExportViewport: 'Export zoomed time range', histExportSelected: '{n} selected points · Raw history with batch status', histExportHint: 'Export the stated time range regardless of legend visibility, Y-axis limits or downsampling. Read only the raw words required by selected points, up to 200,000 rows. Select fewer points or narrow the range if exceeded. This is not the number of spreadsheet rows.',
     histExportCapacityNote: 'XLSX supports up to {n} points (3 columns per point). The raw-row limit is not a memory limit: wide or long exports can still use substantial memory. Start with fewer points and a shorter range; CSV also has memory risks.', histExportCancellationNote: 'Cancel or timeout stops this page waiting and downloading. Backend generation may continue; immediately starting another export may add resource load.',
@@ -579,6 +581,7 @@ export default function App() {
     }
     const connect = () => {
       if (stopped) return
+      setDeviceConnected({})
       const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://'
       updateStatus(attempt === 0 ? 'connecting' : 'reconnecting', attempt)
       const socket = new WebSocket(protocol + location.host + '/ws')
@@ -721,7 +724,7 @@ export default function App() {
                   onPointerCancel={() => { setDraggedDevice(null); setDropTarget(null) }}
                   onLostPointerCapture={() => { setDraggedDevice(null); setDropTarget(null) }}>⠿</span>}
                 <button className="device-select" aria-current={selectedId === d.id ? 'page' : undefined} onClick={() => { setDataTarget(null); setSelectedId(d.id); setView('monitor'); if (window.innerWidth <= 768) setCollapsed(true) }}>
-                  <span className={'device-dot' + (deviceConnected[d.id] === true ? ' on' : '')} />
+                  <span className={'device-dot' + (realtime.status === 'connected' && deviceConnected[d.id] === true ? ' on' : '')} title={realtime.status !== 'connected' || deviceConnected[d.id] === undefined ? t('connectionUnverified') : undefined} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="device-name">{d.name}</div>
                     <div className="device-sub">{d.transport === 'rtu' ? (d.serialPath || 'RTU') : (d.ip + ':' + d.port)}</div>
@@ -756,7 +759,7 @@ export default function App() {
         {view === 'database'
           ? <DatabaseView t={t} devices={devices} />
           : (selected
-              ? <DeviceView onNavigate={navigateData} configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={deviceConnected[selected.id] === true} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+              ? <DeviceView onNavigate={navigateData} configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={realtime.status === 'connected' ? deviceConnected[selected.id] : undefined} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
               : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
       </main>
 
@@ -852,7 +855,7 @@ function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
 }
 
 function DeviceView({ onNavigate, configurationReady, target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
-  configurationReady: boolean; target: DataTarget | null; t: T; device: Device; connected: boolean; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
+  configurationReady: boolean; target: DataTarget | null; t: T; device: Device; connected: boolean | undefined; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
   onNavigate: (target: DataTarget) => void
   realtime: { status: RealtimeStatus; attempt: number }
   fallbackOk?: boolean
@@ -879,7 +882,7 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
       <div className="section-eyebrow">{t('overview')}</div>
       <div className="device-head">
         <span className="name">{device.name}</span>
-        <span className={'status-badge' + (device.isActive && connected ? ' on' : '')}>{device.mode === 'slave' ? !device.isActive ? '从站已停止' : connected ? '从站运行中' : '从站未启动' : !device.isActive ? t('pausedData') : !groups.some(g => g.isActive) ? t('noActiveGroups') : connected ? t('sampling') : t('connectionPending')}</span>
+        <span className={'status-badge' + (device.isActive && connected ? ' on' : '')}>{device.mode === 'slave' ? !device.isActive ? '从站已停止' : connected === undefined ? t('connectionUnverified') : connected ? '从站运行中' : '从站未启动' : !device.isActive ? t('pausedData') : !groups.some(g => g.isActive) ? t('noActiveGroups') : connected === undefined ? t('connectionUnverified') : connected ? t('sampling') : t('connectionPending')}</span>
         <div style={{ flex: 1 }} />
         <button className="btn" disabled={busy} onClick={() => onToggle(device.id)}>{device.mode === 'slave' ? device.isActive ? '停止从站' : '启动从站' : device.isActive ? t('disconnect') : t('connect')}</button>
         <button className="btn" onClick={() => setShowEdit(true)}>{t('edit')}</button>
