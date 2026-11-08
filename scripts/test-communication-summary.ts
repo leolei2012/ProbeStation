@@ -4,7 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { apply } from '../packages/poller/src/index.ts'
 import { ModbusDiagnostics } from '../packages/modbus/src/diagnostics.ts'
 import { communicationScope, parseCommunicationSummary, CommunicationSummaryRead } from '../apps/web/src/communication-summary.ts'
-import { CommunicationSummary, CommunicationSummaryView } from '../apps/web/src/CommunicationSummary.tsx'
+import { CommunicationSummary } from '../apps/web/src/CommunicationSummary.tsx'
+import { CommunicationSummaryView } from '../apps/web/src/CommunicationSummaryView.tsx'
 
 const tcp = { id: 1, transport: 'tcp', mode: 'master' }, rtu = { id: 2, transport: 'rtu', serialPath: 'COM_MOCK', mode: 'master' }, shared = { ...rtu, id: 3 }
 const scope = communicationScope(tcp), serialScope = communicationScope(rtu), devices = [tcp, rtu, shared]

@@ -12,10 +12,12 @@ let manifest: Record<string, any>
 try { manifest = JSON.parse(readFileSync(resolve(dist, '.vite/manifest.json'), 'utf8')) }
 catch { throw new Error('缺少有效前端构建清单，请先运行 npm run build:web。') }
 const renderer = 'src/AssistantMarkdown.tsx', settings = 'src/SettingsModal.tsx', diagnostics = 'src/PointDiagnostics.tsx', entry = 'index.html'
+const communication = 'src/CommunicationSummaryView.tsx'
 assert.equal(manifest[entry]?.isEntry, true, 'missing frontend entry; run npm run build:web')
 assert.equal(manifest[renderer]?.isDynamicEntry, true, 'Markdown must remain a separate deferred entry')
 assert.equal(manifest[settings]?.isDynamicEntry, true, 'Settings must remain a separate deferred entry')
 assert.equal(manifest[diagnostics]?.isDynamicEntry, true, 'Point diagnostics must remain a separate deferred entry')
+assert.equal(manifest[communication]?.isDynamicEntry, true, 'Communication details must remain a separate deferred entry')
 function closure(start: string) {
   const visited = new Set<string>()
   const walk = (key: string) => {
@@ -30,6 +32,8 @@ const startup = closure(entry)
 assert.ok(!startup.has(renderer), 'Markdown renderer entered the startup graph')
 assert.ok(!startup.has(settings), 'Settings entered the startup graph')
 assert.ok(!startup.has(diagnostics), 'Point diagnostics entered the startup graph')
+assert.ok(!startup.has(communication), 'Communication details entered the startup graph')
+assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(communication)), 'communication details are not dynamically reachable')
 assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(diagnostics)), 'point diagnostics is not reachable through a dynamic import')
 assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(renderer)), 'renderer is not reachable through a dynamic import')
 assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(settings)), 'settings is not reachable through a dynamic import')
@@ -38,6 +42,7 @@ assert.ok(html.includes('src="/' + manifest[entry].file + '"'))
 assert.ok(!html.includes(manifest[renderer].file), 'HTML eagerly references the renderer')
 assert.ok(!html.includes(manifest[settings].file), 'HTML eagerly references settings')
 assert.ok(!html.includes(manifest[diagnostics].file), 'HTML eagerly references point diagnostics')
+assert.ok(!html.includes(manifest[communication].file), 'HTML eagerly references communication details')
 function asset(file: string) {
   assert.equal(typeof file, 'string'); const full = resolve(dist, file), inside = relative(dist, full)
   assert.ok(inside && !inside.startsWith('..') && !isAbsolute(inside) && /\.(js|css)$/.test(file), 'asset must stay inside frontend dist')
@@ -52,6 +57,8 @@ function sizes(keys: Set<string>) {
 const deferred = new Set([...closure(renderer)].filter(key => !startup.has(key))), initialSize = sizes(startup), deferredSize = sizes(deferred)
 const diagnosticsSize = sizes(new Set([...closure(diagnostics)].filter(key => !startup.has(key))))
 const settingsSize = sizes(new Set([...closure(settings)].filter(key => !startup.has(key))))
+const communicationSize = sizes(new Set([...closure(communication)].filter(key => !startup.has(key))))
+const totalSize = sizes(new Set(Object.keys(manifest).filter(key => manifest[key].file.endsWith('.js'))))
 assert.ok(initialSize.bytes < 500000, 'Total statically required startup JS exceeds the 500 kB budget; splitting filenames alone is not sufficient')
 
 // Source-level guard: a tiny dynamic wrapper must not hide a static import of the heavy parser elsewhere.
@@ -64,8 +71,9 @@ function walkSource(key: string) {
   assert.ok(inputs[key], 'missing source dependency'); visited.add(key)
   assert.ok(!deferredDiagnostics.has(key.replaceAll('\\', '/')), 'Point diagnostics implementation is statically reachable from startup: ' + key)
   assert.ok(!deferredSettings.has(key.replaceAll('\\', '/')), 'Settings-only implementation is statically reachable from startup: ' + key)
+  assert.notEqual(key.replaceAll('\\', '/'), 'apps/web/src/CommunicationSummaryView.tsx', 'Communication details are statically reachable from startup')
   assert.ok(!/node_modules\/(react-markdown|remark-gfm)\//.test(key.replaceAll('\\', '/')), 'Markdown parser is statically reachable from startup')
   for (const dependency of inputs[key].imports) if (!dependency.external && dependency.kind !== 'dynamic-import') walkSource(dependency.path)
 }
 walkSource('apps/web/src/main.tsx')
-console.log(`WEB BUNDLE OK: startup JS ${initialSize.bytes} bytes (${initialSize.gzip} gzip); deferred settings ${settingsSize.bytes} bytes (${settingsSize.gzip} gzip); deferred Markdown ${deferredSize.bytes} bytes (${deferredSize.gzip} gzip); deferred diagnostics ${diagnosticsSize.bytes} bytes (${diagnosticsSize.gzip} gzip); source/manifest/HTML keep diagnostics, settings and parser out of startup; aggregate startup stays below 500 kB. Build sizes, not measured browser latency.`)
+console.log(`WEB BUNDLE OK: startup JS ${initialSize.bytes} bytes (${initialSize.gzip} gzip); all JS ${totalSize.bytes} bytes (${totalSize.gzip} gzip); deferred communication ${communicationSize.bytes} bytes (${communicationSize.gzip} gzip); deferred settings ${settingsSize.bytes} bytes (${settingsSize.gzip} gzip); deferred Markdown ${deferredSize.bytes} bytes (${deferredSize.gzip} gzip); deferred diagnostics ${diagnosticsSize.bytes} bytes (${diagnosticsSize.gzip} gzip); source/manifest/HTML keep optional interfaces and parser out of startup; aggregate startup stays below 500 kB. Build sizes, not measured browser latency.`)

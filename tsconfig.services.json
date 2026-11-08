@@ -48,6 +48,7 @@
     "scripts/test-before-unload.ts",
     "scripts/test-draft-composition.ts",
     "scripts/test-draft-accessibility.ts",
+    "scripts/test-communication-loading.ts",
     "scripts/fixtures/draft-focus-model.ts",
     "scripts/fixtures/unload-events.ts",
     "scripts/fixtures/draft-navigation-driver.ts",
