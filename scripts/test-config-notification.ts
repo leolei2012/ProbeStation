@@ -63,7 +63,7 @@ try {
       assert(!(error as Error).message.includes('private'))
     } finally { await cfg.close() }
   })
-  for (const mode of ['outer-transaction','sql-failure','validation-failure','transaction-rollback','commit-failure','commit-ack-unknown','partial-delete','protected-warning'] as const) await run(mode, async () => {
+  for (const mode of ['outer-transaction','sql-failure','validation-failure','transaction-rollback','commit-failure','commit-ack-unknown','delete-step-rollback','protected-warning'] as const) await run(mode, async () => {
     const f = fixture(), { cfg, db } = f, exec = db.exec.bind(db), before = f.graph()
     try {
       f.arm()
@@ -77,7 +77,7 @@ try {
         if (mode === 'commit-failure') assert.equal(f.graph(), before)
         else { assert.notEqual(f.graph(), before); assert(error instanceof AggregateError); console.log('CONFIG NOTIFY KNOWN LIMIT: commit acknowledgement can fail after native COMMIT; not inferred as no effect or classified by readback') }
       }
-      if (mode === 'partial-delete') { exec("CREATE TRIGGER synthetic_delete BEFORE DELETE ON registers BEGIN SELECT RAISE(ABORT, 'synthetic register delete blocked'); END"); const error = capture(() => cfg.deleteObject(f.d.id)); assert(error); assert.equal(committed(error), false); assert.equal(f.notifications(), 0); assert.equal(cfg.listRules().length, 0); assert(cfg.getObject(f.d.id)); console.log('CONFIG NOTIFY KNOWN LIMIT: legacy compound delete can partially change rows before SQL error; no false completely-failed claim') }
+      if (mode === 'delete-step-rollback') { exec("CREATE TRIGGER synthetic_delete BEFORE DELETE ON registers BEGIN SELECT RAISE(ABORT, 'synthetic register delete blocked'); END"); const error = capture(() => cfg.deleteObject(f.d.id)); assert(error); assert.equal(committed(error), false); assert.equal(f.notifications(), 0); assert.equal(f.graph(), before); assert.equal(db.isTransaction, false) }
       if (mode === 'protected-warning') { const snapshot = cfg.getGroupSettings(f.g.id); const result = cfg.updateGroupSettings(f.g.id, { expectedRevision: snapshot.revision, changes: { name: 'after' } }); assert.equal(result.snapshot.group.name, 'after'); assert.equal(result.warnings.length, 1); assert(result.warnings[0].includes('已保存')); assert.equal(f.notifications(), 1) }
     } finally { db.exec = exec; if (db.isTransaction) exec('ROLLBACK'); await cfg.close() }
   })

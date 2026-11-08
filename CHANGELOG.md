@@ -109,6 +109,8 @@
 
 ### Fixed
 
+- ConfigStore旧deleteObject/deleteGroup/deleteRegister的原SQL用私有保存点保护，普通失败撤销本次删除；已有批量事务继续由原拥有者回滚，外层事务保留此前修改。回滚/释放回执不明仍抛结果未知，通知仍在删除结束后、录制lease保守失效保持；不扩大删除where/表，不改API/MCP成功JSON。新增46个原生内存SQL/事务/故障/范围及实际MCP/REST场景，见`docs/develop/125-旧多步删除原子性与事务边界.md`。
+
 - ConfigStore通知前仅以isTransaction===false确认无待提交事务，同步通知异常保持错误并明确数据库操作已提交/通知未完成，原cause及statusCode/code保留；MCP旧告警适配器保留此阶段消息，正常成功响应、工具元数据及REST字段形状不变。新增29个真实内存SQL/事务故障/SDK/Fastify.inject回归，不吞事务内/SQL/提交错误，不重试、不凭读回猜状态，复合删除和回执未知仍是边界，见`docs/develop/124-配置提交与通知失败分类.md`。
 
 - MCP其他11处后置日志使用本层logCompleted隔离，失败/告警导出失败不误判已完成调用，原成功JSON和工具协议不变；创建/删除/启停后的3处从站同步失败保留isError，仅明确配置已提交、同步未完成并保留cause。新增53个SDK内存/模拟服务场景，内部notify提交后抛错及跨会话重复操作仍是边界，不吞主错误、不重试，见`docs/develop/123-MCP辅助故障与已提交结果.md`。

@@ -284,12 +284,34 @@ export class ConfigStore {
     try { this.notify('object', id) } catch { warnings.push('配置已保存，但变更通知失败；请刷新核对，勿重复保存。') }
     return { device, warnings }
   }
+  private deleteAtomically(action: () => void): void {
+    if (this.restoring) { action(); return } // The existing bulk transaction owns rollback and notification.
+    const ownsTransaction = this.db.isTransaction === false
+    const savepoint = 'config_delete_' + randomUUID().replaceAll('-', '')
+    this.db.exec(`SAVEPOINT ${savepoint}`)
+    try { action(); this.db.exec(`RELEASE SAVEPOINT ${savepoint}`) }
+    catch (error) {
+      const errors: unknown[] = [error]
+      let rolledBack = false
+      try { this.db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); rolledBack = true } catch (rollback) { errors.push(rollback) }
+      // Never release potentially partial changes after a failed rollback.
+      if (rolledBack) { try { this.db.exec(`RELEASE SAVEPOINT ${savepoint}`) } catch (release) { errors.push(release) } }
+      if (errors.length > 1) {
+        // A whole rollback is safe only when this delete opened the outermost transaction.
+        if (ownsTransaction) { try { this.db.exec('ROLLBACK') } catch (rollback) { errors.push(rollback) } }
+        throw new AggregateError(errors, '配置删除回滚未确认，结果待核实；请核对数据库状态，勿重复删除。')
+      }
+      throw error
+    }
+  }
   deleteObject(id: number): void {
     this.recordingIntervals.deleted(id)
-    this.db.prepare('DELETE FROM alarm_rules WHERE register_id IN (SELECT id FROM registers WHERE object_id = ?)').run(id)
-    this.db.prepare('DELETE FROM registers WHERE object_id = ?').run(id)
-    this.db.prepare('DELETE FROM register_groups WHERE object_id = ?').run(id)
-    this.db.prepare('DELETE FROM monitor_objects WHERE id = ?').run(id)
+    this.deleteAtomically(() => {
+      this.db.prepare('DELETE FROM alarm_rules WHERE register_id IN (SELECT id FROM registers WHERE object_id = ?)').run(id)
+      this.db.prepare('DELETE FROM registers WHERE object_id = ?').run(id)
+      this.db.prepare('DELETE FROM register_groups WHERE object_id = ?').run(id)
+      this.db.prepare('DELETE FROM monitor_objects WHERE id = ?').run(id)
+    })
     this.notify('object', id)
   }
   /** Additive conditional SET; legacy inversion methods remain unchanged for existing callers. */
@@ -438,9 +460,11 @@ export class ConfigStore {
     return { ...result, warnings }
   }
   deleteGroup(id: number): void {
-    this.db.prepare('DELETE FROM alarm_rules WHERE register_id IN (SELECT id FROM registers WHERE group_id = ?)').run(id)
-    this.db.prepare('DELETE FROM registers WHERE group_id = ?').run(id)
-    this.db.prepare('DELETE FROM register_groups WHERE id = ?').run(id)
+    this.deleteAtomically(() => {
+      this.db.prepare('DELETE FROM alarm_rules WHERE register_id IN (SELECT id FROM registers WHERE group_id = ?)').run(id)
+      this.db.prepare('DELETE FROM registers WHERE group_id = ?').run(id)
+      this.db.prepare('DELETE FROM register_groups WHERE id = ?').run(id)
+    })
     this.notify('group', id)
   }
   toggleGroup(id: number): GroupRecord | undefined {
@@ -640,8 +664,10 @@ export class ConfigStore {
     return { point, warnings }
   }
   deleteRegister(id: number): void {
-    this.db.prepare('DELETE FROM alarm_rules WHERE register_id = ?').run(id)
-    this.db.prepare('DELETE FROM registers WHERE id = ?').run(id)
+    this.deleteAtomically(() => {
+      this.db.prepare('DELETE FROM alarm_rules WHERE register_id = ?').run(id)
+      this.db.prepare('DELETE FROM registers WHERE id = ?').run(id)
+    })
     this.notify('register', id)
   }
 

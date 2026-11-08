@@ -10,6 +10,7 @@ tests.push('mcp-disconnect')
 tests.push('mcp-write-outcome')
 tests.push('mcp-auxiliary')
 tests.push('config-notification')
+tests.push('config-delete')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {
