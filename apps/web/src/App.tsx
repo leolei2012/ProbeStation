@@ -131,6 +131,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     newDevice: '新建设备',
     devices: '设备',
     noDevices: '暂无设备，点上方新建',
+    configUnread: '设备清单尚未核实，请查看上方读取提示。',
     workspace: '工作区',
     switchWorkspace: '切换工作区', addWorkspace: '添加工作区', newWorkspace: '新工作区', createdAt: '创建于',
     wsPath: '工作区路径',
@@ -209,6 +210,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     newDevice: 'New Device',
     devices: 'Devices',
     noDevices: 'No devices, create one above',
+    configUnread: 'Device list is unverified. See the read notice above.',
     workspace: 'Workspace',
     switchWorkspace: 'Switch workspace', addWorkspace: 'Add workspace', newWorkspace: 'New workspace', createdAt: 'Created',
     wsPath: 'Workspace path',
@@ -766,7 +768,7 @@ export default function App() {
                   </div> : <button className="device-del" aria-label={t('deleteDevice') + ': ' + d.name} disabled={operation.busy} onClick={() => deleteDevice(d.id)}>×</button>}
                 </div>
               ))}
-              {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t('noDevices')}</div>}
+              {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t(deviceLoadError ? 'configUnread' : 'noDevices')}</div>}
               {devices.length > 0 && visibleDevices.length === 0 && <div className="device-sub" style={{ padding: 12 }}>{t('noSearchResults')}</div>}
             </div>
           </>
@@ -791,7 +793,7 @@ export default function App() {
           ? <DatabaseView t={t} devices={devices} />
           : (selected
               ? <DeviceView drafts={draftNavigation} onLeaveDrafts={range => confirmDraftLeave(selected.id, range)} onNavigate={navigateData} configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={realtime.status === 'connected' ? deviceConnected[selected.id] : undefined} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
-              : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
+              : <EmptyState t={t} onAdd={() => setShowAdd(true)} unverified={deviceLoadError !== null} />)}
       </main>
 
       <AssistantPanel onNavigate={navigateData} configRevision={aiConfigRevision} onOpenSettings={() => { setSettingsSection('ai'); setShowSettings(true) }} key={selected?.id ?? 'all'} device={selected} onChanged={() => { refreshDevices(); if (selected) refreshRegisters(selected.id) }} />
@@ -801,8 +803,8 @@ export default function App() {
   )
 }
 
-function EmptyState({ t, onAdd }: { t: T; onAdd: () => void }) {
-  return <div className="empty-state"><div className="big">🛰️</div><div>{t('emptyHint')}</div><button className="btn primary" onClick={onAdd}>＋ {t('newDevice')}</button></div>
+function EmptyState({ t, onAdd, unverified = false }: { t: T; onAdd: () => void; unverified?: boolean }) {
+  return <div className="empty-state"><div className="big">🛰️</div><div>{t(unverified ? 'configUnread' : 'emptyHint')}</div>{!unverified && <button className="btn primary" onClick={onAdd}>＋ {t('newDevice')}</button>}</div>
 }
 
 function GlobalTabBar({ t, view, onChange }: { t: T; view: 'monitor' | 'database'; onChange: (v: 'monitor' | 'database') => void }) {

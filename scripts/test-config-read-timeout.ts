@@ -39,8 +39,8 @@ assert.equal((reads as any).CONFIG_READ_TIMEOUT_MS, 10000)
 const groupRead = { current: new reads.LatestConfigRead() }, selectedIdRef = { current: 5 }, groups = [1, 2].map(id => ({ id, name: 'g', slaveId: 1, functionCode: 3, startAddress: 0, quantity: 1, isActive: 1 }))
 const paths: string[] = [], snapshots: any[] = [], groupErrors: unknown[] = []
 let held = deferred<any>()
-let hang = true, hangGroup = 1
-const refreshRegisters = compile('refreshRegisters', { groupRead, selectedIdRef, readDeviceGroups: reads.readDeviceGroups, readConfigRequest: timeoutRead, configReadFailure: classify, request: async (url: string, options: RequestInit) => { assert.equal(options.method, undefined); paths.push(url); return url.includes('monitor_objects') ? groups : hang && url.includes('/' + hangGroup + '/') ? held.promise : [] }, setGroupSnapshot: (value: any) => snapshots.push(value), setGroupLoadError: (value: unknown) => groupErrors.push(value) })
+let hang = true, hangGroup = 1, groupUnavailable = false
+const refreshRegisters = compile('refreshRegisters', { groupRead, selectedIdRef, readDeviceGroups: reads.readDeviceGroups, readConfigRequest: timeoutRead, configReadFailure: classify, request: async (url: string, options: RequestInit) => { assert.equal(options.method, undefined); paths.push(url); if (groupUnavailable && url.includes('/2/registers')) throw Error('HTTP 503 PRIVATE group'); return url.includes('monitor_objects') ? groups : hang && url.includes('/' + hangGroup + '/') ? held.promise : [] }, setGroupSnapshot: (value: any) => snapshots.push(value), setGroupLoadError: (value: unknown) => groupErrors.push(value) })
 try {
   refreshRegisters(5); await tick(); assert.equal(groupErrors.at(-1), 'timeout'); assert.equal(snapshots.length, 0)
   assert.deepEqual(paths, ['/api/monitor_objects/5/groups', '/api/groups/1/registers'], 'timeout must stop subsequent requests and never publish a partial graph')
@@ -50,6 +50,8 @@ try {
   assert.equal(groupErrors.at(-1), 'timeout'); assert.equal(snapshots.length, 1, 'a timeout after an earlier group succeeded keeps the complete prior graph')
   held.resolve([{ id: 100 }]); await tick(0); assert.equal(snapshots.length, 1)
   hang = false; refreshRegisters(5); await tick(); assert.equal(groupErrors.at(-1), null); assert.equal(snapshots.length, 2)
+  groupUnavailable = true; refreshRegisters(5); await tick(); assert.equal(groupErrors.at(-1), 'unavailable'); assert.equal(snapshots.length, 2, '503 after the first group must retain the complete old graph')
+  groupUnavailable = false; refreshRegisters(5); await tick(); assert.equal(groupErrors.at(-1), null); assert.equal(snapshots.length, 3)
   held = deferred<any>(); hang = true; hangGroup = 1; const before = groupErrors.length; refreshRegisters(5); await tick(0); selectedIdRef.current = 6; groupRead.current.cancel(); await tick(); assert.equal(groupErrors.length, before, 'leaving a device cancels without publishing an error to its successor')
 } finally { groupRead.current.cancel() }
 
@@ -77,7 +79,40 @@ assert.match(render('timeout', null), /设备清单.*10.*秒.*重试/)
 assert.match(render(null, 'failed'), /点表.*失败.*上次/)
 assert.match(render('timeout', 'failed', true), /Device list.*10.*Point table.*Retry/)
 assert.match(render('failed', null), /role="alert"/)
+// The actual App HTTP adapter must retain a 503 distinction through its real refresh callback.
+let unavailable = true
+const httpCalls: string[] = []
+const unavailableRequest = bodyRequest(async (url: string, options?: RequestInit) => {
+  assert.equal(options?.method, undefined, 'recovery checks must only read'); httpCalls.push(url)
+  return { ok: !unavailable, status: unavailable ? 503 : 200, text: async () => JSON.stringify({ code: 'CONFIG_TRANSACTION_UNCONFIRMED', message: 'PRIVATE database detail' }), json: async () => [{ id: 2, connected: false }] }
+})
+try {
+  get = async () => [{ id: 2, connected: true }]; refreshDevices(); await tick()
+  get = (url, options) => unavailableRequest(url, options); const saved = accepted.at(-1), savedCount = accepted.length
+  refreshDevices(); await tick(); assert.equal(errors.at(-1), 'unavailable'); assert.equal(accepted.length, savedCount); assert.equal(accepted.at(-1), saved, '503 must retain the previous snapshot rather than publish empty')
+  refreshDevices(); await tick(); assert.equal(errors.at(-1), 'unavailable'); assert.equal(httpCalls.length, 2, 'manual read retry neither restores a connection nor sends a write')
+  unavailable = false; refreshDevices(); await tick(); assert.equal(errors.at(-1), null); assert.equal(accepted.length, savedCount + 1); assert.deepEqual(accepted.at(-1), [{ id: 2, connected: false }])
+} finally { deviceRead.current.cancel() }
+for (const message of ['HTTP 500 service', 'HTTP 5030 service', 'HTTP 403 service', 'unrelated 503 text', 'mock HTTP 503']) assert.equal(classify(new Error(message)), 'failed')
+for (const message of ['HTTP 503', 'HTTP 503 Service Unavailable', 'HTTP 503 PRIVATE detail']) assert.equal(classify(new Error(message)), 'unavailable')
+for (const english of [false, true]) {
+  const markup = render('unavailable', 'failed', english)
+  assert.match(markup, /503/); assert.match(markup, english ? /administrator/i : /管理员/); assert.match(markup, english ? /read.only/i : /只读/); assert.match(markup, english ? /Do not.*sav.*import/i : /不要.*保存.*导入/)
+  assert(!markup.includes('PRIVATE')); assert.match(markup, /role="alert"/)
+  assert.match(render(null, 'unavailable', english), english ? /Point table.*503.*administrator/i : /点表.*503.*管理员/)
+}
+const emptyNode = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'EmptyState')!
+const EmptyState = new Function('React', ts.transpileModule('return (' + emptyNode.getText(source) + ')', { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)({ createElement })
+for (const unverified of [true, false]) {
+  const markup = renderToStaticMarkup(createElement(EmptyState, { t: (key: string) => key, onAdd() {}, unverified }))
+  if (unverified) { assert(markup.includes('configUnread')); assert(!markup.includes('<button')); assert(!markup.includes('emptyHint')) }
+  else { assert(markup.includes('emptyHint')); assert(markup.includes('<button')) }
+}
 const appText = source.getFullText(); assert.match(appText, /<ConfigLoadNotice\s+deviceError=\{deviceLoadError\}\s+groupError=\{groupLoadError\}/)
+let emptyGuard = ''
+const findEmptyGuard = (node: ts.Node) => { if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'EmptyState') { const attribute = node.attributes.properties.find(value => ts.isJsxAttribute(value) && value.name.getText(source) === 'unverified'); if (attribute && ts.isJsxAttribute(attribute)) emptyGuard = attribute.initializer?.getText(source) ?? '' }; ts.forEachChild(node, findEmptyGuard) }; findEmptyGuard(source)
+assert.equal(emptyGuard, '{deviceLoadError !== null}')
+assert.match(appText, /t\(deviceLoadError \? 'configUnread' : 'noDevices'\)/)
 assert.match(appText, /onRetry=\{\(\) => \{ refreshDevices\(\); if \(selectedId != null\) refreshRegisters\(selectedId\) \}\}/)
 assert(!nodes.find(node => node.name.getText(source) === 'api')!.getText(source).includes('readConfigRequest'), 'mutation helpers keep their original uncancelled path')
-console.log('CONFIG READ TIMEOUT OK: actual App list/group callbacks, timeout→retry/empty/failure, late result isolation, body waits, cancellation, whole-graph/no-follow-up and per-GET budgets; bilingual notice SSR and production wiring; mocks only, no DOM/network/database/hardware')
+console.log('CONFIG READ TIMEOUT OK: actual App list/group callbacks, timeout→retry/empty/failure, late result isolation, body waits, cancellation, whole-graph/no-follow-up and per-GET budgets; actual HTTP 503 adapter, old snapshot retention/read-only recovery, status boundaries and bilingual notice/empty-state SSR; mocks only, no DOM/network/database/hardware')

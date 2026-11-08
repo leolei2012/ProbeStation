@@ -106,10 +106,13 @@ await check('multiple editors prompt once, cancelled consent is not cached, dial
     } finally { one.driver.dispose(); two.driver.dispose() }
   }
 })
-await check('already missing device view ignores delayed registrations without pretending to recover lost drafts', () => {
+await check('already missing device view ignores delayed registrations without pretending to recover lost drafts', async () => {
   const page = draftSurface(), old = draftEditor('point', page.registration())
   try {
     old.change(); page.remove(); assert.equal(page.render().type, 'mock-empty-view')
+    assert.equal(page.render().props.unverified, false)
+    await page.refresh(async () => { throw Error('synthetic read failed') }); assert.equal(page.render().props.unverified, true)
+    await page.refresh(async () => []); assert.equal(page.render().props.unverified, false)
     // Model a cleanup that has not run yet; there is no longer a DeviceView to unload.
     page.select(2); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 0)
   } finally { old.driver.dispose() }
