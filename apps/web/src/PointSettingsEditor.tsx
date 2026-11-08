@@ -1,5 +1,6 @@
 import type { DraftRegistration } from './draft-navigation'
-import { DetachedEditorNotice } from './RetainedDraftNotice'
+import { DetachedEditorNotice, ConfigurationSaveHint } from './RetainedDraftNotice'
+import { bindBeforeUnload } from './before-unload'
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec'
 import { parsePointSettingsUpdate, type PointSettings, type PointSettingsUpdate } from './point-settings'
@@ -37,6 +38,8 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
   const [, notifyDetached] = useState(false)
   const navigationState = useRef(() => ({ dirty: false, busy: false }))
   navigationState.current = () => ({ dirty: !detached.current && dirty && (closeGuard.canSave || closeGuard.confirming), busy: lock.current })
+  const unloadRisk = navigationState.current().dirty || lock.current
+  useEffect(() => bindBeforeUnload(window, unloadRisk, () => { const state = navigationState.current(); return state.dirty || state.busy }), [unloadRisk])
   const [draftContext] = useState(() => ({ name, address }))
   const snapshotState = useRef(() => ({ context: '', text: '' }))
   snapshotState.current = () => { detached.current = true; notifyDetached(true); return { context: draftContext.name + ' · ' + draftContext.address, text: JSON.stringify({ context: draftContext, opening, fields: { dataType, unit, factor, offset, decimalPlaces }, enums: { original: enums.original, intent: enums.intent, rows: enums.rows.map(row => ({ value: row.value, label: row.label })) } }, null, 2) } }
@@ -65,7 +68,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
     <form className="modal enum-editor point-settings-editor" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); void save() }} onKeyDown={e => { if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); if (closeGuard.confirming) closeAction(closeGuard.resume(lock.current)); else requestClose() } }}>
       <div className="modal-head"><h3 id={titleId}>{t('pointSettings')}</h3><button className="modal-close" type="button" aria-label={t('cancel')} disabled={busy || discarding} onClick={requestClose}>×</button></div>
       <p className="enum-context">{name} · {t('colAddr')} {address}</p>
-      {guarded && <p className="enum-hint" role="note">{t('cancel') === 'Cancel' ? 'Saving checks the opening values and source. Conflicts are rejected and drafts kept; record your changes, close and refresh before editing again. There is no automatic overwrite.' : '保存时核对打开时的字段和来源；冲突会拒绝保存并保留草稿。请先记录修改，关闭并刷新配置后重新编辑，不会自动覆盖。'}</p>}
+      {guarded && <ConfigurationSaveHint english={t('cancel') === 'Cancel'} />}
       {detached.current && <DetachedEditorNotice english={t('cancel') === 'Cancel'} />}
       <fieldset disabled={busy || discarding || detached.current} className="point-draft-fields" aria-label={t('cancel') === 'Cancel' ? 'Point settings draft' : '点位设置草稿'}>
       <label>{t('colType')}<select autoFocus aria-label={t('colType')} value={dataType} disabled={busy} onChange={e => { setDataType(e.target.value); setError('') }}>

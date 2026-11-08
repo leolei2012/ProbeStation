@@ -6,7 +6,9 @@ import { hookDriver } from './component-hook-driver.ts'
 import { DraftNavigation, type DraftRegistration } from '../../apps/web/src/draft-navigation.ts'
 import { LatestConfigRead } from '../../apps/web/src/config-read.ts'
 import { ActivationUncertainError } from '../../apps/web/src/activation-settings-save.ts'
-import { DetachedEditorNotice } from '../../apps/web/src/RetainedDraftNotice.tsx'
+import { DetachedEditorNotice, ConfigurationSaveHint } from '../../apps/web/src/RetainedDraftNotice.tsx'
+import { bindBeforeUnload } from '../../apps/web/src/before-unload.ts'
+import { unloadTarget } from './unload-events.ts'
 import { captureDeviceEditBaseline } from '../../packages/core/src/device-settings-edit.ts'
 import { deviceDraftFields, deviceDraftChanged } from '../../apps/web/src/device-draft-close.ts'
 import { pointDraftFields, pointDraftChanged, PointDraftCloseGuard } from '../../apps/web/src/point-draft-close.ts'
@@ -35,17 +37,17 @@ const refreshRead = find(refreshDevices, node => ts.isCallExpression(node) && no
 export const syntheticDevice = { id: 1, name: 'synthetic A', mode: 'master', ip: 'mock.invalid', port: 502, transport: 'tcp', serialPath: 'MOCK_PORT', baudRate: 9600, parity: 'even', stopBits: 1, dataBits: 8, flowControl: 'none', slaveId: 1, pollIntervalMs: 1000, timeoutMs: 3000 }
 const t = (key: string) => key === 'cancel' ? '取消' : key
 const document = { activeElement: { isConnected: true, focus() {} } }
-const base = { PointDraftCloseGuard, PointDraftDiscard, DetachedEditorNotice, document }
+const base = { PointDraftCloseGuard, PointDraftDiscard, DetachedEditorNotice, ConfigurationSaveHint, bindBeforeUnload, document }
 const pointScope = { ...base, pointDraftFields, pointDraftChanged, createPointEnumDraft, updatePointEnumDraft, parsePointSettingsUpdate, isBinType, isHexType, registerWidth, PointEnumEditor }
 const deviceScope = { ...base, captureDeviceEditBaseline, deviceDraftFields, deviceDraftChanged, SerialPortPicker: () => null }
 export type EditorKind = 'point' | 'device'
-export function draftEditor(kind: EditorKind, draftScope?: DraftRegistration, onSave: (...args: any[]) => Promise<void> = async () => {}, enumJson: string | null = null) {
+export function draftEditor(kind: EditorKind, draftScope?: DraftRegistration, onSave: (...args: any[]) => Promise<void> = async () => {}, enumJson: string | null = null, window = unloadTarget(), initial: typeof syntheticDevice | null = syntheticDevice) {
   const calls = { close: 0, save: 0 }
   const callbacks = { onClose() { calls.close++ }, async onSave(...args: any[]) { calls.save++; await onSave(...args) } }
-  const input = kind === 'point' ? { draftScope, name: 'synthetic point', address: 0, settings: { dataType: 'uint16', unit: 'V', factor: 1, offset: 0, enumJson, decimalPlaces: null }, available: 1, typeGroups: [{ key: 'types', types: ['uint16'] }], t, guarded: true, ...callbacks } : { draftScope, initial: syntheticDevice, t, ...callbacks }
-  const driver = hookDriver(kind === 'point' ? 'PointSettingsEditor.tsx' : 'DeviceModal.tsx', kind === 'point' ? 'PointSettingsEditor' : 'DeviceModal', kind === 'point' ? pointScope : deviceScope, input)
-  const label = kind === 'point' ? 'pointUnit' : 'name', original = kind === 'point' ? 'V' : syntheticDevice.name
-  return { driver, calls, original, value: () => driver.one('input', props => props['aria-label'] === label).props.value,
+  const input = kind === 'point' ? { draftScope, name: 'synthetic point', address: 0, settings: { dataType: 'uint16', unit: 'V', factor: 1, offset: 0, enumJson, decimalPlaces: null }, available: 1, typeGroups: [{ key: 'types', types: ['uint16'] }], t, guarded: true, ...callbacks } : { draftScope, initial, t, ...callbacks }
+  const driver = hookDriver(kind === 'point' ? 'PointSettingsEditor.tsx' : 'DeviceModal.tsx', kind === 'point' ? 'PointSettingsEditor' : 'DeviceModal', { ...(kind === 'point' ? pointScope : deviceScope), window }, input)
+  const label = kind === 'point' ? 'pointUnit' : 'name', original = kind === 'point' ? 'V' : initial?.name ?? ''
+  return { driver, calls, original, window, value: () => driver.one('input', props => props['aria-label'] === label).props.value,
     change(value = 'UNSAVED MOCK DRAFT') { driver.one('input', props => props['aria-label'] === label).props.onChange({ target: { value } }); driver.render() },
     close() { driver.one('button', props => props.className === 'modal-close').props.onClick(); driver.render() },
     resume() { driver.one(PointDraftDiscard).props.onResume(); driver.render() },
@@ -63,7 +65,7 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
   const setRetainedDrafts = (next: typeof records) => { records = next }
   const acceptDevices = { draftNavigation: drafts, setRetainedDrafts, setDevices(next: typeof devices) { devices = next }, setDeviceConnected() {}, setDeviceLoadError() {} }
   const setters = { setSelectedId(id: number | null | ((current: number | null) => number | null)) { changes.push('device'); selectedId = typeof id === 'function' ? id(selectedId) : id }, setView(next: string) { changes.push('view'); view = next }, setDataTarget(next: unknown) { changes.push('target'); target = next } }
-  const window = { innerWidth: options.mobile ? 640 : 1200, confirm(text: string) { prompts.push(text); if (answer instanceof Error) throw answer; return answer } }
+  const window = { ...unloadTarget(), innerWidth: options.mobile ? 640 : 1200, confirm(text: string) { prompts.push(text); if (answer instanceof Error) throw answer; return answer } }
   const operationNode = find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === 'useOperation')!
   const operation = evaluate(operationNode, { useState: (value: unknown) => [value, () => {}], useRef: (value: unknown) => ({ current: value }), showOperationNotice: (value: { error: boolean; text: string }) => notices.push(value), ActivationUncertainError })(t)
   const confirmDraftLeave = (...args: unknown[]) => evaluate(variable('confirmDraftLeave'), { draftNavigation: drafts, lang: options.english ? 'en' : 'zh', window, operation: { setNotice: (value: { error: boolean; text: string }) => notices.push(value) } })(...args)
@@ -76,6 +78,12 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
     return evaluate(rootBranch, { ...setters, view, selected, selectedId, dataTarget: target, devices, DeviceView: 'mock-device-view', DatabaseView: 'mock-database-view', EmptyState: 'mock-empty-view', t, navigateData: emit, draftNavigation: drafts, confirmDraftLeave, groupSnapshot: { objectId: selectedId }, realtime: { status: 'connected' }, deviceConnected: {}, groups: [], latest: {}, groupErrors: {}, fallbackStatus: {}, operation: { busy: false }, toggleDevice: noAction, editDevice: noAction, deleteDevice: noAction, refreshRegisters: noAction, setShowAdd: noAction, React }) as React.ReactElement<any>
   }
   return { render, drafts, prompts, notices, changes, setAnswer(value: boolean | Error) { answer = value }, state: () => ({ selectedId, view, target, token: sequence.current, tab, collapsed, cancelledHistory }),
+    window,
+    mountUnload() {
+      const effect = find(app, node => ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect' && node.arguments[0]?.getText(source).includes('bindBeforeUnload')) as ts.CallExpression | undefined
+      if (!effect) return () => {}
+      return evaluate(effect.arguments[0], { window, retainedDrafts: records, draftNavigation: drafts, bindBeforeUnload })() as undefined | (() => void)
+    },
     registration() { const frame = render(); assert.equal(frame.type, 'mock-device-view'); assert.equal(frame.props.drafts, drafts); return evaluate(variable('draftScope', deviceView), { useMemo: (fn: () => unknown) => fn(), drafts: frame.props.drafts, device: frame.props.device }) as DraftRegistration },
     select(id: number) { evaluate(attribute(deviceButton, 'onClick'), { ...setters, canNavigate, d: { id }, window, setCollapsed() { collapsed++ } })() },
     global(next: string) { evaluate(attribute(globalTab, 'onChange'), { ...setters, canNavigate })(next) },

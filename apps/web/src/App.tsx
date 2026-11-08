@@ -1,5 +1,6 @@
 import { DraftNavigation, type DraftRange, type DraftRegistration, type RetainedDraft } from './draft-navigation'
 import { RetainedDraftNotice } from './RetainedDraftNotice'
+import { bindBeforeUnload } from './before-unload'
 import { RecordingIntervalNotice } from './RecordingIntervalNotice'
 import { PersistenceStatus } from './PersistenceStatus'
 import { RetentionSummary } from './RetentionSummary'
@@ -476,6 +477,7 @@ export default function App() {
   const navigationSequence = useRef(0)
   const draftNavigation = useMemo(() => new DraftNavigation(), [])
   const [retainedDrafts, setRetainedDrafts] = useState<readonly RetainedDraft[]>([])
+  useEffect(() => bindBeforeUnload(window, retainedDrafts.length > 0, () => draftNavigation.retained().length > 0), [retainedDrafts.length])
   const discardRetainedDraft = (id: number) => {
     try { if (window.confirm(lang === 'en' ? 'Permanently discard this read-only record from page memory? Cancel keeps it. This does not change device configuration.' : '从当前页内存永久丢弃此只读记录？取消可保留，不会修改设备配置。') !== true) return } catch { return }
     draftNavigation.discardRetained(id); setRetainedDrafts(draftNavigation.retained())

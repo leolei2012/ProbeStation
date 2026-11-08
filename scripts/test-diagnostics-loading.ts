@@ -14,6 +14,9 @@ import { isBinType, isHexType, registerWidth } from '../packages/core/src/codec.
 import { PointDraftDiscard } from '../apps/web/src/PointDraftDiscard.tsx'
 import { PointEnumEditor } from '../apps/web/src/PointEnumEditor.tsx'
 import { hookDriver } from './fixtures/component-hook-driver.ts'
+import { bindBeforeUnload } from '../apps/web/src/before-unload.ts'
+import { ConfigurationSaveHint } from '../apps/web/src/RetainedDraftNotice.tsx'
+import { unloadTarget } from './fixtures/unload-events.ts'
 import { DeferredResource } from '../apps/web/src/deferred-resource.ts'
 import { DeferredPointDiagnostics, DeferredPointDiagnosticsView, pointDiagnosticsResource, type PointDiagnosticsProps, type PointDiagnosticsRenderer } from '../apps/web/src/DeferredPointDiagnostics.tsx'
 
@@ -122,7 +125,7 @@ await check('actual module exports load without mounting report effects or chang
 // Setters after disposal are counted; all effects are explicitly cleaned up.
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
 const fakeDocument = { activeElement: { isConnected: true, focus() {} } }
-const settingsScope = { isBinType, isHexType, registerWidth, parsePointSettingsUpdate, createPointEnumDraft, updatePointEnumDraft, pointDraftFields, pointDraftChanged, PointDraftCloseGuard, PointDraftDiscard, PointEnumEditor, document: fakeDocument }
+const settingsScope = { isBinType, isHexType, registerWidth, parsePointSettingsUpdate, createPointEnumDraft, updatePointEnumDraft, pointDraftFields, pointDraftChanged, PointDraftCloseGuard, PointDraftDiscard, PointEnumEditor, ConfigurationSaveHint, bindBeforeUnload, window: unloadTarget(), document: fakeDocument }
 await check('failed interface retry, actual report effect and device A/B/A late-response recovery compose safely', async () => {
   const module = await import('../apps/web/src/PointDiagnostics.tsx')
   let imports = 0
@@ -193,7 +196,7 @@ await check('late code failure and explicit recovery leave a device draft and di
   const edit = find(deviceView, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'showEdit')!
   assert(edit && edit.getText(source).includes('<DeviceModal'), 'device editor is a sibling controlled by showEdit, independent of diagnostics status')
   const modalProps = { initial, t: (key: string) => key === 'cancel' ? '取消' : key, onClose() { closed++ }, async onSave() { saved++ } }
-  const modal = hookDriver('DeviceModal.tsx', 'DeviceModal', { captureDeviceEditBaseline, deviceDraftFields, deviceDraftChanged, PointDraftCloseGuard, PointDraftDiscard, SerialPortPicker: () => null, document: fakeDocument }, modalProps)
+  const modal = hookDriver('DeviceModal.tsx', 'DeviceModal', { captureDeviceEditBaseline, deviceDraftFields, deviceDraftChanged, PointDraftCloseGuard, PointDraftDiscard, SerialPortPicker: () => null, ConfigurationSaveHint, bindBeforeUnload, window: unloadTarget(), document: fakeDocument }, modalProps)
   try {
     modal.one('input', value => value['aria-label'] === 'name').props.onChange({ target: { value: 'unsaved device draft' } }); modal.render()
     content.resolve(); await pending; assert.equal(resource.snapshot().status, 'error'); modal.render()

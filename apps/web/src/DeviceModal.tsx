@@ -1,5 +1,6 @@
 import type { DraftRegistration } from './draft-navigation'
-import { DetachedEditorNotice } from './RetainedDraftNotice'
+import { DetachedEditorNotice, ConfigurationSaveHint } from './RetainedDraftNotice'
+import { bindBeforeUnload } from './before-unload'
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { captureDeviceEditBaseline, type DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { SerialPortPicker } from './SerialPortPicker'
@@ -36,6 +37,8 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher, draftSco
   const [, notifyDetached] = useState(false)
   const navigationState = useRef(() => ({ dirty: false, busy: false }))
   navigationState.current = () => ({ dirty: !detached.current && dirty && (closeGuard.canSave || closeGuard.confirming), busy: locked.current })
+  const unloadRisk = navigationState.current().dirty || locked.current
+  useEffect(() => bindBeforeUnload(window, unloadRisk, () => { const state = navigationState.current(); return state.dirty || state.busy }), [unloadRisk])
   const snapshotState = useRef(() => ({ context: '', text: '' }))
   snapshotState.current = () => { detached.current = true; notifyDetached(true); return { context: opening.fields.name, text: JSON.stringify({ opening: opening.fields, fields: { name, mode, transport, ip, port, serialPath, baudRate, parity, stopBits, flowControl, slaveId, pollInterval, timeout, dataBits } }, null, 2) } }
   useEffect(() => draftScope?.register('device', () => navigationState.current(), () => snapshotState.current()), [draftScope])
@@ -77,7 +80,7 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher, draftSco
       }}>
         <div className="device-modal-header"><h3 id={titleId}>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3><button type="button" className="modal-close" aria-label={t('cancel')} disabled={busy || discarding} onClick={requestClose}>✕</button></div>
         <div className="device-modal-body">
-          {initial && <p className="device-field-hint">{t('cancel') === 'Cancel' ? 'Saving checks the opening configuration. Conflicts reject the save and keep drafts; record changes, close and refresh before editing again. Saved configuration may have separate runtime warnings.' : '保存时核对打开时的配置；冲突会拒绝保存并保留草稿。请先记录修改，关闭并刷新后重新编辑。已保存配置的运行状态警告会单独提示。'}</p>}
+          {initial && <ConfigurationSaveHint device english={t('cancel') === 'Cancel'} />}
           {error && <div className="write-msg error" role="alert">{error}</div>}
           {detached.current && <DetachedEditorNotice english={t('cancel') === 'Cancel'} />}
 

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { bindBeforeUnload } from '../apps/web/src/before-unload.ts'
+import { ConfigurationSaveHint } from '../apps/web/src/RetainedDraftNotice.tsx'
+import { unloadTarget } from './fixtures/unload-events.ts'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import React, { createElement } from 'react'
@@ -29,7 +32,7 @@ function driver(initial: any = sample, onSave: (...args: any[]) => Promise<void>
   const useRef = (init: any) => useState(() => ({ current: init }))[0]
   const useEffect = (fn: () => void, deps: any[]) => { const index = cursor++; if (!dependencies[index] || deps.some((value, i) => !Object.is(value, dependencies[index][i]))) effects.push(fn); dependencies[index] = deps }
   const SerialPortPicker = () => null
-  const env = { React, useState, useRef, useEffect, useId: () => useState('synthetic-title')[0], captureDeviceEditBaseline, deviceDraftFields, deviceDraftChanged, PointDraftCloseGuard, PointDraftDiscard, SerialPortPicker, document }
+  const env = { React, useState, useRef, useEffect, useId: () => useState('synthetic-title')[0], captureDeviceEditBaseline, deviceDraftFields, deviceDraftChanged, PointDraftCloseGuard, PointDraftDiscard, SerialPortPicker, ConfigurationSaveHint, bindBeforeUnload, window: unloadTarget(), document }
   const component = new Function(...Object.keys(env), code)(...Object.values(env))
   const props = { initial, t, onClose() { closes++ }, async onSave(...args: any[]) { saves++; await onSave(...args) } }
   const render = () => {
