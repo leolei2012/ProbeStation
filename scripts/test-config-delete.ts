@@ -101,6 +101,8 @@ try {
     for(const surface of ['MCP','REST'])for(const kind of kinds)for(const fail of [false,true])await run(surface+'/'+kind+'/'+(fail?'failure':'success'),async()=>{
       const f=fixture(),ctx=new Context(),httpServer=new FakeHttp(),create=http.createServer;let client:Client|undefined,sdk:McpServer|undefined,syncs=0;const app=Fastify()
       try{if(fail)f.blockStep(kind,1);const before=f.graph();f.arm()
+        const method=kind==='device'?'deleteObject':kind==='group'?'deleteGroup':'deleteRegister',original=f.cfg[method].bind(f.cfg),entries:{transaction:boolean;restoring:boolean}[]=[]
+        f.cfg[method]=id=>{entries.push({transaction:f.db.isTransaction,restoring:(f.cfg as unknown as {restoring:boolean}).restoring});return original(id)}
         if(surface==='MCP'){
           await ctx.plugin({name:'inert-config-delete-services',apply(context:Context){context.provide('config',f.cfg as any);context.provide('deviceSlaves',{async sync(){syncs++}} as any);for(const service of ['store','poller','ota','sink'])context.provide(service as any,{} as any)}})
           http.createServer=(()=>httpServer) as unknown as typeof create;try{await ctx.plugin(mcpPlugin,{host:'127.0.0.1',port:0})}finally{http.createServer=create}
@@ -108,7 +110,8 @@ try {
           const args=kind==='device'?{device_id:f.d.id}:kind==='group'?{group_id:f.g.id}:{register_id:f.points[0].id};const result=await client.callTool({name:'delete_'+(kind==='register'?'register':kind),arguments:args})
           if(fail)assert.equal(result.isError,true);else{assert.equal(result.isError,undefined);assert(Array.isArray(result.content));assert.deepEqual(JSON.parse(String(result.content[0]?.text)),kind==='device'?{ok:true,device_id:f.d.id,history_preserved:true}:kind==='group'?{ok:true,group_id:f.g.id}:{ok:true,register_id:f.points[0].id})}
         }else{const path=kind==='device'?'/api/monitor_objects/:id':kind==='group'?'/api/groups/:id':'/api/registers/:id',registration=routes.get(path);assert(registration);new Function('fastify','cfg','ctx',ts.transpileModule(registration,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText)(app,f.cfg,{get:()=>({async sync(){syncs++}})});const response=await app.inject({method:'DELETE',url:path.replace(':id',String(f.id(kind)))});assert.equal(response.statusCode,fail?500:200);if(!fail)assert.deepEqual(response.json(),{ok:true})}
-        if(fail){assert.equal(f.graph(),before);assert.equal(f.events.length,0);assert.equal(syncs,0)}else{f.assertRemoved(kind,surface==='MCP');assert.equal(f.events.length,1);assert.equal(syncs,kind==='device'?1:0)}
+        assert.deepEqual(entries,[{transaction:false,restoring:false}],'actual REST/MCP direct deletion enters without a caller-owned transaction and runs once')
+        if(fail){assert.equal(f.graph(),before);assert.equal(f.events.length,0);assert.equal(syncs,0)}else{f.assertRemoved(kind,surface==='MCP');assert.equal(f.events.length,1);assert.equal(f.events[0].transaction,false,'public direct deletion notifies only after its own unit commits');assert.equal(syncs,kind==='device'?1:0)}
       }finally{http.createServer=create;await client?.close();await sdk?.close();await ctx.fiber.dispose();await app.close();await f.close();if(surface==='MCP')assert.equal(httpServer.closes,1)}
     })
   }

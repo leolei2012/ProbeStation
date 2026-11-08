@@ -106,6 +106,7 @@
     "packages/api/src/history-assessment.ts",
     "scripts/offline-test-app.ts",
     "scripts/test-delete-composition.ts",
-    "scripts/audit-config-outer-transaction.ts"
+    "scripts/audit-config-outer-transaction.ts",
+    "scripts/audit-config-delete-callers.ts"
   ]
 }
