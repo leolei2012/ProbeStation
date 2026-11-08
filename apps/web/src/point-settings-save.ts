@@ -5,8 +5,10 @@ export async function saveGuardedPointSettings(expected: PointEditBaseline, chan
   // The enum is not a precondition when omitted from changes. Do not resend a potentially huge opaque source.
   const wireExpected = Object.hasOwn(changes, 'enumJson') ? expected : { ...expected, point: { ...expected.point, enumJson: null } }
   const request = parsePointEditRequest({ expected: wireExpected, changes })
-  const result = await put('/api/registers/' + expected.point.id + '/settings', request) as any
   const uncertain = () => new Error('保存结果待核实，请核对配置，勿自动重复保存。')
+  let result: any
+  try { result = await put('/api/registers/' + expected.point.id + '/settings', request) }
+  catch (error) { if (error instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(error.message)) throw error; throw uncertain() }
   if (!result || !Array.isArray(result.warnings) || result.warnings.some((value: unknown) => typeof value !== 'string')) throw uncertain()
   let saved
   try { saved = capturePointEditBaseline(result.point, expected.group, expected.device).point } catch { throw uncertain() }

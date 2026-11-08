@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import ts from 'typescript'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import Fastify from 'fastify'
@@ -11,6 +12,9 @@ import { capturePointEditBaseline, parsePointEditRequest, pointEditMatches } fro
 import { saveGuardedPointSettings } from '../apps/web/src/point-settings-save.ts'
 import { PointSettingsEditor } from '../apps/web/src/PointSettingsEditor.tsx'
 import { readDeviceGroups } from '../apps/web/src/config-read.ts'
+import { PointDraftCloseGuard } from '../apps/web/src/point-draft-close.ts'
+import { createPointEnumDraft } from '../apps/web/src/point-enum-draft.ts'
+import { parsePointSettingsUpdate } from '../apps/web/src/point-settings.ts'
 
 let events = 0, failNotify = false
 const cfg = new ConfigStore({ dbPath: ':memory:' }, () => { events++; if (failNotify) throw new Error('synthetic notification failure') }), api = Fastify()
@@ -155,6 +159,63 @@ try {
   await assert.rejects(saveGuardedPointSettings(capture(), fullFields(), async () => { attempts++; throw new Error('HTTP 404 unsupported server') }), /HTTP 404/)
   assert.equal(attempts, 1)
   for (const result of [null, {}, { point: cfg.getRegister(point.id), warnings: 'bad' }, { point: { ...cfg.getRegister(point.id), id: 999 }, warnings: [] }, { point: { ...cfg.getRegister(point.id), factor: 99 }, warnings: [] }]) await assert.rejects(saveGuardedPointSettings(capture(), fullFields(), async () => result), /结果待核实/)
+  // Commit succeeds but the response is lost. Scalar-only saves must also preserve opaque enum bytes.
+  const opaque = ' { "01": " On " } '; cfg.updateRegister(point.id, { enumJson: opaque })
+  const lostExpected = capture(), lostChanges = { ...fullFields(), unit: 'committed response lost', factor: 0 }
+  let lostRequests = 0; count = events
+  await assert.rejects(saveGuardedPointSettings(lostExpected, lostChanges, async (url, body) => {
+    lostRequests++; assert.equal((body as any).expected.point.enumJson, null); assert(!Object.hasOwn((body as any).changes, 'enumJson'))
+    const response = await api.inject({ method: 'PUT', url, payload: body as any }); assert.equal(response.statusCode, 200)
+    throw new TypeError('Failed to fetch')
+  }), /保存结果待核实.*核对配置.*勿自动重复保存/)
+  assert.equal(lostRequests, 1); assert.equal(events, count + 1)
+  assert.equal(cfg.getRegister(point.id)!.unit, lostChanges.unit); assert.equal(cfg.getRegister(point.id)!.factor, 0); assert.equal(cfg.getRegister(point.id)!.enumJson, opaque)
+  const lostGraph = snapshot(); count = events
+  assert.equal((await send(lostExpected, lostChanges)).statusCode, 409, 'explicit stale retry must not silently overwrite or use an unguarded route')
+  assert.equal(events, count); assert.equal(snapshot(), lostGraph)
+  for (const error of [new Error('HTTP 500 unknown'), new Error('HTTP 502 gateway'), new SyntaxError('JSON lost'), new Error('AbortError'), new Error('HTTP 4000 not a status'), null, 'network failure']) {
+    let requests = 0
+    await assert.rejects(saveGuardedPointSettings(capture(), { unit: 'unknown' }, async () => { requests++; throw error }), /保存结果待核实.*勿自动重复保存/)
+    assert.equal(requests, 1); assert.equal(snapshot(), lostGraph)
+  }
+  for (const status of [400, 403, 404, 409, 413, 415]) {
+    const rejected = new Error('HTTP ' + status + ' synthetic rejection'); let requests = 0
+    await assert.rejects(saveGuardedPointSettings(capture(), { unit: 'rejected' }, async () => { requests++; throw rejected }), error => error === rejected)
+    assert.equal(requests, 1)
+  }
+  let invalidRequests = 0
+  await assert.rejects(saveGuardedPointSettings(capture(), { factor: Infinity }, async () => { invalidRequests++; return null }), error => (error as any).statusCode === 400)
+  assert.equal(invalidRequests, 0, 'local validation remains before the request, not an uncertain write')
+  // Execute the production editor save callback, without mounting React or accessing the DOM.
+  const source = ts.createSourceFile('PointSettingsEditor.tsx', readFileSync(new URL('../apps/web/src/PointSettingsEditor.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const component = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'PointSettingsEditor') as ts.FunctionDeclaration
+  const declaration = component.body!.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations]).find(node => node.name.getText(source) === 'save')!
+  const code = ts.transpileModule('return (' + declaration.initializer!.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
+  const formExpected = capture(), formSettings = cfg.getRegister(point.id)!, closeGuard = new PointDraftCloseGuard()
+  let formError = '', busy = false, closed = 0, formRequests = 0, successfulSaves = 0
+  const env = {
+    lock: { current: false }, closeGuard, dataType: formSettings.dataType, unit: 'form committed response lost', factor: '0', offset: String(formSettings.offset), decimalPlaces: formSettings.decimalPlaces == null ? '' : String(formSettings.decimalPlaces),
+    enums: createPointEnumDraft(formSettings.enumJson), settings: formSettings, available: group.quantity, t: (key: string) => key, parsePointSettingsUpdate,
+    setError(value: string) { formError = value }, setBusy(value: boolean) { busy = value }, setEnumIssueIndex() {}, setEnumIssueRevision() {},
+    closeAction(action: string) { if (action === 'close') closed++ },
+    async onSave(value: any) {
+      await saveGuardedPointSettings(formExpected, value, async (url, body) => {
+        formRequests++; const response = await api.inject({ method: 'PUT', url, payload: body as any })
+        if (response.statusCode !== 200) throw new Error('HTTP ' + response.statusCode + ' ' + response.body)
+        throw new TypeError('Failed to fetch')
+      }); successfulSaves++
+    },
+  }
+  const save = new Function(...Object.keys(env), code)(...Object.values(env)) as () => Promise<void>
+  const pending = save(); assert(busy); await save(); await pending
+  assert.equal(formRequests, 1); assert.equal(successfulSaves, 0); assert.equal(closed, 0); assert(!busy); assert(closeGuard.canSave)
+  assert.match(formError, /保存结果待核实.*勿自动重复保存/); assert.equal(env.unit, 'form committed response lost'); assert.equal(env.factor, '0')
+  assert.equal(cfg.getRegister(point.id)!.unit, env.unit); assert.equal(cfg.getRegister(point.id)!.enumJson, opaque)
+  const formGraph = snapshot(); count = events
+  await Promise.resolve(); assert.equal(formRequests, 1, 'settling never retries the unknown save')
+  await save(); assert.match(formError, /HTTP 409/); assert.equal(formRequests, 2); assert.equal(events, count); assert.equal(snapshot(), formGraph); assert.equal(closed, 0)
+  assert.equal(closeGuard.request(true, false), 'prompt'); env.closeAction(closeGuard.discard(false))
+  assert.equal(closed, 1); assert.equal(formRequests, 2); assert.equal(snapshot(), formGraph, 'discard is no write or undo')
   const deleted = capture(); cfg.deleteRegister(point.id); count = events
   assert.equal((await send(deleted, { unit: 'deleted' })).statusCode, 404); assert.equal(events, count)
 } finally { await api.close(); (cfg as any).db.close() }
@@ -194,4 +255,4 @@ try {
 }
 const html = renderToStaticMarkup(createElement(PointSettingsEditor, { guarded: true, name: '<synthetic>', address: 0, settings: { dataType: 'uint16', unit: null, factor: 1, offset: 0, enumJson: null }, available: 1, typeGroups: [], t: key => key, onClose() {}, async onSave() { throw new Error('must not save during SSR') } }))
 assert.match(html, /冲突会拒绝保存并保留草稿/); assert.doesNotMatch(html, /<synthetic>/)
-console.log('POINT EDIT CONFLICT OK: stale scalar and explicit-enum rejection, omitted-enum preservation, frozen source baselines, same-address isolation, strict input/readback, atomic rollback/notification warnings, guarded API/client no-fallback and two-connection SQLite lock; memory/isolated temporary DB only, no DOM automation')
+console.log('POINT EDIT CONFLICT OK: stale scalar and explicit-enum rejection, omitted-enum preservation, frozen source baselines, same-address isolation, strict input/readback, atomic rollback/notification warnings, guarded API/client no-fallback, committed response loss with production editor save callback/unknown message/draft/busy/no-close/no-retry/stale retry conflict/discard without undo, known rejections and local validation, two-connection SQLite lock; memory/isolated temporary DB only, no DOM automation')
