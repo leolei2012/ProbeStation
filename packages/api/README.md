@@ -1,5 +1,7 @@
 # @probebench/api
 
+新增`GET /ready`，只检查全服务采样存储元数据：`{version:1,status:'ready'|'not-ready',scope:'sample-storage',storage:{phase,failure}}`，只有已核实ready且failure=null为200，其余503；Cache-Control:no-store。不做SQL、flush、cleanup、重开或重试，不代表设备在线、历史完整或所有队列已落盘。原`/health`仍200及`{status:'ok',version:'0.1.0'}`，仅表示HTTP存活；发布/流量门禁需显式改用/ready，不能回退到/health判成功。详见[契约和降级边界](../../docs/develop/84-存活与采样存储就绪检查.md)。
+
 开关新增`PUT /api/monitor_objects/:id/activation`和`PUT /api/groups/:id/activation`，body为`{expected:ActivationSnapshot,isActive:0|1}`，仅允许与expected不同的显式目标。事务核对设备字段/来源及开关状态，拒绝400/404/409在写前；成功`{snapshot,warnings}`，提交后同步/通知异常为warning，未知500需核对。原POST toggle/toggle-pause及返回形状不变，新UI不回退。不是请求幂等或防ABA，字段及限制见[条件开关](../../docs/develop/82-设备与分组条件开关.md)。
 
 诊断清空新增`GET /api/monitor_objects/:id/diagnostics/cleanup-preview`（no-store）与`POST /api/monitor_objects/:id/diagnostics/cleanup`，POST仅`{token}`、16KiB，并要求x-probestation-config:1及Origin若提供需Host匹配。预览503拒绝不支持目标；POST格式400/头403/条件409，其他500表示未知。预览绑定当前连接、配置库及driver；重复已完成token仅回原结果，不再次清空。不是前缀删除，预览后新增也在确认时清空；旧frames/clear仍无条件兼容，新UI不回退。字段与剩余限制见[说明](../../docs/develop/60-通信诊断清空确认与结果隔离.md)。
@@ -78,7 +80,8 @@ export const inject = ['config', 'store', 'poller']
 |---|---|---|
 | GET | `/api/monitor_objects/:id/latest` | 最新快照 |
 | GET | `/api/data/query?...` | 历史时序 |
-| GET | `/health` | 健康检查 |
+| GET | `/health` | HTTP存活；保持旧200/响应，不表示存储就绪 |
+| GET | `/ready` | 全服务采样存储就绪，200/503；不触发恢复 |
 
 ## WebSocket
 

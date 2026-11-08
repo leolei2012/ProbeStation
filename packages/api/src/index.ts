@@ -26,6 +26,7 @@ import { registerPointSettings } from './point-settings.ts'
 import { registerDeviceSettings } from './device-settings.ts'
 import { registerGroupSettings } from './group-settings.ts'
 import { registerActivationSettings } from './activation-settings.ts'
+import { registerReadiness } from './readiness.ts'
 
 export const name = 'api'
 export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'ota']
@@ -76,6 +77,7 @@ export function apply(ctx: Context, config: Config): void {
     await fastify.register(compress, { global: true }) // gzip/brotli 压缩响应（静态资源 + API）
 
     fastify.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
+    registerReadiness(fastify, () => typeof store?.getSamplePersistenceStatus === 'function' ? store : undefined)
     registerRecordingAttention(fastify, () => ctx.get('mcp', false) as any)
     registerPersistenceStatus(fastify, () => typeof store?.getSamplePersistenceStatus === 'function' ? store : undefined)
     registerSerialPorts(fastify)

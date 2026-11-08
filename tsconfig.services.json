@@ -26,6 +26,7 @@
     "packages/api/src/device-settings.ts",
     "packages/api/src/group-settings.ts",
     "packages/api/src/activation-settings.ts",
+    "packages/api/src/readiness.ts",
     "scripts/audit-history-export-version.ts",
     "scripts/audit-export-entry.ts",
     "scripts/audit-sink-condition.ts",
