@@ -1,6 +1,7 @@
 import type { DraftRegistration } from './draft-navigation'
 import { DetachedEditorNotice, ConfigurationSaveHint } from './RetainedDraftNotice'
 import { bindBeforeUnload } from './before-unload'
+import { restoreDialogFocus, trapDialogTab } from './dialog-focus'
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec'
 import { parsePointSettingsUpdate, type PointSettings, type PointSettingsUpdate } from './point-settings'
@@ -33,6 +34,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
   const [discarding, setDiscarding] = useState(false)
   const resumeButton = useRef<HTMLButtonElement>(null), closeTrigger = useRef<HTMLElement | null>(null)
   const restoreFocus = useRef(false)
+  const dialog = useRef<HTMLFormElement>(null)
   const dirty = pointDraftChanged(opening, { dataType, unit, factor, offset, decimalPlaces }, enums)
   const detached = useRef(draftScope?.removalPending?.() ?? false)
   const [, notifyDetached] = useState(false)
@@ -51,7 +53,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
     if (action === 'resume') restoreFocus.current = true
     if (action === 'close') onClose()
   }
-  useEffect(() => { if (discarding) resumeButton.current?.focus(); else if (restoreFocus.current) { restoreFocus.current = false; if (closeTrigger.current?.isConnected) closeTrigger.current.focus() } }, [discarding])
+  useEffect(() => { if (busy) dialog.current?.focus(); else if (discarding) resumeButton.current?.focus(); else if (restoreFocus.current) { restoreFocus.current = false; restoreDialogFocus(dialog.current, closeTrigger.current) } }, [discarding, busy])
   const requestClose = () => closeAction(closeGuard.request(!detached.current && dirty, lock.current))
   const save = async () => {
     if (draftScope?.removalPending?.()) { detached.current = true; notifyDetached(true); return }
@@ -65,7 +67,7 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
     finally { lock.current = false; setBusy(false) }
   }
   return <div className="modal-mask">
-    <form className="modal enum-editor point-settings-editor" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); void save() }} onKeyDown={e => { if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); if (closeGuard.confirming) closeAction(closeGuard.resume(lock.current)); else requestClose() } }}>
+    <form ref={dialog} tabIndex={-1} className="modal enum-editor point-settings-editor" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); void save() }} onKeyDown={e => { if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); if (closeGuard.confirming) closeAction(closeGuard.resume(lock.current)); else requestClose() } else trapDialogTab(e) }}>
       <div className="modal-head"><h3 id={titleId}>{t('pointSettings')}</h3><button className="modal-close" type="button" aria-label={t('cancel')} disabled={busy || discarding} onClick={requestClose}>×</button></div>
       <p className="enum-context">{name} · {t('colAddr')} {address}</p>
       {guarded && <ConfigurationSaveHint english={t('cancel') === 'Cancel'} />}

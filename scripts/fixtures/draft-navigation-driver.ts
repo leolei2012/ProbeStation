@@ -8,6 +8,7 @@ import { LatestConfigRead } from '../../apps/web/src/config-read.ts'
 import { ActivationUncertainError } from '../../apps/web/src/activation-settings-save.ts'
 import { DetachedEditorNotice, ConfigurationSaveHint } from '../../apps/web/src/RetainedDraftNotice.tsx'
 import { bindBeforeUnload } from '../../apps/web/src/before-unload.ts'
+import { restoreDialogFocus, trapDialogTab } from '../../apps/web/src/dialog-focus.ts'
 import { unloadTarget } from './unload-events.ts'
 import { captureDeviceEditBaseline } from '../../packages/core/src/device-settings-edit.ts'
 import { deviceDraftFields, deviceDraftChanged } from '../../apps/web/src/device-draft-close.ts'
@@ -37,15 +38,16 @@ const refreshRead = find(refreshDevices, node => ts.isCallExpression(node) && no
 export const syntheticDevice = { id: 1, name: 'synthetic A', mode: 'master', ip: 'mock.invalid', port: 502, transport: 'tcp', serialPath: 'MOCK_PORT', baudRate: 9600, parity: 'even', stopBits: 1, dataBits: 8, flowControl: 'none', slaveId: 1, pollIntervalMs: 1000, timeoutMs: 3000 }
 const t = (key: string) => key === 'cancel' ? '取消' : key
 const document = { activeElement: { isConnected: true, focus() {} } }
-const base = { PointDraftCloseGuard, PointDraftDiscard, DetachedEditorNotice, ConfigurationSaveHint, bindBeforeUnload, document }
+const base = { PointDraftCloseGuard, PointDraftDiscard, DetachedEditorNotice, ConfigurationSaveHint, bindBeforeUnload, restoreDialogFocus, trapDialogTab, document }
 const pointScope = { ...base, pointDraftFields, pointDraftChanged, createPointEnumDraft, updatePointEnumDraft, parsePointSettingsUpdate, isBinType, isHexType, registerWidth, PointEnumEditor }
 const deviceScope = { ...base, captureDeviceEditBaseline, deviceDraftFields, deviceDraftChanged, SerialPortPicker: () => null }
 export type EditorKind = 'point' | 'device'
-export function draftEditor(kind: EditorKind, draftScope?: DraftRegistration, onSave: (...args: any[]) => Promise<void> = async () => {}, enumJson: string | null = null, window = unloadTarget(), initial: typeof syntheticDevice | null = syntheticDevice) {
+export function draftEditor(kind: EditorKind, draftScope?: DraftRegistration, onSave: (...args: any[]) => Promise<void> = async () => {}, enumJson: string | null = null, window = unloadTarget(), initial: typeof syntheticDevice | null = syntheticDevice, platform: { english?: boolean; document?: unknown; commit?: (tree: any) => void } = {}) {
   const calls = { close: 0, save: 0 }
   const callbacks = { onClose() { calls.close++ }, async onSave(...args: any[]) { calls.save++; await onSave(...args) } }
-  const input = kind === 'point' ? { draftScope, name: 'synthetic point', address: 0, settings: { dataType: 'uint16', unit: 'V', factor: 1, offset: 0, enumJson, decimalPlaces: null }, available: 1, typeGroups: [{ key: 'types', types: ['uint16'] }], t, guarded: true, ...callbacks } : { draftScope, initial, t, ...callbacks }
-  const driver = hookDriver(kind === 'point' ? 'PointSettingsEditor.tsx' : 'DeviceModal.tsx', kind === 'point' ? 'PointSettingsEditor' : 'DeviceModal', { ...(kind === 'point' ? pointScope : deviceScope), window }, input)
+  const translate = platform.english ? (key: string) => key === 'cancel' ? 'Cancel' : key : t
+  const input = kind === 'point' ? { draftScope, name: 'synthetic point', address: 0, settings: { dataType: 'uint16', unit: 'V', factor: 1, offset: 0, enumJson, decimalPlaces: null }, available: 1, typeGroups: [{ key: 'types', types: ['uint16'] }], t: translate, guarded: true, ...callbacks } : { draftScope, initial, t: translate, ...callbacks }
+  const driver = hookDriver(kind === 'point' ? 'PointSettingsEditor.tsx' : 'DeviceModal.tsx', kind === 'point' ? 'PointSettingsEditor' : 'DeviceModal', { ...(kind === 'point' ? pointScope : deviceScope), window, document: platform.document ?? document }, input, platform.commit)
   const label = kind === 'point' ? 'pointUnit' : 'name', original = kind === 'point' ? 'V' : initial?.name ?? ''
   return { driver, calls, original, window, value: () => driver.one('input', props => props['aria-label'] === label).props.value,
     change(value = 'UNSAVED MOCK DRAFT') { driver.one('input', props => props['aria-label'] === label).props.onChange({ target: { value } }); driver.render() },

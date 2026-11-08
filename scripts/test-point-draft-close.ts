@@ -65,7 +65,8 @@ try {
 let callbacks = 0
 for (const english of [false, true]) {
   const html = renderToStaticMarkup(createElement(PointDraftDiscard, { english, busy: false, onResume() { callbacks++ }, onDiscard() { callbacks++ } }))
-  assert(html.includes(english ? 'Continue editing' : '继续编辑')); assert(html.includes(english ? 'Discard draft and close' : '放弃草稿并关闭')); assert(html.includes('role="alert"')); assert.equal((html.match(/type="button"/g) ?? []).length, 2); assert(html.includes(english ? 'earlier failed save' : '此前失败保存'))
+  assert(html.includes(english ? 'Continue editing' : '继续编辑')); assert(html.includes(english ? 'Discard draft and close' : '放弃草稿并关闭')); assert(html.includes('role="alert"')); assert.equal((html.match(/type="button"/g) ?? []).length, 2)
+  assert(html.includes(english ? 'an earlier save may still have taken effect' : '不能据此判断此前保存结果')); assert(html.includes(english ? 'No save or undo is sent' : '不发送保存或撤销请求')); assert(html.includes(english ? 'Escape continues editing' : 'Esc继续编辑'))
   const disabled = renderToStaticMarkup(createElement(PointDraftDiscard, { english, busy: true, onResume() {}, onDiscard() {} })); assert.equal((disabled.match(/disabled=""/g) ?? []).length, 2)
 }
 const html = renderToStaticMarkup(createElement(PointSettingsEditor, { name: '<script>point</script>', address: 0, settings, available: 4, typeGroups: [{ key: 'types', types: ['uint16', 'uint32'] }], t: key => key, onClose() { callbacks++ }, async onSave() { callbacks++ } }))
