@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { HistoryNavigation } from '../apps/web/src/history-navigation.ts'
 
 const target = { deviceId: 1, view: 'history', registerId: 11, start: '2026-11-06T00:00:00Z', end: '2026-11-06T01:00:00Z', token: 1 }
@@ -137,6 +139,8 @@ const navigateDeclaration = nodes(sourceFile, node => ts.isVariableDeclaration(n
 const targetEffect = nodes(parentComponent, node => ts.isCallExpression(node) && node.expression.getText(sourceFile) === 'useEffect' && node.arguments[0]?.getText(sourceFile).includes('target.view'))[0] as ts.CallExpression
 assert(globalChange.initializer && ts.isJsxExpression(globalChange.initializer) && globalChange.initializer.expression && navigateDeclaration?.initializer && targetEffect)
 let appView = 'monitor', appTarget: any = exact, appDevice = 1
+// App setters are executed through evaluated callbacks; TS cannot infer those mutations.
+const readTarget = (): any => appTarget
 const appSequence = { current: 10 }, setView = (value: string) => { appView = value }, setDataTarget = (value: unknown) => { appTarget = value }
 const manualGlobal = (next: string) => expression((globalChange.initializer as ts.JsxExpression).expression!, ['setView', 'setDataTarget'], [setView, setDataTarget])(next)
 const freshDeviceTab = () => { let tab = 0; expression(targetEffect.arguments[0], ['target', 'device', 'setTab'], [appTarget, { id: appDevice, mode: 'master' }, (next: number) => { tab = next }])(); return tab }
@@ -146,9 +150,47 @@ assert.equal(freshDeviceTab(), 0, 'monitor→database→monitor must not replay 
 assert.equal(appTarget, null)
 const emit = expression(navigateDeclaration.initializer!, ['setSelectedId', 'setView', 'setDataTarget', 'navigationSequence'], [(id: number) => { appDevice = id }, setView, setDataTarget, appSequence])
 manualGlobal('database'); emit(exact)
-assert.equal(appView, 'monitor'); assert.equal(appDevice, 1); assert.equal(freshDeviceTab(), 2); assert.equal(appTarget.token, 11); assert.equal(appTarget.start, exact.start); assert.equal(appTarget.valueMode, 'raw')
-manualGlobal('monitor'); assert.equal(appTarget.token, 11, 'clicking the already-active monitor does not discard a fresh intent')
+assert.equal(appView, 'monitor'); assert.equal(appDevice, 1); assert.equal(freshDeviceTab(), 2); assert.equal(readTarget().token, 11); assert.equal(readTarget().start, exact.start); assert.equal(readTarget().valueMode, 'raw')
+manualGlobal('monitor'); assert.equal(readTarget().token, 11, 'clicking the already-active monitor does not discard a fresh intent')
 manualGlobal('database'); emit({ ...exact, deviceId: 2, registerId: 22 })
-assert.equal(appDevice, 2); assert.equal(appTarget.token, 12); assert.equal(appTarget.registerId, 22); assert.equal(freshDeviceTab(), 2)
+assert.equal(appDevice, 2); assert.equal(readTarget().token, 12); assert.equal(readTarget().registerId, 22); assert.equal(freshDeviceTab(), 2)
 manualGlobal('database'); manualGlobal('database'); manualGlobal('monitor'); assert.equal(freshDeviceTab(), 0); assert.equal(appTarget, null)
+// Old assistant history references preserve range/ID but have no frozen source.
+// Execute their actual projection and App handoff; do not call tools or models.
+const apiSource = ts.createSourceFile('assistant.ts', readFileSync(new URL('../packages/api/src/assistant.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true)
+const projection = nodes(apiSource, node => ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => declaration.name.getText(apiSource) === 'source') && node.getText(apiSource).includes("call.function.name === 'query_history'"))[0] as ts.VariableStatement
+assert(projection && projection.parent && ts.isBlock(projection.parent))
+const projectedIndex = projection.parent.statements.indexOf(projection)
+const detailProjection = projection.parent.statements[projectedIndex + 1]
+assert(ts.isIfStatement(detailProjection) && detailProjection.expression.getText(apiSource) === "source.view === 'history'")
+const legacySource = new Function('d', 'call', 'turn', 'result', 'args', compile(projection.getText(apiSource) + '\n' + detailProjection.getText(apiSource) + '\nreturn source'))({ id: 1, name: 'synthetic device' }, { function: { name: 'query_history' } }, { entryIndex: 0 }, { register: { id: 11, alias: 'captured name', slaveId: 1 } }, { address: 0, start: exact.start, end: exact.end })
+assert.equal(legacySource.view, 'history'); assert.equal(legacySource.registerId, 11)
+assert.equal(legacySource.pointSource, undefined, 'actual assistant projection does not freeze register source')
+emit(legacySource)
+const currentPoint = { id: 11, slaveId: 2, functionCode: 3, startAddress: 0, dataType: 'uint16' }
+const legacyAction = expression(consumeCall, ['navigation', 'target', 'device', 'registers', 'configurationReady'], [new HistoryNavigation(), appTarget, { id: 1 }, [currentPoint], true]) as ReturnType<HistoryNavigation['consume']>
+assert.equal(legacyAction?.focus?.state, 'found', 'compatibility follows the current same-ID slave 2 definition, not frozen slave 1')
+assert.deepEqual(legacyAction?.range, { start: Date.parse(exact.start), end: Date.parse(exact.end) }); assert.equal(legacyAction?.valueMode, undefined, 'legacy links do not change the existing value mode')
+const noticeNode = nodes(childComponent, node => ts.isJsxElement(node) && node.openingElement.tagName.getText(sourceFile) === 'p' && node.getText(sourceFile).includes('引用来源未核验'))[0]
+assert(noticeNode, 'history page must disclose that the legacy reference source is unverified')
+// Evaluate the complete conditional, not just the paragraph in isolation.
+const notice = noticeNode.parent as ts.BinaryExpression
+assert(ts.isBinaryExpression(notice) && notice.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken)
+const renderNotice = (target: unknown, english = false, deviceId = 1) => renderToStaticMarkup(new Function('target', 'device', 't', 'React', ts.transpileModule('return (' + notice.getText(sourceFile) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, jsx: ts.JsxEmit.React } }).outputText)(target, { id: deviceId }, (key: string) => key === 'cancel' ? english ? 'Cancel' : '取消' : key, React))
+for (const english of [false, true]) {
+  const html = renderNotice(appTarget, english)
+  assert(html.includes('role="status"')); assert(html.includes(english ? 'Link source unverified' : '引用来源未核验')); assert(html.includes(english ? 'current configuration' : '当前配置'))
+  assert(!/PASS|FAIL|verified source/.test(html))
+  assert.equal(renderNotice(null, english), '')
+  assert.equal(renderNotice({ ...readTarget(), view: 'live' }, english), '')
+  assert.equal(renderNotice({ ...readTarget(), deviceId: 2 }, english), '')
+  assert.equal(renderNotice({ ...readTarget(), pointSource: '[1,3,0,"uint16"]' }, english), '', 'new guarded references use their existing identity checks/changed notice')
+  assert.equal(renderNotice({ ...readTarget(), pointSource: null }, english), '', 'malformed guarded input must not be relabeled as legacy')
+  assert(renderNotice({ ...readTarget(), registerId: undefined }, english).includes('role="status"'), 'range-only legacy references are also unverified')
+}
+const unchanged = new HistoryNavigation()
+const compatible = unchanged.consume(appTarget, 1, [11], true, [currentPoint])
+assert.equal(compatible?.focus?.state, 'found'); assert.equal(unchanged.consume(appTarget, 1, [11], true, [currentPoint]), null, 'notice does not replay navigation')
+manualGlobal('database'); manualGlobal('monitor'); assert.equal(appTarget, null); assert.equal(renderNotice(appTarget), '', 'actual global/manual navigation clears the old reference and its notice')
+console.log('LEGACY HISTORY REFERENCE OK: actual assistant projection/App handoff, same-ID changed source reproduction, bilingual identity-unverified notice and legacy/guarded/null/foreign/range-only compatibility; no model/network/DOM')
 console.log('HISTORY NAVIGATION OK: one-shot/late/invalid/legacy intents plus actual owner/prop/consume/cancel/tab/global handlers; child and full device remount, manual override, pending focus cancellation, missing ID, explicit repeat/new target from database, exact time/value-mode and device isolation; no component mount, DOM, service, device or model I/O')

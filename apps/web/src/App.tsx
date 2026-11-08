@@ -1264,6 +1264,7 @@ function HistoryView({ navigation, memory, configurationReady, target, t, device
     </div>
     <p className="chart-hint" role="note">{t('histIntegrityHint')}</p>
     <HistoryReadNotice reason={!configurationReady ? 'waiting' : contextKey === null ? 'invalid' : contextChanged ? 'changed' : null} english={t('cancel') === 'Cancel'} />
+    {target?.deviceId === device.id && target.view === 'history' && target.pointSource === undefined && <p className="chart-hint" role="status">{t('cancel') === 'Cancel' ? 'Link source unverified; current configuration only.' : '引用来源未核验；仅按当前配置。'}</p>}
     {navigationNotice && <p className={'chart-hint' + (navigationNotice.kind !== 'waiting' ? ' warn' : '')} role={navigationNotice.kind === 'waiting' ? 'status' : 'alert'}>{t(navigationNotice.kind === 'waiting' ? 'histNavigationWaiting' : navigationNotice.kind === 'missing' ? 'histNavigationMissing' : navigationNotice.kind === 'changed' ? 'histNavigationChanged' : 'histNavigationInvalid').replace('{id}', String(navigationNotice.id ?? ''))}</p>}
     {valueMode === 'physical' && <p className="chart-hint">{t('physicalHistoryHint')}</p>}
     <div className="hist-quick history-presets">
