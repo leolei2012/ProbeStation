@@ -1,31 +1,46 @@
-import React, { useId, useRef, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import { captureDeviceEditBaseline, type DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { SerialPortPicker } from './SerialPortPicker'
 import type { SerialPortList } from './serial-ports'
+import { deviceDraftFields, deviceDraftChanged } from './device-draft-close'
+import { PointDraftCloseGuard } from './point-draft-close'
+import { PointDraftDiscard } from './PointDraftDiscard'
 
 export type DeviceFields = { mode: string; name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number }
 
 export function DeviceModal({ t, initial, onClose, onSave, portFetcher }: { t: (key: string) => string; initial: DeviceEditBaseline | null; onClose: () => void; onSave: (f: DeviceFields, expected: DeviceEditBaseline | null) => Promise<void>; portFetcher?: (signal: AbortSignal) => Promise<SerialPortList> }) {
-  const [opening] = useState(() => { try { return { expected: initial ? captureDeviceEditBaseline(initial) : null, error: '' } } catch { return { expected: null, error: '设备配置不完整，请关闭窗口并刷新后重新编辑。' } } })
-  const [name, setName] = useState(initial?.name ?? '')
-  const [mode, setMode] = useState(initial?.mode ?? 'master')
-  const [transport, setTransport] = useState(initial?.transport ?? 'tcp')
-  const [ip, setIp] = useState(initial?.ip ?? '')
-  const [port, setPort] = useState(initial ? String(initial.port) : '8899')
-  const [serialPath, setSerialPath] = useState(initial?.serialPath ?? '')
-  const [baudRate, setBaudRate] = useState(initial ? String(initial.baudRate ?? 9600) : '9600')
-  const [parity, setParity] = useState(initial?.parity ?? 'even')
-  const [stopBits, setStopBits] = useState(initial ? String(initial.stopBits ?? 1) : '1')
-  const [flowControl, setFlowControl] = useState(initial?.flowControl ?? 'none')
-  const [slaveId, setSlaveId] = useState(initial ? String(initial.slaveId ?? 1) : '1')
-  const [pollInterval, setPollInterval] = useState(initial ? String(initial.pollIntervalMs ?? 1000) : '1000')
-  const [timeout, setTimeout_] = useState(initial ? String(initial.timeoutMs ?? 3000) : '3000')
-  const [dataBits, setDataBits] = useState(String(initial?.dataBits ?? 8))
+  const [opening] = useState(() => { const fields = deviceDraftFields(initial); try { return { fields, expected: initial ? captureDeviceEditBaseline(initial) : null, error: '' } } catch { return { fields, expected: null, error: '设备配置不完整，请关闭窗口并刷新后重新编辑。' } } })
+  const [name, setName] = useState(opening.fields.name)
+  const [mode, setMode] = useState(opening.fields.mode)
+  const [transport, setTransport] = useState(opening.fields.transport)
+  const [ip, setIp] = useState(opening.fields.ip)
+  const [port, setPort] = useState(opening.fields.port)
+  const [serialPath, setSerialPath] = useState(opening.fields.serialPath)
+  const [baudRate, setBaudRate] = useState(opening.fields.baudRate)
+  const [parity, setParity] = useState(opening.fields.parity)
+  const [stopBits, setStopBits] = useState(opening.fields.stopBits)
+  const [flowControl, setFlowControl] = useState(opening.fields.flowControl)
+  const [slaveId, setSlaveId] = useState(opening.fields.slaveId)
+  const [pollInterval, setPollInterval] = useState(opening.fields.pollInterval)
+  const [timeout, setTimeout_] = useState(opening.fields.timeout)
+  const [dataBits, setDataBits] = useState(opening.fields.dataBits)
   const titleId = useId()
   const [busy, setBusy] = useState(false), [error, setError] = useState(opening.error)
   const locked = useRef(false)
+  const [closeGuard] = useState(() => new PointDraftCloseGuard()), [discarding, setDiscarding] = useState(false)
+  const resumeButton = useRef<HTMLButtonElement>(null), closeTrigger = useRef<HTMLElement | null>(null), restoreFocus = useRef(false)
+  const dirty = deviceDraftChanged(opening.fields, { name, mode, transport, ip, port, serialPath, baudRate, parity, stopBits, flowControl, slaveId, pollInterval, timeout, dataBits })
+  const closeAction = (action: 'none' | 'prompt' | 'resume' | 'close') => {
+    if (action === 'none') return
+    setDiscarding(closeGuard.confirming)
+    if (action === 'prompt') closeTrigger.current = document.activeElement as HTMLElement | null
+    if (action === 'resume') restoreFocus.current = true
+    if (action === 'close') onClose()
+  }
+  useEffect(() => { if (discarding) resumeButton.current?.focus(); else if (restoreFocus.current) { restoreFocus.current = false; if (closeTrigger.current?.isConnected) closeTrigger.current.focus() } }, [discarding])
+  const requestClose = () => closeAction(closeGuard.request(dirty, locked.current))
   const save = async () => {
-    if (locked.current || initial && !opening.expected) return
+    if (locked.current || !closeGuard.canSave || initial && !opening.expected) return
     locked.current = true; setBusy(true); setError('')
     try { await onSave({ mode, name: name.trim(), ip: ip.trim(), port: transport === 'tcp' ? Number(port) : opening.expected?.port ?? 8899, transport, serialPath: serialPath.trim(), baudRate: Number(baudRate), parity, stopBits: Number(stopBits), dataBits: Number(dataBits), flowControl, slaveId: Number(slaveId), pollIntervalMs: Number(pollInterval), timeoutMs: Number(timeout) }, opening.expected) }
     catch (e) { setError(e instanceof Error ? e.message : t('operationFailed')) }
@@ -43,18 +58,19 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher }: { t: (
   return (
     <div className="modal-mask">
       <form className="modal device-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); if (!busy) void save() }} onKeyDown={e => {
+        if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); if (closeGuard.confirming) closeAction(closeGuard.resume(locked.current)); else requestClose(); return }
         if (e.key !== 'Tab') return
         const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)'))
         const first = items[0], last = items[items.length - 1]
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
       }}>
-        <div className="device-modal-header"><h3 id={titleId}>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3><button type="button" className="modal-close" aria-label={t('cancel')} disabled={busy} onClick={onClose}>✕</button></div>
+        <div className="device-modal-header"><h3 id={titleId}>{initial ? t('editDeviceTitle') : t('newDeviceTitle')}</h3><button type="button" className="modal-close" aria-label={t('cancel')} disabled={busy || discarding} onClick={requestClose}>✕</button></div>
         <div className="device-modal-body">
           {initial && <p className="device-field-hint">{t('cancel') === 'Cancel' ? 'Saving checks the opening configuration. Conflicts reject the save and keep drafts; record changes, close and refresh before editing again. Saved configuration may have separate runtime warnings.' : '保存时核对打开时的配置；冲突会拒绝保存并保留草稿。请先记录修改，关闭并刷新后重新编辑。已保存配置的运行状态警告会单独提示。'}</p>}
           {error && <div className="write-msg error" role="alert">{error}</div>}
 
-          <fieldset disabled={busy}>
+          <fieldset disabled={busy || discarding}>
             <legend>基本信息 / General</legend>
             <label className="device-field"><span>{t('name')}</span><input aria-label={t('name')} required pattern={'.*\\S.*'} value={name} onChange={e => setName(e.target.value)} autoFocus /></label>
             <label className="device-field"><span>{t('cancel') === 'Cancel' ? 'Device role' : '设备角色'}</span><select aria-label={t('cancel') === 'Cancel' ? 'Device role' : '设备角色'} value={mode} onChange={e => { const next = e.target.value; setMode(next); if (next === 'slave') { setIp('0.0.0.0'); setDataBits('8') } }}><option value="master">{t('cancel') === 'Cancel' ? 'Master · Poll external devices' : '主站 · 主动轮询外部设备'}</option><option value="slave">{t('cancel') === 'Cancel' ? 'Slave · Respond to external masters' : '从站 · 等待外部主站读写'}</option></select></label>
@@ -63,7 +79,7 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher }: { t: (
               <button type="button" className={'btn' + (transport === 'rtu' ? ' selected' : '')} aria-pressed={transport === 'rtu'} onClick={() => setTransport('rtu')}>{t('transportRtu')}</button>
             </div>
           </fieldset>
-          <fieldset disabled={busy}>
+          <fieldset disabled={busy || discarding}>
             <legend>连接参数 / Connection</legend>
             <div className="device-field-grid">
               {transport === 'tcp' ? <>
@@ -79,7 +95,7 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher }: { t: (
               </>}
             </div>
           </fieldset>
-          <fieldset disabled={busy}>
+          <fieldset disabled={busy || discarding}>
             <legend>{mode === 'slave' ? '从站设置 / Slave' : '采集设置 / Sampling'}</legend>
             <div className="device-field-grid">
               {textField(t('slaveIdLabel'), slaveId, setSlaveId, '1', { min: mode === 'slave' ? 1 : 0, max: 247 })}
@@ -88,10 +104,11 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher }: { t: (
             </div>
             {mode === 'slave' ? <p className="device-field-hint">从站等待外部主站读写。TCP 的 0.0.0.0 接受本机所有网卡连接；外部主站使用本机实际 IP。RTU 使用独占串口。</p> : <><p className="device-field-hint">{t('pollIntervalHint')}</p><p className="device-field-hint">{t('timeoutHint')}</p></>}
           </fieldset>
+          {discarding && <PointDraftDiscard ref={resumeButton} label={t('cancel') === 'Cancel' ? 'Device draft close confirmation' : '确认关闭设备草稿'} english={t('cancel') === 'Cancel'} busy={busy} onResume={() => closeAction(closeGuard.resume(locked.current))} onDiscard={() => closeAction(closeGuard.discard(locked.current))} />}
         </div>
         <div className="modal-actions device-modal-footer">
-          <button type="button" className="btn" disabled={busy} onClick={onClose}>{t('cancel')}</button>
-          <button type="submit" className="btn primary" disabled={busy || !!initial && !opening.expected}>{busy ? t('working') : initial ? t('save') : t('add')}</button>
+          <button type="button" className="btn" disabled={busy || discarding} onClick={requestClose}>{t('cancel')}</button>
+          <button type="submit" className="btn primary" disabled={busy || discarding || !!initial && !opening.expected}>{busy ? t('working') : initial ? t('save') : t('add')}</button>
         </div>
       </form>
     </div>
