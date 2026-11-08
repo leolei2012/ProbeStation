@@ -199,23 +199,28 @@ try {
     assert.equal(f.events.length, 0); assert.equal(graph(f.reader), before)
     if (rollback === 'succeeds') assert.equal(graph(f.db), before)
     else assert.notEqual(graph(f.db), before, 'the first failed request still owns pending changes')
-    const pendingGroup = f.cfg.listGroups(f.target.id)[0]
+    const pendingGroup = rollback === 'fails' ? f.group : f.cfg.listGroups(f.target.id)[0]
     assert(pendingGroup)
     const deleted = await f.api.inject({ method: 'DELETE', url: '/api/groups/' + pendingGroup.id })
-    assert.equal(deleted.statusCode, 200); assert.deepEqual(deleted.json(), { ok: true })
-    const entry = f.entries.at(-1)!, event = f.events.at(-1)!
+    assert.equal(deleted.statusCode, rollback === 'fails' ? 503 : 200)
+    const entry = f.entries.at(-1)!
     assert.equal(entry.method, 'deleteGroup'); assert.equal(entry.transaction, rollback === 'fails'); assert.equal(entry.restoring, false)
-    assert.equal(f.events.length, 1); assert.equal(event.transaction, rollback === 'fails')
+    assert.equal(f.events.length, rollback === 'fails' ? 0 : 1)
     assert.equal(f.db.isTransaction, rollback === 'fails')
     if (rollback === 'fails') {
-      assert.equal(event.reader, before); assert.notEqual(event.writer, before)
-      exec('ROLLBACK') // Audit-only cleanup, after recording the misleading successful response.
+      assert.equal(deleted.json().code, 'CONFIG_TRANSACTION_UNCONFIRMED')
+      assert.throws(() => f.cfg.listGroups(f.target.id), /此连接已隔离/)
+      assert.equal(graph(f.reader), before); assert.notEqual(graph(f.db), before)
+      exec('ROLLBACK') // Audit-only cleanup cannot lift the instance's sticky quarantine.
       assert.equal(graph(f.db), before); assert.equal(graph(f.reader), before)
-      console.log('DELETE CALLERS KNOWN RISK: rollback failure in ' + surface + ' leaves a pending owned transaction; the next DELETE returns 200 and notifies before commit, and is undone by later rollback')
+      assert.throws(() => f.cfg.listGroups(f.target.id), /此连接已隔离/)
+      console.log('DELETE CALLERS QUARANTINED: rollback failure in ' + surface + ' blocks the next DELETE with 503 and no notification; raw fixture cleanup cannot lift quarantine')
     } else {
+      assert.deepEqual(deleted.json(), { ok: true }); const event = f.events.at(-1)!
+      assert.equal(event.transaction, false)
       assert.equal(event.writer, event.reader); assert.notEqual(graph(f.reader), before)
     }
   })
   await tick(); assert.deepEqual(denied, []); assert.deepEqual(unhandled, []); assert.equal(passed.length, 15)
 } finally { net.Server.prototype.listen = listen; net.Socket.prototype.connect = connect; globalThis.fetch = fetch; process.off('unhandledRejection', onUnhandled) }
-console.log('DELETE CALLERS AUDIT COMPLETE: 8 static call sites and 15 inventory/real-route/two-connection/Sink cases; normal managed transactions suppress intermediate notifications; failed-rollback follow-up risk reproduced; no production fix, real data, network listeners or devices')
+console.log('DELETE CALLERS AUDIT COMPLETE: 8 static call sites and 15 inventory/real-route/two-connection/Sink cases; normal managed transactions suppress intermediate notifications; failed-rollback follow-up writes quarantined; no real data, network listeners or devices')

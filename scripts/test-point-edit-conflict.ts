@@ -15,6 +15,9 @@ import { readDeviceGroups } from '../apps/web/src/config-read.ts'
 import { PointDraftCloseGuard } from '../apps/web/src/point-draft-close.ts'
 import { createPointEnumDraft } from '../apps/web/src/point-enum-draft.ts'
 import { parsePointSettingsUpdate } from '../apps/web/src/point-settings.ts'
+import { stageMemoryConfigurationRecovery } from './fixtures/config-recovery-driver.ts'
+let recovery: ReturnType<typeof stageMemoryConfigurationRecovery> | undefined
+
 
 let events = 0, failNotify = false
 const cfg = new ConfigStore({ dbPath: ':memory:' }, () => { events++; if (failNotify) throw new Error('synthetic notification failure') }), api = Fastify()
@@ -126,12 +129,15 @@ try {
     assert.equal(snapshot(), before); assert.equal(events, count)
   }
   const rollbackExpected = capture(); count = events
+  recovery = stageMemoryConfigurationRecovery(cfg)
   db.exec = (sql: string) => { if (sql === 'COMMIT' || sql === 'ROLLBACK') throw new Error('injected transaction failure'); return exec(sql) }
   try {
     const uncertain = await send(rollbackExpected, { unit: 'uncertain transaction' })
     assert.equal(uncertain.statusCode, 500); assert.match(uncertain.json().error, /结果待核实/)
     assert.equal(events, count)
   } finally { db.exec = exec; exec('ROLLBACK') }
+  assert.throws(() => cfg.getRegister(point.id), /此连接已隔离/, 'manual native rollback does not lift quarantine')
+  recovery.reopen()
   assert.equal(cfg.getRegister(point.id)!.unit, rollbackExpected.point.unit)
   failNotify = true
   const notifyResult = await send(capture(), { unit: 'committed despite notification' })
@@ -221,7 +227,7 @@ try {
   assert.equal(closed, 1); assert.equal(formRequests, 2); assert.equal(snapshot(), formGraph, 'discard is no write or undo')
   const deleted = capture(); cfg.deleteRegister(point.id); count = events
   assert.equal((await send(deleted, { unit: 'deleted' })).statusCode, 404); assert.equal(events, count)
-} finally { await api.close(); (cfg as any).db.close() }
+} finally { await api.close(); await cfg.close(); await recovery?.close() }
 
 // A second SQLite connection cannot slip a write between compare and UPDATE.
 const scratchParent = resolve(tmpdir()), scratch = mkdtempSync(join(scratchParent, 'probe-point-edit-'))

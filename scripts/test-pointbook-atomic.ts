@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import ExcelJS from 'exceljs'
 import { ConfigStore } from '../packages/config/src/index.ts'
 import { Sink } from '../packages/sink/src/index.ts'
+import { stageMemoryConfigurationRecovery } from './fixtures/config-recovery-driver.ts'
+let recovery: ReturnType<typeof stageMemoryConfigurationRecovery> | undefined
 
-// Memory-only XLSX replacement. Never bootstrap the application or use a real file.
+
+// Synthetic XLSX replacement; explicit recovery uses a new temporary fixture copy only.
 let observe = false, failNotify = false
 const events: Array<{ scope: string; id?: number; groups: number; registers: number; rules: number }> = []
 let cfg: ConfigStore
@@ -101,12 +104,14 @@ try {
   } finally { cfg.log = log }
 
   // A rollback failure is explicitly uncertain; only the test cleans up the still-open memory transaction.
+  recovery = stageMemoryConfigurationRecovery(cfg)
   before = snapshot(); count = events.length
   try {
     db.exec = (sql: string) => { if (sql === 'COMMIT' || sql === 'ROLLBACK') throw new Error('injected uncertain transaction'); return exec(sql) }
     await assert.rejects(sink.importPointBook(target.id, exported.buffer), error => error instanceof AggregateError && /结果不确定/.test(error.message))
   } finally { db.exec = exec; exec('ROLLBACK') }
+  assert.throws(snapshot, /此连接已隔离/); recovery.reopen()
   assert.equal(snapshot(), before); assert.equal(events.length, count)
   assert.equal((await sink.importPointBook(target.id, exported.buffer)).errors.length, 0)
-} finally { (cfg as any).db.close() }
-console.log('POINTBOOK ATOMIC OK: later-row/empty/invalid file rejection, replace/append, full-graph notification, delete/group/point/rule/commit rollback and retry, uncertain rollback and post-commit warnings; memory-only XLSX')
+} finally { await cfg.close(); await recovery?.close() }
+console.log('POINTBOOK ATOMIC OK: later-row/empty/invalid file rejection, replace/append, full-graph notification, delete/group/point/rule/commit rollback and retry, uncertain rollback and post-commit warnings; memory/fresh-temporary SQLite and synthetic XLSX')

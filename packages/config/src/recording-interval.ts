@@ -23,7 +23,7 @@ export class RecordingIntervals {
   private sourceRevisions = new Map<number, symbol>()
   private sourceGuards = new WeakMap<RecordingSourceGuard, { scope: symbol; revision: symbol; signature: string }>()
   scope() { return this.identity }
-  constructor(private db: () => DatabaseSync, private read: (id: number) => DeviceRecord | undefined, private write: (id: number, rate: number) => void, private restoring: () => boolean, private notify: (id: number) => void) {}
+  constructor(private db: () => DatabaseSync, private read: (id: number) => DeviceRecord | undefined, private write: (id: number, rate: number) => void, private restoring: () => boolean, private notify: (id: number) => void, private rollbackFailed: (failure: AggregateError) => void = () => {}) {}
   /** Called for every supported poll-interval write, including same-value writes and rolled-back attempts. */
   changed(id: number) { if (this.revisions.has(id)) this.revisions.set(id, Symbol()) }
   deleted(id: number) { this.revisions.delete(id); this.sourceRevisions.delete(id) }
@@ -63,7 +63,11 @@ export class RecordingIntervals {
     if (this.restoring()) throw Object.assign(new Error('配置正在批量更新，录制间隔未修改。'), { statusCode: 409 })
     const db = this.db(); db.exec('BEGIN IMMEDIATE')
     try { const result = run(); db.exec('COMMIT'); return result }
-    catch (error) { try { db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '录制间隔回滚失败，结果待核实。') }; throw error }
+    catch (error) {
+      try { db.exec('ROLLBACK') }
+      catch (rollback) { const failure = new AggregateError([error, rollback], '录制间隔回滚失败，结果待核实。'); this.rollbackFailed(failure); throw failure }
+      throw error
+    }
   }
   private warnings(id: number) {
     const warnings: string[] = []

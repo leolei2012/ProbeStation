@@ -540,8 +540,14 @@ class PollingEngine {
   }
 
   private isRtuPortInUse(serialPath: string): boolean {
-    return this.ctx.config.listObjects().some((o: any) =>
-      o.transport === 'rtu' && o.serialPath === serialPath && o.mode !== 'slave' && o.isActive === 1)
+    try {
+      return this.ctx.config.listObjects().some((o: any) =>
+        o.transport === 'rtu' && o.serialPath === serialPath && o.mode !== 'slave' && o.isActive === 1)
+    } catch (error) {
+      // Unknown configuration does not prove an existing channel is unused.
+      if (error instanceof Error && 'code' in error && error.code === 'CONFIG_TRANSACTION_UNCONFIRMED') return true
+      throw error
+    }
   }
 
   private releaseUnusedRtuDrivers(): void {

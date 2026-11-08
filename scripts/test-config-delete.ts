@@ -37,7 +37,7 @@ function fixture() {
   cfg.log('INFO','synthetic','sentinel log')
   db = (cfg as unknown as { db: DatabaseSync }).db
   db.exec("INSERT INTO firmwares (name, version, size, file_path) VALUES ('synthetic sentinel','1',1,'not-a-real-file'); CREATE TABLE synthetic_history (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO synthetic_history VALUES (1,'preserve')")
-  graph = () => JSON.stringify({ objects:cfg.listObjects(),groups:[...cfg.listGroups(d.id),...cfg.listGroups(keep.id)],points:[...cfg.listRegistersByObject(d.id),...cfg.listRegistersByObject(keep.id)],rules:cfg.listRules(),logs:cfg.listLogs(),firmwares:db.prepare('SELECT * FROM firmwares ORDER BY id').all(),history:db.prepare('SELECT * FROM synthetic_history').all() })
+  graph = () => JSON.stringify(Object.fromEntries(['monitor_objects','register_groups','registers','alarm_rules','logs','firmwares','synthetic_history'].map(table=>[table,db.prepare(`SELECT * FROM ${table} ORDER BY id`).all()])))
   const keepBefore = JSON.stringify({ device:cfg.getObject(keep.id),group:cfg.getGroup(other.id),point:cfg.getRegister(points[3].id),rule:cfg.listRules().find(rule => rule.id === rules[3].id) })
   const sentinels = JSON.stringify({ logs:cfg.listLogs(),firmwares:db.prepare('SELECT * FROM firmwares').all(),history:db.prepare('SELECT * FROM synthetic_history').all() })
   const remove = (kind: Kind) => kind === 'device' ? cfg.deleteObject(d.id) : kind === 'group' ? cfg.deleteGroup(g.id) : cfg.deleteRegister(points[0].id)
@@ -54,7 +54,10 @@ function fixture() {
     assert.equal(JSON.stringify({ logs,firmwares:db.prepare('SELECT * FROM firmwares').all(),history:db.prepare('SELECT * FROM synthetic_history').all() }),sentinels,'logs/firmware/history are outside deletion scope')
   }
   const originalExec = db.exec.bind(db)
-  return { cfg,db,d,keep,g,sibling,points,rules,events,notifyFailure,graph,remove,id,scope,steps,blockStep,assertRemoved,arm:()=>{armed=true},notifyFail:()=>{failNotify=true},close:async()=>{db.exec=originalExec;if(db.isTransaction)originalExec('ROLLBACK');await cfg.close()} }
+  const removedNative = JSON.parse(graph()) as Record<string, Array<{id:number}>>
+  for(const [table,ids] of [['monitor_objects',[d.id]],['register_groups',[g.id,sibling.id]],['registers',points.slice(0,3).map(row=>row.id)],['alarm_rules',rules.slice(0,3).map(row=>row.id)]] as const)removedNative[table]=removedNative[table].filter(row=>!(ids as readonly number[]).includes(row.id))
+  const removedDeviceGraph=JSON.stringify(removedNative)
+  return { cfg,db,d,keep,g,sibling,points,rules,events,notifyFailure,graph,removedDeviceGraph,remove,id,scope,steps,blockStep,assertRemoved,arm:()=>{armed=true},notifyFail:()=>{failNotify=true},close:async()=>{db.exec=originalExec;if(db.isTransaction)originalExec('ROLLBACK');await cfg.close()} }
 }
 const onUnhandled = (error: unknown) => { unhandled.push(error) }, listen = net.Server.prototype.listen, connect = net.Socket.prototype.connect, fetch = globalThis.fetch, block = (name: string) => () => { denied.push(name); throw Error('unexpected real I/O: '+name) }
 net.Server.prototype.listen=block('listen') as typeof listen;net.Socket.prototype.connect=block('connect') as typeof connect;globalThis.fetch=block('fetch') as typeof fetch;process.on('unhandledRejection',onUnhandled)
@@ -91,9 +94,9 @@ try {
           return exec(sql)}
         f.arm();const result=caught(()=>f.remove('device'));assert.equal(result.threw,true);assert.equal(f.events.length,0)
         if(mode==='savepoint-start'||mode==='release-before'){assert.equal(result.error,injected);assert.equal(f.graph(),before);assert.equal(f.db.isTransaction,false)}
-        else if(mode==='release-after'){assert.equal(released,true);f.assertRemoved('device');assert(result.error instanceof AggregateError&&result.error.message.includes('待核实'));assert(contains(result.error,injected));assert.equal(f.db.isTransaction,false)}
+        else if(mode==='release-after'){assert.equal(released,true);assert.equal(f.graph(),f.removedDeviceGraph,'native full graph verifies exact deletion and untouched metadata/log/firmware/history sentinels despite public quarantine');assert.throws(()=>f.cfg.getObject(f.d.id),/此连接已隔离/);assert(result.error instanceof AggregateError&&result.error.message.includes('待核实'));assert(contains(result.error,injected));assert.equal(f.db.isTransaction,false)}
         else if(mode==='rollback-root'||mode==='rollback-release-fail'){assert(result.error instanceof AggregateError);assert(contains(result.error,injected));assert.equal(f.graph(),before);assert.equal(f.db.isTransaction,false)}
-        else{assert(result.error instanceof AggregateError);assert(contains(result.error,injected));assert.equal(f.db.isTransaction,true);assert.notEqual(f.graph(),before);if(outer)assert.equal(f.cfg.getObject(f.keep.id)?.name,'outer-kept');else assert(contains(result.error,fallback));exec('ROLLBACK')}
+        else{assert(result.error instanceof AggregateError);assert(contains(result.error,injected));assert.equal(f.db.isTransaction,true);assert.notEqual(f.graph(),before);assert.throws(()=>f.cfg.getObject(f.d.id),/此连接已隔离/);if(outer)assert.equal(f.db.prepare('SELECT name FROM monitor_objects WHERE id=?').get(f.keep.id)?.name,'outer-kept');else assert(contains(result.error,fallback));exec('ROLLBACK');assert.throws(()=>f.cfg.getObject(f.d.id),/此连接已隔离/)}
       }finally{await f.close()}
     })
     const apiSource=ts.createSourceFile('api.ts',readFileSync(new URL('../packages/api/src/index.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true)

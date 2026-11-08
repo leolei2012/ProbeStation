@@ -4,6 +4,9 @@ import ts from 'typescript'
 import Fastify from 'fastify'
 import { ConfigStore } from '../packages/config/src/index.ts'
 import * as client from '../apps/web/src/group-settings-save.ts'
+import { stageMemoryConfigurationRecovery } from './fixtures/config-recovery-driver.ts'
+let recovery: ReturnType<typeof stageMemoryConfigurationRecovery> | undefined
+
 
 const app = Fastify(), seen: Array<{ scope: string; id?: number; counts: Array<[number, number]> }> = []
 let cfg!: ConfigStore, objectId = 0, armed = false, failNotify = false
@@ -71,9 +74,10 @@ try {
   db.exec = exec; assert.equal(begins, 0); assert.equal(graph(), normal); assert.equal(seen.length, 0)
 
   // Unknown rollback result is an error, never a success or a configuration event. Cleanup only this memory transaction.
+  recovery = stageMemoryConfigurationRecovery(cfg)
   db.exec = (sql: string) => { if (sql === 'COMMIT' || sql === 'ROLLBACK') throw new Error('synthetic transaction outcome failure'); return exec(sql) }
   assert.throws(() => cfg.createGroupWithRegisters(d.id, 'uncertain', 3, 50, 1), AggregateError)
-  assert.equal(seen.length, 0); db.exec = exec; exec('ROLLBACK'); assert.equal(graph(), normal)
+  assert.equal(seen.length, 0); db.exec = exec; exec('ROLLBACK'); assert.throws(graph, /此连接已隔离/); recovery.reopen(); assert.equal(graph(), normal)
   const primitive = cfg.createGroup(d.id, 'primitive remains independent', 3, 60, 1); assert.equal(cfg.listRegisters(primitive.id).length, 0)
-  console.log('GROUP CREATE ATOMIC OK: actual POST with memory SQLite trigger/commit failures, complete rollback and explicit retry, no partial notifications, complete postcommit graph with original event order, committed notification warnings/client propagation, nested BEGIN ownership, prewrite flag rejection, unknown rollback and unchanged primitive creation; no service, DOM, network or hardware')
-} finally { db.exec = exec; try { exec('ROLLBACK') } catch {} await app.close(); db.close() }
+  console.log('GROUP CREATE ATOMIC OK: actual POST with memory/fresh-temporary SQLite trigger/commit failures, complete rollback and explicit retry, no partial notifications, complete postcommit graph with original event order, committed notification warnings/client propagation, nested BEGIN ownership, prewrite flag rejection, unknown rollback and unchanged primitive creation; no service, DOM, network or hardware')
+} finally { db.exec = exec; try { exec('ROLLBACK') } catch {} await app.close(); await cfg.close(); await recovery?.close() }

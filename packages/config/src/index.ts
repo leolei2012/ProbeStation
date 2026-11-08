@@ -9,6 +9,7 @@ import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
 import { parseConfigBackup, type ConfigBackup } from './backup.ts'
 import { parseRegisterQuantity } from './register-quantity.ts'
 import { CommittedConfigurationNotificationError } from './notification-error.ts'
+import { ConfigurationTransactionUnconfirmedError } from './transaction-error.ts'
 import { assertImportedPointTable, type ImportedPointGroup, type ImportedPointDefinition } from '../../core/src/point-import.ts'
 import { withRegisterSources } from '../../core/src/sample-source.ts'
 import { selectSourceRegister } from '../../core/src/register-selection.ts'
@@ -63,7 +64,24 @@ export class ConfigStore {
   private logCleanupBlocked = false
   private exportSnapshotScope = randomUUID()
   private exportSnapshotBlocked = false
-  private db: DatabaseSync
+  private connection: DatabaseSync
+  private recoveryFailure: { cause: unknown } | undefined
+  /** One gate for all database access: never expose pending values as ordinary configuration. */
+  private get db(): DatabaseSync {
+    if (this.recoveryFailure) throw new ConfigurationTransactionUnconfirmedError(this.recoveryFailure.cause)
+    return this.connection
+  }
+  private quarantine(cause: unknown): void {
+    if (this.recoveryFailure) return
+    this.recoveryFailure = { cause }
+    this.exportSnapshotBlocked = true; this.logCleanupBlocked = true
+    this.recordingIntervals.reset()
+  }
+  private rollbackFailure(error: unknown, rollback: unknown, message: string): AggregateError {
+    const failure = new AggregateError([error, rollback], message)
+    this.quarantine(failure)
+    return failure
+  }
   private dbPath: string
   private closing = false
   private closeTask: Promise<void> | undefined
@@ -78,14 +96,14 @@ export class ConfigStore {
     this.exportSnapshotScope = randomUUID(); this.exportSnapshotBlocked = true
     this.logCleanupScope = randomUUID(); this.logCleanupBlocked = true
     this.recordingIntervals.reset()
-    try { if (this.db.isOpen) this.db.close() } catch (error) { errors.push(error) }
+    try { if (this.connection.isOpen) this.connection.close() } catch (error) { errors.push(error) }
     throwCleanupErrors(errors, 'Configuration shutdown failed')
   }
-  private recordingIntervals = new RecordingIntervals(() => this.db, id => this.getObject(id), (id, intervalMs) => this.update('monitor_objects', id, { pollIntervalMs: intervalMs }, OBJECT_MAP), () => this.restoring, id => this.notify('object', id))
+  private recordingIntervals = new RecordingIntervals(() => this.db, id => this.getObject(id), (id, intervalMs) => this.update('monitor_objects', id, { pollIntervalMs: intervalMs }, OBJECT_MAP), () => this.restoring, id => this.notify('object', id), failure => this.quarantine(failure))
   acquireRecordingInterval(id: number, intervalMs: number, expectedSource?: RecordingSourceGuard) { return this.recordingIntervals.acquire(id, intervalMs, expectedSource) }
   captureRecordingSource(id: number) { return this.recordingIntervals.captureSource(id) }
   // Producers may also bind the guard to the exact configuration snapshot used before I/O.
-  recordingSourceMatches(guard: RecordingSourceGuard, snapshot?: DeviceRecord) { return this.recordingIntervals.sourceMatches(guard, snapshot) }
+  recordingSourceMatches(guard: RecordingSourceGuard, snapshot?: DeviceRecord) { return !this.recoveryFailure && this.recordingIntervals.sourceMatches(guard, snapshot) }
   revokeRecordingInterval(lease: RecordingIntervalLease) { this.recordingIntervals.revoke(lease) }
   recordingIntervalLeaseValid(lease: RecordingIntervalLease) { return this.recordingIntervals.valid(lease) }
   restoreRecordingInterval(lease: RecordingIntervalLease) { return this.recordingIntervals.restore(lease) }
@@ -93,7 +111,7 @@ export class ConfigStore {
 
   constructor(config: Config, private readonly onChange?: (scope: string, id?: number) => void) {
     this.dbPath = config.dbPath
-    this.db = this.open(config.dbPath)
+    this.connection = this.open(config.dbPath)
   }
 
   /** 元数据变更后回调（供上层广播 config/changed，让前端/MCP 状态同步）。 */
@@ -171,11 +189,13 @@ export class ConfigStore {
     this.exportSnapshotScope = randomUUID(); this.exportSnapshotBlocked = true
     this.logCleanupScope = randomUUID()
     this.recordingIntervals.reset()
-    this.db.close()
-    this.dbPath = dbPath
-    this.db = this.open(dbPath)
-    this.logCleanupBlocked = false
-    this.exportSnapshotBlocked = false
+    try {
+      if (this.connection.isOpen) this.connection.close()
+      const next = this.open(dbPath)
+      this.connection = next; this.dbPath = dbPath
+      this.recoveryFailure = undefined
+      this.logCleanupBlocked = false; this.exportSnapshotBlocked = false
+    } catch (error) { this.quarantine(error); throw error }
   }
 
   private schema(): string {
@@ -277,7 +297,7 @@ export class ConfigStore {
       if (!device) throw new Error('保存后无法读取设备，事务已中止。')
       this.db.exec('COMMIT')
     } catch (error) {
-      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '设备设置回滚失败，结果待核实，勿自动重试。') }
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '设备设置回滚失败，结果待核实，勿自动重试。') }
       throw error
     }
     const warnings: string[] = []
@@ -298,8 +318,11 @@ export class ConfigStore {
       if (rolledBack) { try { this.db.exec(`RELEASE SAVEPOINT ${savepoint}`) } catch (release) { errors.push(release) } }
       if (errors.length > 1) {
         // A whole rollback is safe only when this delete opened the outermost transaction.
-        if (ownsTransaction) { try { this.db.exec('ROLLBACK') } catch (rollback) { errors.push(rollback) } }
-        throw new AggregateError(errors, '配置删除回滚未确认，结果待核实；请核对数据库状态，勿重复删除。')
+        let recovered = false
+        if (ownsTransaction) { try { this.db.exec('ROLLBACK'); recovered = true } catch (rollback) { errors.push(rollback) } }
+        const failure = new AggregateError(errors, '配置删除回滚未确认，结果待核实；请核对数据库状态，勿重复删除。')
+        if (!recovered) this.quarantine(failure)
+        throw failure
       }
       throw error
     }
@@ -333,7 +356,7 @@ export class ConfigStore {
       if (!activationMatches(snapshot, activationTarget(expected, isActive))) throw new Error('开关写回不一致，事务中止。')
       this.db.exec('COMMIT')
     } catch (error) {
-      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '开关结果待核实，勿直接重复操作。') }
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '开关结果待核实，勿直接重复操作。') }
       throw error
     }
     const warnings: string[] = []
@@ -369,7 +392,7 @@ export class ConfigStore {
       for (let i = 0; i < group.quantity; i++) registerIds.push(this.createRegister(group.id, group.objectId, null, group.functionCode, group.startAddress + i, 'int16').id)
       this.db.exec('COMMIT')
     } catch (error) {
-      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '分组创建回滚失败，结果待核实，勿重复创建。') }
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '分组创建回滚失败，结果待核实，勿重复创建。') }
       throw error
     } finally { this.restoring = false }
     let notificationFailed = false
@@ -383,7 +406,7 @@ export class ConfigStore {
     let result: GroupRecord | undefined
     this.db.exec('BEGIN IMMEDIATE'); this.restoring = true
     try { result = this.updateGroupRows(id, fields); this.db.exec('COMMIT') }
-    catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '分组更新回滚失败，结果待核实，勿自动重试。') }; throw error }
+    catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '分组更新回滚失败，结果待核实，勿自动重试。') }; throw error }
     finally { this.restoring = false }
     this.notify('group', id)
     return result
@@ -428,7 +451,7 @@ export class ConfigStore {
     if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请稍后重读。'), { statusCode: 409 })
     this.db.exec('BEGIN')
     try { const result = this.groupEditSnapshot(id); this.db.exec('COMMIT'); return result }
-    catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '分组快照读取结束失败，请核对数据库状态。') }; throw error }
+    catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '分组快照读取结束失败，请核对数据库状态。') }; throw error }
   }
   updateGroupSettings(id: number, request: unknown) {
     const raw = request as any
@@ -452,7 +475,7 @@ export class ConfigStore {
       result = { snapshot, deletedRegisterIds, deletedRuleIds, addedRegisterIds: added.map(row => row.id) }
       this.db.exec('COMMIT')
     } catch (error) {
-      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '分组保存回滚失败，结果待核实，勿自动重试。') }
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '分组保存回滚失败，结果待核实，勿自动重试。') }
       throw error
     } finally { this.restoring = false }
     const warnings: string[] = []
@@ -498,7 +521,7 @@ export class ConfigStore {
     } catch (error) {
       try { this.db.exec('ROLLBACK') } catch (rollback) {
         this.exportSnapshotScope = randomUUID(); this.exportSnapshotBlocked = true
-        throw new AggregateError([error, rollback], '导出配置读取回滚失败，已停止提供快照。')
+        throw this.rollbackFailure(error, rollback, '导出配置读取回滚失败，已停止提供快照。')
       }
       throw error
     }
@@ -518,7 +541,7 @@ export class ConfigStore {
       for (const r of registers) this.createRegister(created[r.groupIndex].id, objectId, r.alias, r.functionCode, r.startAddress, r.dataType)
       this.db.exec('COMMIT')
     } catch (error) {
-      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '点表导入回滚失败，结果不确定，请检查配置，勿自动重试') }
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '点表导入回滚失败，结果不确定，请检查配置，勿自动重试') }
       throw error
     } finally { this.restoring = false }
     const warnings: string[] = []
@@ -542,7 +565,7 @@ export class ConfigStore {
       this.db.exec('COMMIT')
     } catch (error) {
       try { this.db.exec('ROLLBACK') }
-      catch (rollback) { throw new AggregateError([error, rollback], '点位表导入回滚失败，结果不确定，请核对配置，勿自动重试') }
+      catch (rollback) { throw this.rollbackFailure(error, rollback, '点位表导入回滚失败，结果不确定，请核对配置，勿自动重试') }
       if (error === rejected) return { groups: 0, registers: 0, errors: result!.errors, warnings: [] }
       throw error
     } finally { this.restoring = false }
@@ -589,7 +612,7 @@ export class ConfigStore {
       if (this.restoring) throw new Error('配置正在批量更新，不能嵌套语义导入')
       this.db.exec('BEGIN IMMEDIATE'); this.restoring = true
       try { for (const plan of plans) this.updateRegister(plan.id, plan.fields); this.db.exec('COMMIT') }
-      catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '语义导入回滚失败，结果不确定，勿自动重试') }; throw error }
+      catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '语义导入回滚失败，结果不确定，勿自动重试') }; throw error }
       finally { this.restoring = false }
       try { this.notify('point-import', objectId) } catch { warnings.push('语义配置已提交，但同步通知失败，请核对，勿重复导入。') }
     }
@@ -630,7 +653,7 @@ export class ConfigStore {
       const expected = capturePointEditBaseline(point, group, device)
       this.db.exec('COMMIT'); return expected
     } catch (error) {
-      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '点位快照读取结束失败，请核对数据库状态。') }
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '点位快照读取结束失败，请核对数据库状态。') }
       throw error
     }
   }
@@ -656,7 +679,7 @@ export class ConfigStore {
       if (!point || Object.entries({ ...current, ...changes }).some(([key, value]) => (point as any)[key] !== value)) throw new Error('点位保存后读回不一致，事务已中止。')
       this.db.exec('COMMIT')
     } catch (error) {
-      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '点位设置回滚失败，结果不确定，请核对配置，勿自动重试。') }
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '点位设置回滚失败，结果不确定，请核对配置，勿自动重试。') }
       throw error
     }
     const warnings: string[] = []
@@ -714,7 +737,7 @@ export class ConfigStore {
       if (ruleId !== undefined && !expected) throw Object.assign(new Error('告警规则不存在。'), { statusCode: 404 })
       const expectedContext = this.alarmPointContext(expected?.registerId ?? registerId!)
       this.db.exec('COMMIT'); return { ...(expected ? { expected: Object.freeze({ ...expected }) } : {}), expectedContext }
-    } catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '告警快照读取结束失败。') }; throw error }
+    } catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '告警快照读取结束失败。') }; throw error }
   }
   createRuleSettings(request: unknown) {
     const raw = request as any
@@ -730,7 +753,7 @@ export class ConfigStore {
       rule = this.createRule(fields.registerId, fields.operator, fields.threshold, fields.message)
       if (!alarmRuleMatches(rule, { id: rule.id, ...fields }) || !alarmContextMatches(this.alarmPointContext(fields.registerId), expectedContext)) throw new Error('新增告警读回不一致，事务已中止。')
       this.db.exec('COMMIT')
-    } catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '新增告警回滚失败，结果待核实。') }; throw error }
+    } catch (error) { try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '新增告警回滚失败，结果待核实。') }; throw error }
     finally { this.restoring = false }
     const warnings: string[] = []
     try { this.notify('rule', rule.id) } catch { warnings.push('告警已新增，但通知失败，请读回核对，勿重复新增。') }
@@ -756,7 +779,7 @@ export class ConfigStore {
       if (expectedContext && !alarmContextMatches(this.alarmPointContext(before.registerId), expectedContext)) throw new Error('告警点位或来源读回不一致，事务已中止。')
       this.db.exec('COMMIT')
     } catch (error) {
-      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '告警操作回滚失败，结果待核实，勿自动重试。') }
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw this.rollbackFailure(error, rollback, '告警操作回滚失败，结果待核实，勿自动重试。') }
       throw error
     } finally { this.restoring = false }
     const warnings: string[] = []
@@ -801,7 +824,7 @@ export class ConfigStore {
       this.db.exec('COMMIT')
       return Object.freeze({ ok: true, throughId: expected.throughId, revision: expected.revision, deleted, alreadyRemoved: expected.count - deleted, remaining })
     } catch (error) {
-      try { this.db.exec('ROLLBACK') } catch (rollback) { this.logCleanupScope = randomUUID(); this.logCleanupBlocked = true; throw new AggregateError([error, rollback], '日志清理回滚失败，结果待核实，勿自动重试。') }
+      try { this.db.exec('ROLLBACK') } catch (rollback) { this.logCleanupScope = randomUUID(); this.logCleanupBlocked = true; throw this.rollbackFailure(error, rollback, '日志清理回滚失败，结果待核实，勿自动重试。') }
       throw error
     }
   }
@@ -852,7 +875,11 @@ export class ConfigStore {
       }
       for (const r of b.rules) this.createRule(registers.get(r.registerId)!, r.operator, r.threshold, r.message)
       this.db.exec('COMMIT')
-    } catch (e) { this.db.exec('ROLLBACK'); throw e }
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') }
+      catch (rollback) { throw this.rollbackFailure(error, rollback, '配置恢复回滚失败，结果待核实，勿自动重试。') }
+      throw error
+    }
     finally { this.restoring = false }
     const warnings: string[] = []
     try { this.notify('backup') }

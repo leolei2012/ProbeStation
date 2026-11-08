@@ -10,6 +10,9 @@ import { registerDeviceSettings } from '../packages/api/src/device-settings.ts'
 import { captureDeviceEditBaseline, deviceEditMatches, parseDeviceEditRequest } from '../packages/core/src/device-settings-edit.ts'
 import { saveGuardedDeviceSettings } from '../apps/web/src/device-settings-save.ts'
 import { DeviceModal } from '../apps/web/src/DeviceModal.tsx'
+import { stageMemoryConfigurationRecovery } from './fixtures/config-recovery-driver.ts'
+let recovery: ReturnType<typeof stageMemoryConfigurationRecovery> | undefined
+
 
 let events = 0, failNotify = false, failReconnect = false, failSync = false
 const cfg = new ConfigStore({ dbPath: ':memory:' }, () => { events++; if (failNotify) throw new Error('synthetic notify failure') }), app = Fastify(), calls: string[] = []
@@ -83,9 +86,12 @@ try {
     assert.equal(snapshot(), before); assert.equal(events, count); assert.equal(calls.length, hooks)
   }
   const rollbackExpected = capture(); hooks = calls.length
+  recovery = stageMemoryConfigurationRecovery(cfg)
   db.exec = (sql: string) => { if (sql === 'COMMIT' || sql === 'ROLLBACK') throw new Error('synthetic transaction failure'); return exec(sql) }
   try { const result = await send(rollbackExpected, { name: 'uncertain' }); assert.equal(result.statusCode, 500); assert.match(result.json().error, /结果待核实/); assert.equal(calls.length, hooks) }
   finally { db.exec = exec; exec('ROLLBACK') }
+  assert.throws(() => cfg.getObject(device.id), /此连接已隔离/, 'manual native rollback does not lift quarantine')
+  recovery.reopen()
   assert.equal(cfg.getObject(device.id)!.name, rollbackExpected.name)
 
   failNotify = true; failReconnect = true; failSync = true; hooks = calls.length
@@ -130,7 +136,7 @@ try {
   assert.equal(invalidRequests, 0, 'local validation stays outside uncertain transport handling')
   const deleted = capture(); cfg.deleteObject(device.id); hooks = calls.length
   assert.equal((await send(deleted, { name: 'deleted' })).statusCode, 404); assert.equal(calls.length, hooks)
-} finally { await app.close(); (cfg as any).db.close() }
+} finally { await app.close(); await cfg.close(); await recovery?.close() }
 
 // Another connection cannot race between compare and write; only a newly created isolated file is opened.
 const scratchParent = resolve(tmpdir()), scratch = mkdtempSync(join(scratchParent, 'probe-device-edit-'))

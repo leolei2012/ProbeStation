@@ -9,6 +9,9 @@ import { registerActivationSettings } from '../packages/api/src/activation-setti
 import { activationMatches, activationTarget, captureActivation, type ActivationKind } from '../packages/core/src/activation-settings.ts'
 import { ActivationUncertainError, saveActivation } from '../apps/web/src/activation-settings-save.ts'
 import { readDeviceGroups } from '../apps/web/src/config-read.ts'
+import { stageMemoryConfigurationRecovery } from './fixtures/config-recovery-driver.ts'
+let recovery: ReturnType<typeof stageMemoryConfigurationRecovery> | undefined
+
 
 let events = 0, failNotify = false, failSync = false, syncs = 0
 const cfg = new ConfigStore({ dbPath: ':memory:' }, () => { events++; if (failNotify) throw Object.assign(new Error('synthetic notify failure'), { statusCode: 409 }) }), app = Fastify()
@@ -119,9 +122,12 @@ try {
   assert.throws(() => cfg.setActivation('device', device.id, { expected: pendingOuter, isActive: pendingOuter.isActive ? 0 : 1 }))
   assert.equal(cfg.getObject(device.id)!.name, 'outer pending'); exec('ROLLBACK')
   const rollbackExpected = current('device'), beforeRollback = events
+  recovery = stageMemoryConfigurationRecovery(cfg)
   db.exec = (sql: string) => { if (sql === 'COMMIT' || sql === 'ROLLBACK') throw new Error('synthetic uncertain transaction'); return exec(sql) }
   try { assert.throws(() => cfg.setActivation('device', device.id, { expected: rollbackExpected, isActive: rollbackExpected.isActive ? 0 : 1 }), AggregateError); assert.equal(events, beforeRollback) }
   finally { db.exec = exec; exec('ROLLBACK') }
+  assert.throws(() => cfg.getObject(device.id), /此连接已隔离/, 'manual native rollback does not lift quarantine')
+  recovery.reopen()
   assert(activationMatches(current('device'), rollbackExpected))
   const missing = { ...current('device'), device: { ...current('device').device, id: 999 } }
   assert.equal((await app.inject({ method: 'PUT', url: '/api/monitor_objects/999/activation', payload: { expected: missing, isActive: missing.isActive ? 0 : 1 } })).statusCode, 404)
@@ -136,7 +142,7 @@ try {
     const legacyPath = kind === 'device' ? '/api/monitor_objects/' + device.id + '/toggle' : '/api/groups/' + group.id + '/toggle-pause'
     const result = await app.inject({ method: 'POST', url: legacyPath }); assert.equal(result.statusCode, 200); assert.equal(result.json().isActive, before ? 0 : 1); assert.equal(result.json().snapshot, undefined, 'legacy response shape unchanged')
   }
-} finally { await app.close(); (cfg as any).db.close() }
+} finally { await app.close(); await cfg.close(); await recovery?.close() }
 
 // Only a newly created temporary database: a second connection cannot edit source between compare and SET.
 const parent = resolve(tmpdir()), scratch = mkdtempSync(join(parent, 'probe-activation-'))

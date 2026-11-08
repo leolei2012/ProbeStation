@@ -10,6 +10,9 @@ import { registerGroupSettings } from '../packages/api/src/group-settings.ts'
 import { captureGroupOpening, parseGroupEditSnapshot, acceptGroupEditSnapshot, parseGroupEditChanges, planGroupResize } from '../packages/core/src/group-settings-edit.ts'
 import { fullGroupForEditing, readGroupSettings, saveGuardedGroupSettings } from '../apps/web/src/group-settings-save.ts'
 import { GroupModal } from '../apps/web/src/GroupModal.tsx'
+import { stageMemoryConfigurationRecovery } from './fixtures/config-recovery-driver.ts'
+let recovery: ReturnType<typeof stageMemoryConfigurationRecovery> | undefined
+
 
 let observe = false, failNotify = false
 const events: string[] = []
@@ -128,9 +131,12 @@ try {
   try { const inconsistent = await send(wrongDeleteSnapshot, { quantity: 1 }, true); assert.equal(inconsistent.statusCode, 500); assert.equal(graph(), before); assert.equal(events.length, count) }
   finally { cfg.deleteRegister = originalDelete }
   const rollbackSnapshot = capture(); before = graph(); count = events.length
+  recovery = stageMemoryConfigurationRecovery(cfg)
   db.exec = (sql: string) => { if (sql === 'COMMIT' || sql === 'ROLLBACK') throw new Error('synthetic rollback failure'); return exec(sql) }
   try { const uncertain = await send(rollbackSnapshot, { name: 'uncertain' }); assert.equal(uncertain.statusCode, 500); assert.match(uncertain.json().error, /待核实/); assert.equal(events.length, count) }
   finally { db.exec = exec; exec('ROLLBACK') }
+  assert.throws(graph, /此连接已隔离/, 'manual native rollback does not lift quarantine')
+  recovery.reopen()
   assert.equal(graph(), before)
 
   let writes = 0
@@ -154,7 +160,7 @@ try {
   assert.equal((await send(lost, { quantity: 1 }, true)).statusCode, 409); assert.equal(graph(), before); assert.equal(events.length, count)
   const deleted = capture(); cfg.deleteGroup(g.id); count = events.length
   assert.equal((await send(deleted, { name: 'missing' })).statusCode, 404); assert.equal(events.length, count)
-} finally { await api.close(); (cfg as any).db.close() }
+} finally { await api.close(); await cfg.close(); await recovery?.close() }
 
 // A second connection cannot mutate points/rules between graph comparison and resizing.
 const parent = resolve(tmpdir()), scratch = mkdtempSync(join(parent, 'probe-group-edit-'))

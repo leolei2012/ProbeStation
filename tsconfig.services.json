@@ -107,6 +107,7 @@
     "scripts/offline-test-app.ts",
     "scripts/test-delete-composition.ts",
     "scripts/audit-config-outer-transaction.ts",
-    "scripts/audit-config-delete-callers.ts"
+    "scripts/audit-config-delete-callers.ts",
+    "scripts/test-config-quarantine.ts"
   ]
 }

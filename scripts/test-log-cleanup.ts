@@ -71,7 +71,8 @@ try {
   db.exec = exec; db.prepare = prepare; db.exec('ROLLBACK')
   assert.throws(() => failure.cleanupReviewedLogs({ expected }), errorCode(409), 'uncertain rollback invalidates old conditions')
   assert.throws(() => failure.previewLogCleanup(), /未确认/, 'uncertain transaction cannot issue a new authoritative cleanup preview')
-  assert.equal(failure.listLogs().length, 1)
+  assert.throws(() => failure.listLogs(), /此连接已隔离/)
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM logs').get().count, 1, 'raw isolated fixture confirms rollback; public reads remain quarantined')
   failure.reopen(':memory:'); assert.equal(failure.previewLogCleanup().count, 0, 'only explicit successful re-open releases the cleanup block')
 } finally { (failure as any).db.close() }
 // Two independent connections: each has distinct runtime scope, but writes to the same temporary DB.
