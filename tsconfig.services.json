@@ -117,6 +117,7 @@
     "scripts/test-config-modal-loading.ts",
     "scripts/test-group-drafts.ts",
     "scripts/test-group-create-active.ts",
-    "scripts/test-group-create-atomic.ts"
+    "scripts/test-group-create-atomic.ts",
+    "scripts/test-live-snapshot-comparison.ts"
   ]
 }

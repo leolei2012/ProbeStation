@@ -7,8 +7,10 @@ import { RetentionSummary } from './RetentionSummary'
 import { RealtimeFallbackRead } from './realtime-fallback'
 import { registerWritePayloadValue } from '../../../packages/core/src/register-write-value'
 import { bindUiTheme, readUiLanguage, readUiTheme, readSidebarCollapsed, saveUiLanguage, saveSidebarCollapsed } from './ui-preferences'
-import { captureLiveSnapshot, type LiveSnapshot } from './live-snapshot'
+import { captureLiveSnapshot } from './live-snapshot'
 import { LiveSnapshotPanel } from './LiveSnapshotPanel'
+import { LiveSnapshotComparison } from './LiveSnapshotComparison'
+import { liveSnapshotComparisonKey, type FrozenLiveObservation } from './live-snapshot-comparison'
 import { AliasCell } from './AliasCell'
 import { HistoryComparison } from './HistoryComparison'
 import { HistoryTimeRange } from './HistoryTimeRange'
@@ -971,7 +973,10 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
-  const [snapshot, setSnapshot] = useState<LiveSnapshot | null>(null)
+  const [snapshotCapture, setSnapshotCapture] = useState<FrozenLiveObservation | null>(null)
+  const snapshot = snapshotCapture?.snapshot ?? null
+  const snapshotComparisonKey = useMemo(() => liveSnapshotComparisonKey(device, groups), [device, groups])
+  const snapshotComparisonScope = useMemo(() => snapshotComparisonKey === null ? null : Symbol('live-snapshot-comparison'), [snapshotComparisonKey])
   const [settingsReg, setSettingsReg] = useState<(Register & { editBaseline: PointEditBaseline }) | null>(null)
   const { rules: alarmRules, ready: alarmRulesReady, error: alarmRuleError, reading: readingAlarmRules, retry: retryAlarmRules } = useAlarmRules(device.id)
   const [alarmReg, setAlarmReg] = useState<Register | null>(null)
@@ -1049,10 +1054,11 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
       <div className="observation-toolbar">
         <div className="seg"><button className={!configuring ? 'selected' : ''} aria-pressed={!configuring} onClick={() => setConfiguring(false)}>{t('observe')}</button><button className={configuring ? 'selected' : ''} aria-pressed={configuring} onClick={() => setConfiguring(true)}>{t('configure')}</button></div>
         <ColumnControl t={t} columns={columns} configuring={configuring} onChange={setColumns} />
-        <button className="btn" type="button" disabled={!filteredPoints.visibleIds.size} onClick={() => { try { setSnapshot(captureLiveSnapshot({ device, groups, visibleIds: filteredPoints.visibleIds, views, states: pointStates, latest, filters: { search, source: activeSource, mode: pointFilter }, rulesReady: alarmRulesReady, observedAt: now, capturedAt: Date.now(), thresholdMs: threshold })) } catch (error) { operation.setNotice({ error: true, text: error instanceof Error ? error.message : t('operationFailed') }) } }}>{t('cancel') === 'Cancel' ? 'Freeze current matches' : '冻结当前筛选结果'}</button>
+        <button className="btn" type="button" disabled={!filteredPoints.visibleIds.size} onClick={() => { try { const value = captureLiveSnapshot({ device, groups, visibleIds: filteredPoints.visibleIds, views, states: pointStates, latest, filters: { search, source: activeSource, mode: pointFilter }, rulesReady: alarmRulesReady, observedAt: now, capturedAt: Date.now(), thresholdMs: threshold }); setSnapshotCapture(Object.freeze({ snapshot: value, scope: snapshotComparisonScope })) } catch (error) { operation.setNotice({ error: true, text: error instanceof Error ? error.message : t('operationFailed') }) } }}>{t('cancel') === 'Cancel' ? 'Freeze current matches' : '冻结当前筛选结果'}</button>
       </div>
       <LivePointFilters search={search} source={activeSource} sources={sources} mode={pointFilter} counts={filteredPoints.counts} rulesReady={alarmRulesReady} ruleError={!!alarmRuleError} readingRules={readingAlarmRules} onRetryRules={retryAlarmRules} onSearch={setSearch} onSource={setSourceFilter} onMode={setPointFilter} onClear={() => { setSearch(''); setSourceFilter(''); setPointFilter('all') }} english={t('cancel') === 'Cancel'} />
-      {snapshot && <LiveSnapshotPanel key={snapshot.capturedAt} snapshot={snapshot} close={() => setSnapshot(null)} english={t('cancel') === 'Cancel'} />}
+      <LiveSnapshotComparison current={snapshotCapture} scope={snapshotComparisonScope} english={t('cancel') === 'Cancel'} />
+      {snapshot && <LiveSnapshotPanel key={snapshot.capturedAt} snapshot={snapshot} close={() => setSnapshotCapture(null)} english={t('cancel') === 'Cancel'} />}
       {configuring && <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
         <button className="btn" disabled={operation.busy} onClick={() => bookInputRef.current?.click()}>⬆ {t('importPointBook')}</button>
