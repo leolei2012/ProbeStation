@@ -64,7 +64,7 @@ import { AssistantPanel } from './AssistantPanel'
 import { DeferredSettingsModal } from './DeferredSettingsModal'
 import { decodeHistorySeries, historySampleStats, historyLineStarts, historyQueryRange, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
 import { sampleCurve, type CurveBuffer } from './live-curve'
-import { pointHealth, sampleTime, staleAfterMs, type Sample } from './observation'
+import { pointHealth, sampleTime, sampleAgeSeconds, staleAfterMs, type Sample } from './observation'
 import { sameResponseBatch } from '../../../packages/core/src/sample-batch.ts'
 import { decodeRawByAddr, decodeRegister, formatNumber, formatRegisterValue, isBinType, isHexType, parseEnum, registerWidth } from '../../../packages/core/src/codec.ts'
 
@@ -96,6 +96,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
     connectionUnverified: '设备连接状态未核实',
+    sampleTimeUnverified: '采样时间超前，年龄未核实',
     histExportTooLarge: '超过 {n} 条原始行，导出会被截断，已停止生成文件。请取消并减少点位或缩小时间范围后重试。', histExportPreparing: '正在生成导出，可取消本页等待…', histExportTimeout: '导出等待超过 30 秒，本页已停止等待，后台可能继续生成。请缩小时间范围后重试。',
     histExportFull: '导出完整时间范围', histExportViewport: '导出当前缩放区间', histExportSelected: '{n} 个已选点位 · 原始历史（含批次状态）', histExportHint: '按所示时间范围导出，不受图例显隐、Y 轴范围或降采样影响。只读取已选点位所需的数据区和原始字，每次最多 20 万条；超过时请减少点位或缩小时间范围。上限不是导出表格的行数。',
     histExportCapacityNote: 'XLSX 最多 {n} 个点位（每点位 3 列）。原始行上限不等于内存上限，点位多、时间长仍可能消耗大量内存。建议先减少点位、缩短范围；CSV 也有内存风险。', histExportCancellationNote: '取消或超时只停止本页等待及下载，后台可能继续生成；立即重复导出可能叠加资源占用。',
@@ -173,6 +174,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
     connectionUnverified: 'Device connection unverified',
+    sampleTimeUnverified: 'Sample time ahead; age unverified',
     histExportTooLarge: 'More than {n} raw rows: exporting would truncate the data, so no file was generated. Cancel, select fewer points or narrow the time range and retry.', histExportPreparing: 'Preparing an export. You can stop waiting…', histExportTimeout: 'This page stopped waiting after 30 seconds. Backend generation may continue. Narrow the range before retrying.',
     histExportFull: 'Export full time range', histExportViewport: 'Export zoomed time range', histExportSelected: '{n} selected points · Raw history with batch status', histExportHint: 'Export the stated time range regardless of legend visibility, Y-axis limits or downsampling. Read only the raw words required by selected points, up to 200,000 rows. Select fewer points or narrow the range if exceeded. This is not the number of spreadsheet rows.',
     histExportCapacityNote: 'XLSX supports up to {n} points (3 columns per point). The raw-row limit is not a memory limit: wide or long exports can still use substantial memory. Start with fewer points and a shorter range; CSV also has memory risks.', histExportCancellationNote: 'Cancel or timeout stops this page waiting and downloading. Backend generation may continue; immediately starting another export may add resource load.',
@@ -876,7 +878,7 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
   const threshold = staleAfterMs(device.pollIntervalMs ?? 1000, device.timeoutMs ?? 3000, groups)
   const times = groups.flatMap(g => g.registers.map(r => sampleTime(sourceSample(latest, device.id, areaForFunctionCode(g.functionCode), r.startAddress, device.mode === 'slave' ? device.slaveId : g.slaveId)))).filter((v): v is number => v !== null)
   const lastSample = times.length ? Math.max(...times) : null
-  const age = lastSample === null ? null : Math.max(0, Math.floor((now - lastSample) / 1000))
+  const age = sampleAgeSeconds(lastSample, now)
   return (
     <div className="device-view">
       <div className="section-eyebrow">{t('overview')}</div>
@@ -891,7 +893,7 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
       <div className="main-sub">{device.mode === 'slave' ? '从站 / Slave' : '主站 / Master'} · Modbus {device.transport.toUpperCase()} · {device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
       {realtime.status !== 'connected' && <div className="connection-notice" role="status">{t(fallbackOk === true ? 'pageConnection' : fallbackOk === false ? 'pageUpdateFailed' : 'pageUpdateTrying')}</div>}
       <div className="sampling-summary" title={t('ageHint').replace('{n}', String(Math.round(threshold / 1000)))}>
-        <span>{t('lastSample')}: <strong>{age === null ? t('notSampled') : t('secondsAgo').replace('{n}', String(age))}</strong></span>
+        <span>{t('lastSample')}: <strong>{lastSample === null ? t('notSampled') : age === null ? t('sampleTimeUnverified') : t('secondsAgo').replace('{n}', String(age))}</strong></span>
         <span>{lastSample === null ? '—' : formatLocalTs(new Date(lastSample).toISOString())}</span>
         <span className={groups.some(g => groupErrors[g.id]) ? 'has-fault' : ''}>{t('faultsLabel')}: {groups.filter(g => groupErrors[g.id]).length}</span>
       </div>

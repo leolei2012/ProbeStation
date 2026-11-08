@@ -28,6 +28,7 @@ assert.equal(states.get(2)!.health.stale || views.get(2)!.invalid, false, 'old i
 assert.equal(states.get(2)!.alarmActive, true); assert.equal(states.get(2)!.attention, true, 'fresh triggered alarms must remain in attention')
 assert.equal(states.get(7)!.alarmActive, false, 'same-address other source does not borrow the triggered value')
 assert.equal(states.get(8)!.alarmUnknown, true, 'future samples stay unknown under existing alarm checks')
+assert.equal(states.get(8)!.dataIssue, true, 'future samples are also data issues rather than fresh readings')
 assert.equal(states.get(4)!.attention, false, 'covered placeholder rules do not enter attention counts')
 const unknownLegacy = evaluateLivePoints([groups[3]], views, { ...latest, '1:holding-register:0': sample(1, 200) }, device, rules, {}, now, threshold)
 assert.equal(unknownLegacy.get(10)!.alarmActive, false, 'unknown configured source must not borrow any legacy source to trigger a rule')
@@ -38,7 +39,8 @@ assert.equal(matchedLegacy.get(7)!.alarmActive, true, 'legacy keys remain compat
 const rawSemantics = evaluateLivePoints(groups.map(g => ({ ...g, registers: g.registers.map(p => ({ ...p, factor: 0, offset: -999 })) })), views, latest, device, rules, {}, now, threshold)
 assert.equal(rawSemantics.get(2)!.alarmActive, true, 'display scaling/offset never changes raw-value alarm comparisons')
 const all = livePointFilterResult(groups, states, '', '', 'all')
-assert.deepEqual(all.counts, { all: 10, attention: 7, alarm: 1, data: 5, unknown: 6 })
+assert.deepEqual(all.counts, { all: 10, attention: 7, alarm: 1, data: 6, unknown: 6 })
+assert.deepEqual([...livePointFilterResult(groups, states, '', '', 'data').visibleIds], [3, 5, 6, 8, 9, 10])
 assert.deepEqual([...livePointFilterResult(groups, states, '', '', 'alarm').visibleIds], [2])
 assert.deepEqual([...livePointFilterResult(groups, states, '', '', 'attention').visibleIds], [2, 3, 5, 6, 8, 9, 10])
 assert.deepEqual([...livePointFilterResult(groups, states, ' 温度 ', '', 'all').visibleIds], [2, 7])
@@ -94,6 +96,7 @@ assert.equal(evaluateLivePoints([groups[1]], views, localCache, { ...device, mod
 assert.deepEqual([...livePointFilterResult([groups[1]], states, 'slave:9', '9', 'all', 9).visibleIds], [7, 8], 'local slave filters use device source, not group metadata')
 const noRules = evaluateLivePoints(groups, views, latest, device, [], {}, now, threshold)
 assert.equal(noRules.get(2)!.attention, false); assert.equal(noRules.get(8)!.alarmUnknown, false, 'unknown-rule counts refer only to loaded rules, never guessed rules')
+assert.equal(noRules.get(8)!.dataIssue, true); assert.equal(noRules.get(8)!.attention, true, 'future data remains visible without an alarm rule')
 
 const largePoints = Array.from({ length: 10000 }, (_, i) => point(i + 1, i)), largeGroup = { ...groups[0], registers: largePoints }, largeCache: Record<string, Sample> = {}
 for (const p of largePoints) largeCache[sourceKey(1, 'holding-register', p.startAddress, 1)] = sample(1, 1)
