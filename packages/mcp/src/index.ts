@@ -15,6 +15,8 @@ import { areaForFunction, encodeRegister, invertSemantic, parseEnum, registerWid
 import { Recorder, MAX_RECORDING_PAGE_SIZE } from './recorder.ts'
 import { registerConfigEditTools } from './config-edit.ts'
 import { configEditRegistrar } from './config-edit-registry.ts'
+import { toolRegistrar } from './tool-registrar.ts'
+import type { AlarmRule } from '../../core/src/alarm.ts'
 import { registerAlarmTools } from './alarm-settings.ts'
 import { registerResourceCleanup, throwCleanupErrors } from '../../core/src/resource-close.ts'
 
@@ -70,12 +72,13 @@ export function apply(ctx: Context, config: Config): void {
 
   // 每个会话一个独立 McpServer：Protocol 只能连一个 transport，多会话/多连接必须各自实例。
   function registerTools(server: McpServer): void {
+    const tools = toolRegistrar(server)
     registerConfigEditTools(configEditRegistrar(server), cfg, { reconnect: id => poller.reconnectDevice(id), syncSlaves: async () => ctx.get('deviceSlaves', false)?.sync() })
-    server.registerTool('list_devices', {
+    tools.registerTool('list_devices', {
       title: 'List devices', description: '列出所有设备的 id、名称、mode（master/slave）、连接参数和启停状态；实时连接/监听状态用 get_device_health 查询。', inputSchema: {},
     }, async () => ({ content: [{ type: 'text', text: JSON.stringify(cfg.listObjects()) }] }))
 
-    server.registerTool('create_device', {
+    tools.registerTool('create_device', {
       title: 'Create device', description: '新增 TCP/RTU 设备。mode=master（默认）主动轮询；mode=slave 监听外部主站，TCP ip/port 是本机监听地址/端口，RTU 使用独占串口，slave_id 是从站号。扫描间隔与读写超时只用于主站。',
       inputSchema: {
         name: zz.string(),
@@ -129,7 +132,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(obj) }] }
     })
 
-    server.registerTool('delete_device', {
+    tools.registerTool('delete_device', {
       title: 'Delete device', description: '删除指定设备及其分组、点位、告警，停止连接/从站监听；保留历史数据，可用 delete_history 单独清理。不可撤销。',
       annotations: { destructiveHint: true }, inputSchema: { device_id: zz.number().int().positive() },
     }, async args => {
@@ -140,7 +143,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, device_id: args.device_id, history_preserved: true }) }] }
     })
 
-    server.registerTool('get_raw_frames', {
+    tools.registerTool('get_raw_frames', {
       title: 'Get raw frames', description: '查主站串口/TCP 原始 TX/RX 报文（最近 limit 帧，默认 200，上限 2000）：含时间/方向/slave/FC/hex。从站尚无报文缓冲，使用 get_device_health 的 slave_service 查询监听状态。',
       inputSchema: { device_id: zz.number(), limit: zz.number().optional() },
     }, async (args) => {
@@ -150,7 +153,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(frames) }] }
     })
 
-    server.registerTool('clear_raw_frames', {
+    tools.registerTool('clear_raw_frames', {
       title: 'Clear raw frames', description: '清空设备的原始报文诊断缓冲（TX/RX 帧与统计）',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
@@ -159,7 +162,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, device_id: args.device_id }) }] }
     })
 
-    server.registerTool('get_device_stats', {
+    tools.registerTool('get_device_stats', {
       title: 'Get device stats', description: '查单设备的历史采样统计：总行数 / 时间跨度 / 按数据区行数 / 保留时长',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
@@ -168,12 +171,12 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(s) }] }
     })
 
-    server.registerTool('list_registers', {
+    tools.registerTool('list_registers', {
       title: 'List registers', description: '列出某设备的寄存器定义（id、别名、地址、类型）',
       inputSchema: { device_id: zz.number() },
     }, async (args) => ({ content: [{ type: 'text', text: JSON.stringify(cfg.listRegistersByObject(args.device_id)) }] }))
 
-    server.registerTool('diagnose_points', {
+    tools.registerTool('diagnose_points', {
       title: 'Diagnose point table', description: '只读离线检查当前点表结构：dtype宽度/分组/地址边界、引用错误、重复定义、重叠组和语义导入歧义。区分错误和警告，覆盖占位行兼容；不改配置、不连接/轮询硬件，不代表设备在线或测试通过。',
       inputSchema: { device_id: zz.number().int().min(1).max(Number.MAX_SAFE_INTEGER) },
     }, async (args) => {
@@ -181,7 +184,7 @@ export function apply(ctx: Context, config: Config): void {
       catch (error: any) { return { content: [{ type: 'text', text: error.statusCode === 400 || error.statusCode === 404 ? error.message : '点表诊断失败' }], isError: true } }
     })
 
-    server.registerTool('set_device_active', {
+    tools.registerTool('set_device_active', {
       title: 'Start/stop device', description: '主站：active=true 连接并轮询，false 停止；从站：true 启动监听，false 停止监听。停止再启动从站保留本次程序运行期间的内存值。',
       inputSchema: { device_id: zz.number(), active: zz.boolean() },
     }, async (args) => {
@@ -192,7 +195,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
     })
 
-    server.registerTool('set_poll_interval', {
+    tools.registerTool('set_poll_interval', {
       title: 'Set poll interval', description: '设设备扫描间隔（毫秒，≥1 整数）。该设备所有分组按 round-robin 轮流轮询，每个分组约每「间隔 × 分组数」刷新一次；1ms 只是下限（=「尽可能快」）',
       inputSchema: { device_id: zz.number(), poll_interval_ms: zz.number() },
     }, async (args) => {
@@ -206,7 +209,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, device_id: args.device_id, poll_interval_ms: args.poll_interval_ms }) }] }
     })
 
-    server.registerTool('set_group_active', {
+    tools.registerTool('set_group_active', {
       title: 'Pause/resume group', description: '暂停或启用一个分组（active=true 开始轮询；active=false 暂停轮询）。状态同步到 Web UI',
       inputSchema: { group_id: zz.number(), active: zz.boolean() },
     }, async (args) => {
@@ -216,7 +219,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(updated) }] }
     })
 
-    server.registerTool('read_register', {
+    tools.registerTool('read_register', {
       title: 'Read register', description: '按设备/area/协议地址读取缓存，不主动请求硬件。可选 slave_id 或 register_id 精确选点；两者同时给出必须一致。省略时仅唯一匹配可读，歧义返回 candidates；同从站重复定义需 register_id。',
       inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number(), slave_id: zz.number().int().min(0).max(255).optional(), register_id: zz.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional() },
     }, async (args) => {
@@ -238,7 +241,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, area: args.area, address: reg.startAddress, alias: reg.alias, slave_id: reg.slaveId ?? null, verification: assessment.verification, automatic_eligible: assessment.automaticEligible, value, unit, label, timestamp: lv?.timestamp ?? null, quality: lv?.quality ?? null }) }] }
     })
 
-    server.registerTool('get_device_snapshot', {
+    tools.registerTool('get_device_snapshot', {
       title: 'Get device snapshot', description: '读某设备全部寄存器的实时值快照（含别名、地址、类型、时间戳、质量）',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
@@ -283,7 +286,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(out) }] }
     })
 
-    server.registerTool('query_history', {
+    tools.registerTool('query_history', {
       title: 'Query history', description: '按设备/area/协议地址查原始历史，可选 slave_id/register_id 精确选点，冲突不回退，歧义返回 candidates。返回原始16位字及仅已验证的单字语义 value；多字仍不自动合并。limit 默认2000/上限200000，offset 分页，NULL来源不补齐。',
       inputSchema: { device_id: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), address: zz.number(), slave_id: zz.number().int().min(0).max(255).optional(), register_id: zz.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(), start: zz.string(), end: zz.string(), limit: zz.number().optional(), offset: zz.number().optional() },
     }, async (args) => {
@@ -313,7 +316,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, slave_id: reg.slaveId ?? null, group_id: reg.groupId ?? null, alias: reg.alias, area: args.area, address: reg.startAddress, register_width: width, count: points.length, offset, warning: 'Unverified compatibility values are view-only; never automatic PASS/FAIL evidence. Multiword values are unavailable in this raw-word endpoint.', points: out }) }] }
     })
 
-    server.registerTool('write_register', {
+    tools.registerTool('write_register', {
       title: 'Write register', description: 'value 是工程值，反向应用 factor/offset 后编码。主站写真实设备，仅支持 holding-register/coil；从站修改本机点位内存，四数据区均支持，供外部主站读取，不主动连接外部设备。',
       inputSchema: { device_id: zz.number(), address: zz.number(), value: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']).optional(), method: zz.enum(['single', 'multiple']).optional() },
     }, async (args) => {
@@ -333,7 +336,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, address: reg.startAddress, area, value: args.value, method }) }] }
     })
 
-    server.registerTool('export_history', {
+    tools.registerTool('export_history', {
       title: 'Export history', description: '导出设备指定时间范围的历史，格式 CSV/XLSX，返回文件名和 base64；可选择 register_ids（必须属于设备），tz_offset_min 是展示时区相对 UTC 的分钟数，例如中国 +480。时间必须带时区。',
       annotations: { readOnlyHint: true },
       inputSchema: { device_id: zz.number().int().positive(), start: zz.string(), end: zz.string(), format: zz.enum(['csv', 'xlsx']).optional(), register_ids: zz.array(zz.number().int().positive()).min(1).optional(), tz_offset_min: zz.number().int().min(-840).max(840).optional() },
@@ -345,7 +348,7 @@ export function apply(ctx: Context, config: Config): void {
       const buffer = format === 'csv' ? Buffer.from(await sink.exportCsv(args.device_id, range.start, range.end, args.register_ids, args.tz_offset_min ?? 0), 'utf8') : await sink.exportXlsx(args.device_id, range.start, range.end, args.register_ids, args.tz_offset_min ?? 0)
       return { content: [{ type: 'text', text: JSON.stringify({ filename: `device-${args.device_id}-history.${format}`, mime: format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: buffer.length, b64: buffer.toString('base64'), ...range }) }] }
     })
-    server.registerTool('delete_history', {
+    tools.registerTool('delete_history', {
       title: 'Delete history', description: '按设备 ID 和带时区起止时间（包含两端）删除历史。dry_run 默认 true，只预览行数；false 实际删除。可清理已删除设备的遗留历史。保留配置和实时缓存，运行中的设备仍会产生新数据。',
       annotations: { destructiveHint: true },
       inputSchema: { device_id: zz.number().int().positive(), start: zz.string(), end: zz.string(), dry_run: zz.boolean().optional() },
@@ -356,7 +359,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ device_id: args.device_id, ...range, dry_run: result.dryRun, affected_rows: result.affectedRows }) }] }
     })
 
-    server.registerTool('create_group', {
+    tools.registerTool('create_group', {
       title: 'Create group', description: '新建寄存器分组（名称/从站ID/功能码/起始地址/数量）',
       inputSchema: { device_id: zz.number(), name: zz.string(), function_code: zz.number().optional(), start_address: zz.number(), quantity: zz.number(), slave_id: zz.number().optional() },
     }, async (args) => {
@@ -368,7 +371,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(g) }] }
     })
 
-    server.registerTool('import_points', {
+    tools.registerTool('import_points', {
       title: 'Import points', description: '更新已有点位语义，支持JSON或CSV。可选slave_id/register_id精确选点，歧义跳过并返回候选，不任选来源；省略字段/CSV缺列不重置原配置。unit/enum显式null可清除。有效行原子提交，检查updated/skipped/errors/details/warnings。',
       inputSchema: { device_id: zz.number(), points: zz.array(zz.object({
         area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']),
@@ -403,7 +406,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(report) }] }
     })
 
-    server.registerTool('export_points_xlsx', {
+    tools.registerTool('export_points_xlsx', {
       title: 'Export point sheet (xlsx)', description: '导出v2点位表：设备信息、分组页、告警页，返回base64。页签唯一，点位L/告警H为文件内标识（非数据库ID），支持同页同地址多定义各自告警；告警阈值仍为解码原始值。',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
@@ -411,7 +414,7 @@ export function apply(ctx: Context, config: Config): void {
       const { buffer, filename } = await sink.exportPointSheet(args.device_id)
       return { content: [{ type: 'text', text: JSON.stringify({ filename, b64: buffer.toString('base64'), bytes: buffer.length }) }] }
     })
-    server.registerTool('import_points_xlsx', {
+    tools.registerTool('import_points_xlsx', {
       title: 'Import point sheet (xlsx)', description: '导入v2点位表（须含告警页，无告警保留表头），事务覆盖设备组/点位/告警。L/H文件内点位标识需一致，重复/冲突/失效拒绝；旧无标识时只接受唯一匹配，不猜告警归属。错误保留原配置。传content_b64，检查errors/warnings；警告可能表示已提交，不要自动重试。',
       inputSchema: { device_id: zz.number(), content_b64: zz.string() },
     }, async (args) => {
@@ -423,7 +426,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(res) }] }
     })
 
-    server.registerTool('create_register', {
+    tools.registerTool('create_register', {
       title: 'Create register', description: '新增寄存器（别名/功能码/起始地址/类型/单位/缩放/枚举）',
       inputSchema: { group_id: zz.number(), alias: zz.string().optional(), function_code: zz.number().optional(), start_address: zz.number(), data_type: zz.string().optional(), unit: zz.string().optional(), factor: zz.number().optional(), offset: zz.number().optional(), enum: zz.record(zz.string()).optional() },
     }, async (args) => {
@@ -441,7 +444,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(r) }] }
     })
 
-    server.registerTool('delete_register', {
+    tools.registerTool('delete_register', {
       title: 'Delete register', description: '删除寄存器',
       inputSchema: { register_id: zz.number() },
     }, async (args) => {
@@ -451,7 +454,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, register_id: args.register_id }) }] }
     })
 
-    server.registerTool('delete_group', {
+    tools.registerTool('delete_group', {
       title: 'Delete group', description: '删除分组（连同其寄存器）',
       inputSchema: { group_id: zz.number() },
     }, async (args) => {
@@ -461,7 +464,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true, group_id: args.group_id }) }] }
     })
 
-    server.registerTool('get_device_health', {
+    tools.registerTool('get_device_health', {
       title: 'Get device health', description: '查看设备角色及健康状态。主站 connected 表示连接；从站 connected 表示监听已启动，slave_service 含请求/连接数和服务错误，没有客户端连接不代表故障。从站 polling=false。',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
@@ -486,7 +489,7 @@ export function apply(ctx: Context, config: Config): void {
       }) }] }
     })
 
-    server.registerTool('set_data_retention', {
+    tools.registerTool('set_data_retention', {
       title: 'Set data retention', description: '设历史数据保留时长（秒，0=永久）。缺省 device_id 设全局，否则设该设备覆盖（覆盖优先于全局）',
       inputSchema: { retention_seconds: zz.number(), device_id: zz.number().optional() },
     }, async (args) => {
@@ -503,7 +506,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] }
     })
 
-    server.registerTool('get_data_retention', {
+    tools.registerTool('get_data_retention', {
       title: 'Get data retention', description: '查当前生效的保留时长（秒，0=永久）。缺省 device_id 返回全局，否则返回该设备生效值（设备覆盖优先）',
       inputSchema: { device_id: zz.number().optional() },
     }, async (args) => {
@@ -516,11 +519,11 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ retention_seconds: store.getRetentionSeconds() }) }] }
     })
 
-    server.registerTool('list_alarm_rules', {
+    tools.registerTool('list_alarm_rules', {
       title: 'List alarm rules', description: '查看已配置的告警规则（可按设备过滤）',
       inputSchema: { device_id: zz.number().optional() },
     }, async (args) => {
-      let rules = cfg.listRules()
+      let rules: AlarmRule[] = cfg.listRules()
       if (args.device_id != null) {
         rules = rules.filter((r) => {
           const reg = cfg.getRegister(r.registerId)
@@ -532,7 +535,7 @@ export function apply(ctx: Context, config: Config): void {
 
     registerAlarmTools(configEditRegistrar(server), cfg)
 
-    server.registerTool('ask_ai', {
+    tools.registerTool('ask_ai', {
       title: 'Ask configured AI', description: '向软件设置中保存的 AI 提问，复用提供商认证；可指定 provider/model/effort，并附 context 或 device_id（全部点位配置与缓存快照）。单次咨询，无工具执行、不修改配置，不加入界面聊天。会消耗提供商 API 额度。回答是模型建议，不能当作已验证的设备事实。',
       inputSchema: { question: zz.string().min(1), context: zz.string().min(1).optional(), device_id: zz.number().int().positive().optional(), provider: zz.string().optional(), model: zz.string().optional(), effort: zz.enum(['default', 'off', 'max', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional() },
     }, async args => {
@@ -555,7 +558,7 @@ export function apply(ctx: Context, config: Config): void {
     }
     const recordingLog = (id: string, message: string) => { if (recorder.getRecording(id)?.status !== 'recording') return; try { cfg.log('INFO', 'mcp', message) } catch { recorder.getRecording(id)!.warnings.push('录制已开始，但操作日志写入失败；勿重复开始。') } }
     const recordingError = (error: unknown) => ({ content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'invalid recording request' }], isError: true })
-    server.registerTool('start_recording', {
+    tools.registerTool('start_recording', {
       title: 'Start recording', description: '连续录制原始16位字；每段默认最多200000样本、全局保留500000样本，容量不足提前结束并报告quota_truncated/completion_reason及当前事件丢弃数；删除已结束录制可释放容量。连接来源条件改变/无法核实时提前结束并保留数据，不自动归还周期。临时改变设备扫描间隔，最后会话结束时仅在写入身份/配置未变化才原子恢复；否则保留当前值并返回intervalRestore/warnings。slave_id 为默认录制来源，addresses[].slave_id 可覆盖；无地址/来源筛选时保留所有来源。省略地址来源仅在配置唯一时接受，歧义需显式选择。回放保留 slaveId/batchId，缺来源不补全。',
       inputSchema: { device_id: zz.number(), interval_ms: zz.number(), duration_ms: zz.number(), slave_id: sourceId, addresses: recordingAddresses },
     }, async (args) => {
@@ -566,7 +569,7 @@ export function apply(ctx: Context, config: Config): void {
       } catch (error) { return recordingError(error) }
     })
 
-    server.registerTool('start_trigger_recording', {
+    tools.registerTool('start_trigger_recording', {
       title: 'Start trigger recording', description: '按原始16位字触发（不合并dtype/不换算物理值）；每段默认200000、全局保留500000样本上限，容量不足提前结束并明确标记部分记录。缓存 before_ms/after_ms。trigger_slave_id 选择触发从站，缺省继承 slave_id 或唯一配置；歧义拒绝。slave_id/addresses[].slave_id 仅筛选录制数据，独立于触发选择。来源不明、坏质量、重复候选、无效/倒序时间不能触发。连接来源条件改变/无法核实时提前结束并保留数据，不自动归还周期。会临时改变设备扫描间隔。',
       inputSchema: { device_id: zz.number(), interval_ms: zz.number(), trigger_area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']), trigger_address: zz.number(), trigger_slave_id: sourceId, slave_id: sourceId, operator: zz.string(), threshold: zz.number().optional(), before_ms: zz.number(), after_ms: zz.number(), addresses: recordingAddresses },
     }, async (args) => {
@@ -577,7 +580,7 @@ export function apply(ctx: Context, config: Config): void {
       } catch (error) { return recordingError(error) }
     })
 
-    server.registerTool('get_recording', {
+    tools.registerTool('get_recording', {
       title: 'Get recording', description: '旧兼容全量读取，仍返回全部保留样本；大段/新调用优先get_recording_page分页，活动进度用list_recordings。取录制保留的原始16位字、slaveId/batchId 与触发证据 triggeredBy。检查completionReason/quotaTruncated/discardedSamples；done不是请求时长或触发窗口完整的证明。多字消费需自行验证同来源/area/采样时间/完整批次及质量；sourceVerified 仅表示来源元数据存在，不能当自动 PASS/FAIL。NULL 来源不推断。',
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
@@ -586,7 +589,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(rec) }] }
     })
 
-    server.registerTool('get_recording_page', {
+    tools.registerTool('get_recording_page', {
       title: 'Read a completed recording page', description: '只读分页已结束录制，默认200、最多1000个保留原始样本。从offset=0开始，续页必须携带原snapshot_id并使用nextOffset；当前配置活动录制拒绝，不为分页停止；配置重开沿用旧会话终结规则。hasMore=false仅表示当前页之后无保留样本，不证明此前页已读或录制完整；须检查recording.completionReason/quotaTruncated及来源/批次质量；snapshotId用于分页身份，采样批次仍取各样本batchId。configurationScopeCurrent仅表示打开配置scope；不证明点表/连接未编辑，为false时属于此前配置。删除/淘汰返回错误，不降级全量读取、不重录。',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: { recording_id: zz.string().min(1), offset: zz.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(), limit: zz.number().int().min(1).max(MAX_RECORDING_PAGE_SIZE).optional(), snapshot_id: zz.string().uuid().optional() },
@@ -598,16 +601,16 @@ export function apply(ctx: Context, config: Config): void {
       }
     })
 
-    server.registerTool('get_recording_interval_status', { title: 'Review recording intervals', description: '只读当前设备间隔、活动录制及本进程最近保留的未恢复/待核对记录；删除/淘汰样本仍保留核对记录。current是本次配置读取，不代表硬件实测频率；不恢复间隔。核对后通过现有设备编辑有条件修改，禁止盲目写回原值。', annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { device_id: zz.number().int().positive().max(Number.MAX_SAFE_INTEGER) } }, async args => {
+    tools.registerTool('get_recording_interval_status', { title: 'Review recording intervals', description: '只读当前设备间隔、活动录制及本进程最近保留的未恢复/待核对记录；删除/淘汰样本仍保留核对记录。current是本次配置读取，不代表硬件实测频率；不恢复间隔。核对后通过现有设备编辑有条件修改，禁止盲目写回原值。', annotations: { readOnlyHint: true, destructiveHint: false }, inputSchema: { device_id: zz.number().int().positive().max(Number.MAX_SAFE_INTEGER) } }, async args => {
       try { return { content: [{ type: 'text', text: JSON.stringify(recorder.getRecordingIntervalStatus(args.device_id)) }] } } catch { return { content: [{ type: 'text', text: '录制间隔状态未核实，请重新读取。' }], isError: true } }
     })
 
-    server.registerTool('list_recordings', {
+    tools.registerTool('list_recordings', {
       title: 'List recordings', description: '列出录制会话和完成原因（不含samples）；大段已结束结果优先get_recording_page分页，旧get_recording保持全量。',
       inputSchema: {},
     }, async () => ({ content: [{ type: 'text', text: JSON.stringify(recorder.listRecordings()) }] }))
 
-    server.registerTool('stop_recording', {
+    tools.registerTool('stop_recording', {
       title: 'Stop recording', description: '提前结束录制；只在原间隔写入身份有效时恢复，冲突保留当前值。返回interval_restore/warnings；ok只表示找到会话，不证明已恢复。',
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
@@ -615,7 +618,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ ok, recording_id: args.recording_id, interval_restore: rec?.intervalRestore ?? null, warnings: rec?.warnings ?? [], completion_reason: rec?.completionReason ?? null, quota_truncated: rec?.quotaTruncated ?? false, discarded_samples: rec?.discardedSamples ?? 0 }) }] }
     })
 
-    server.registerTool('delete_recording', {
+    tools.registerTool('delete_recording', {
       title: 'Delete recording', description: '删除一段录制（释放内存；录制中会先结束）',
       inputSchema: { recording_id: zz.string() },
     }, async (args) => {
@@ -624,7 +627,7 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     // ── OTA 固件升级（PRD 07）─────────────────────
-    server.registerTool('upload_firmware', {
+    tools.registerTool('upload_firmware', {
       title: 'Upload firmware', description: '上传固件（base64，建议 <1MB；大文件走 HTTP POST /api/firmware/upload 原始二进制）',
       inputSchema: { name: zz.string(), version: zz.string().optional(), content_base64: zz.string() },
     }, async (args) => {
@@ -633,12 +636,12 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(r) }] }
     })
 
-    server.registerTool('list_firmwares', {
+    tools.registerTool('list_firmwares', {
       title: 'List firmwares', description: '查已上传的固件列表',
       inputSchema: {},
     }, async () => ({ content: [{ type: 'text', text: JSON.stringify(ota.listFirmwares()) }] }))
 
-    server.registerTool('ota_upgrade', {
+    tools.registerTool('ota_upgrade', {
       title: 'OTA upgrade', description: '发起固件升级（异步，立即返回 task_id；升级失败可能导致设备不可用）',
       inputSchema: { device_id: zz.number(), firmware_id: zz.number(), chunk_size: zz.number().optional() },
     }, async (args) => {
@@ -646,7 +649,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify(r) }] }
     })
 
-    server.registerTool('ota_status', {
+    tools.registerTool('ota_status', {
       title: 'OTA status', description: '查升级进度（发起后用 ota_status 轮询）',
       inputSchema: { device_id: zz.number() },
     }, async (args) => {
@@ -654,7 +657,7 @@ export function apply(ctx: Context, config: Config): void {
       return { content: [{ type: 'text', text: JSON.stringify({ state: s.state, current_block: s.currentBlock ?? 0, total_blocks: s.totalBlocks ?? 0, percent: s.percent ?? 0, ...(s.error ? { error: s.error } : {}) }) }] }
     })
 
-    server.registerTool('ota_abort', {
+    tools.registerTool('ota_abort', {
       title: 'OTA abort', description: '中止升级（可选）',
       inputSchema: { device_id: zz.number() },
     }, async (args) => ({ content: [{ type: 'text', text: JSON.stringify(ota.abort(args.device_id)) }] }))
