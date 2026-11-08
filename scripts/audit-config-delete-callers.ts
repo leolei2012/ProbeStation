@@ -82,13 +82,16 @@ passed.push('static-production-source-inventory')
 
 // Register the real legacy route, not a duplicated request implementation.
 const apiFile = join(root, 'packages/api/src/index.ts'), apiSource = ts.createSourceFile(apiFile, readFileSync(apiFile, 'utf8'), ts.ScriptTarget.Latest, true)
-let legacy: ts.CallExpression | undefined
+let legacy: ts.CallExpression | undefined, removeGroup: ts.CallExpression | undefined
 function route(node: ts.Node) {
   if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'put' && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === '/api/groups/:id') { assert.equal(legacy, undefined); legacy = node }
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'delete' && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === '/api/groups/:id') { assert.equal(removeGroup, undefined); removeGroup = node }
   ts.forEachChild(node, route)
 }
 route(apiSource); assert(legacy)
+assert(removeGroup)
 const legacyCode = ts.transpileModule(legacy.getText(apiSource), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
+const deleteCode = ts.transpileModule(removeGroup.getText(apiSource), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
 async function scenario(name: string, action: (f: Awaited<ReturnType<typeof fixture>>) => Promise<void>) {
   const f = await fixture()
   try { await action(f); passed.push(name); console.log('DELETE CALLERS OK: ' + name) }
@@ -117,7 +120,7 @@ async function fixture() {
     cfg[method] = id => { entries.push({ method, transaction: db.isTransaction, restoring: (cfg as unknown as { restoring: boolean }).restoring, reader: graph(reader), notifications: events.length }); return original(id) }
   }
   const api = Fastify(), sink = new Sink({ config: cfg })
-  new Function('fastify', 'cfg', legacyCode)(api, cfg); registerGroupSettings(api, cfg)
+  new Function('fastify', 'cfg', legacyCode)(api, cfg); new Function('fastify', 'cfg', deleteCode)(api, cfg); registerGroupSettings(api, cfg)
   const workbook = (await sink.exportPointSheet(source.id)).buffer
   return {
     cfg, db, reader, target, source, group, sibling, points, entries, events, api, sink, workbook,
@@ -169,6 +172,50 @@ try {
       assert.equal(event.writer, event.reader, 'the completed metadata graph is already visible on the other connection before notification')
     }
   })
-  await tick(); assert.deepEqual(denied, []); assert.deepEqual(unhandled, []); assert.equal(passed.length, 11)
+  // Existing tests clean up an uncertain rollback before continuing. Keep that transaction
+  // open here to audit the next real request, then compare with a successful rollback.
+  for (const surface of ['guarded-rest', 'actual-sink']) for (const rollback of ['succeeds', 'fails']) await scenario('next-request/' + surface + '/' + rollback, async f => {
+    const before = graph(f.db), snapshot = f.cfg.getGroupSettings(f.group.id), changes = { quantity: 1 }
+    const plan = planGroupResize(snapshot, parseGroupEditChanges(changes, snapshot.group))
+    const exec = f.db.exec.bind(f.db), commitFailure = Error('synthetic commit failure before native commit'), rollbackFailure = Error('synthetic rollback failure before native rollback')
+    f.arm()
+    f.db.exec = sql => {
+      if (sql === 'COMMIT') throw commitFailure
+      if (sql === 'ROLLBACK' && rollback === 'fails') throw rollbackFailure
+      return exec(sql)
+    }
+    try {
+      if (surface === 'guarded-rest') {
+        const failed = await f.api.inject({ method: 'PUT', url: '/api/groups/' + f.group.id + '/settings', payload: { expectedRevision: snapshot.revision, changes, confirmedDeletion: { registerIds: plan.removeRegisterIds, ruleIds: plan.removeRuleIds } } })
+        assert.equal(failed.statusCode, 500); assert.match(failed.json().error, /待核实/)
+      } else {
+        await assert.rejects(f.sink.importPointBook(f.target.id, f.workbook, true), error => rollback === 'fails'
+          ? error instanceof AggregateError && error.errors.includes(commitFailure) && error.errors.includes(rollbackFailure)
+          : error === commitFailure)
+      }
+    } finally { f.db.exec = exec }
+    assert.equal(f.db.isTransaction, rollback === 'fails')
+    assert.equal((f.cfg as unknown as { restoring: boolean }).restoring, false)
+    assert.equal(f.events.length, 0); assert.equal(graph(f.reader), before)
+    if (rollback === 'succeeds') assert.equal(graph(f.db), before)
+    else assert.notEqual(graph(f.db), before, 'the first failed request still owns pending changes')
+    const pendingGroup = f.cfg.listGroups(f.target.id)[0]
+    assert(pendingGroup)
+    const deleted = await f.api.inject({ method: 'DELETE', url: '/api/groups/' + pendingGroup.id })
+    assert.equal(deleted.statusCode, 200); assert.deepEqual(deleted.json(), { ok: true })
+    const entry = f.entries.at(-1)!, event = f.events.at(-1)!
+    assert.equal(entry.method, 'deleteGroup'); assert.equal(entry.transaction, rollback === 'fails'); assert.equal(entry.restoring, false)
+    assert.equal(f.events.length, 1); assert.equal(event.transaction, rollback === 'fails')
+    assert.equal(f.db.isTransaction, rollback === 'fails')
+    if (rollback === 'fails') {
+      assert.equal(event.reader, before); assert.notEqual(event.writer, before)
+      exec('ROLLBACK') // Audit-only cleanup, after recording the misleading successful response.
+      assert.equal(graph(f.db), before); assert.equal(graph(f.reader), before)
+      console.log('DELETE CALLERS KNOWN RISK: rollback failure in ' + surface + ' leaves a pending owned transaction; the next DELETE returns 200 and notifies before commit, and is undone by later rollback')
+    } else {
+      assert.equal(event.writer, event.reader); assert.notEqual(graph(f.reader), before)
+    }
+  })
+  await tick(); assert.deepEqual(denied, []); assert.deepEqual(unhandled, []); assert.equal(passed.length, 15)
 } finally { net.Server.prototype.listen = listen; net.Socket.prototype.connect = connect; globalThis.fetch = fetch; process.off('unhandledRejection', onUnhandled) }
-console.log('DELETE CALLERS AUDIT COMPLETE: 8 static call sites and 11 inventory/real-route/two-connection/Sink cases; managed caller transactions suppress intermediate deletion notifications; no production fix, real data, network listeners or devices')
+console.log('DELETE CALLERS AUDIT COMPLETE: 8 static call sites and 15 inventory/real-route/two-connection/Sink cases; normal managed transactions suppress intermediate notifications; failed-rollback follow-up risk reproduced; no production fix, real data, network listeners or devices')
