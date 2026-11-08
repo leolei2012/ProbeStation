@@ -16,6 +16,7 @@ import { Recorder, MAX_RECORDING_PAGE_SIZE } from './recorder.ts'
 import { registerConfigEditTools } from './config-edit.ts'
 import { configEditRegistrar } from './config-edit-registry.ts'
 import { registerAlarmTools } from './alarm-settings.ts'
+import { registerResourceCleanup, throwCleanupErrors } from '../../core/src/resource-close.ts'
 
 /** 把 RegisterRecord 映射成语义寄存器（factor/offset/unit/enum）。 */
 function semanticOf(r: any) {
@@ -45,6 +46,13 @@ export function apply(ctx: Context, config: Config): void {
   const ota = (ctx as any).ota
   const sink = (ctx as any).sink
   const recorder = new Recorder(ctx as any, cfg)
+  let closing = false
+  const active = new Set<Promise<unknown>>()
+  const track = <T,>(action: () => T | Promise<T>): Promise<T> => {
+    if (closing) return Promise.reject(new Error('MCP is closing or closed'))
+    const task = Promise.resolve().then(() => { if (closing) throw new Error('MCP is closing or closed'); return action() })
+    active.add(task); void task.then(() => active.delete(task), () => active.delete(task)); return task
+  }
   const timeRange = (start: string, end: string) => {
     if (!/(Z|[+-]\d{2}:\d{2})$/i.test(start) || !/(Z|[+-]\d{2}:\d{2})$/i.test(end)) throw new Error('时间必须为带时区的 ISO 字符串')
     const from = new Date(start), to = new Date(end)
@@ -653,7 +661,14 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   function createServer(): McpServer {
+    if (closing) throw new Error('MCP is closing or closed')
     const server = new McpServer({ name: 'probestation', version: '0.1.0' })
+    const register = server.registerTool.bind(server)
+    server.registerTool = ((...args: any[]) => {
+      const callback = args[args.length - 1]
+      args[args.length - 1] = (...input: any[]) => track(() => callback(...input))
+      return (register as any)(...args)
+    }) as typeof server.registerTool
     registerTools(server)
     return server
   }
@@ -662,7 +677,9 @@ export function apply(ctx: Context, config: Config): void {
   const transports = new Map<string, StreamableHTTPServerTransport>()
 
   const httpServer = http.createServer((req, res) => {
+    if (closing) { res.statusCode = 503; res.end(); return }
     const handle = (parsed?: unknown) => {
+      if (closing) { res.statusCode = 503; res.end(); return }
       const sessionId = (req.headers['mcp-session-id'] as string | undefined) ?? undefined
       let transport: StreamableHTTPServerTransport | undefined = sessionId ? transports.get(sessionId) : undefined
 
@@ -680,11 +697,16 @@ export function apply(ctx: Context, config: Config): void {
           onsessioninitialized: (sid) => { transports.set(sid, t) },
         })
         t.onclose = () => { const sid = t.sessionId; if (sid) transports.delete(sid) }
-        void srv.connect(t)
+        const connecting = srv.connect(t)
+        active.add(connecting)
+        void connecting.then(() => active.delete(connecting), error => {
+          active.delete(connecting); ctx.logger('mcp').error(error)
+          if (!res.headersSent) { res.statusCode = 500; res.end() }
+        })
         transport = t
       }
 
-      void transport.handleRequest(req, res, parsed).catch((e: any) => {
+      void track(() => transport!.handleRequest(req, res, parsed)).catch((e: any) => {
         console.error('MCP handleRequest error:', e?.message ?? e, '| stack:', e?.stack?.split('\n')[1] ?? '')
         if (!res.headersSent) { res.statusCode = 500; res.end() }
       })
@@ -701,9 +723,28 @@ export function apply(ctx: Context, config: Config): void {
       handle()
     }
   })
-  httpServer.listen(config.port, config.host, () => {
-    ctx.logger('mcp').info('MCP server on http://' + config.host + ':' + config.port + '/mcp')
+  const starting = new Promise<void>((resolve, reject) => {
+    httpServer.on('error', error => { reject(error); ctx.logger('mcp').error(error) })
+    httpServer.once('listening', resolve)
   })
+  void starting.catch(() => {}) // Failure remains observable to cleanup; the error listener also reports it.
+  registerResourceCleanup(ctx, [cfg, store, poller, ota], async () => {
+    closing = true
+    const errors: unknown[] = []
+    try { await recorder.close() } catch (error) { errors.push(error) }
+    try { await starting } catch (error) { errors.push(error) }
+    for (const transport of transports.values()) { try { await transport.close() } catch (error) { errors.push(error) } }
+    transports.clear()
+    try {
+      if (httpServer.listening) await new Promise<void>((resolve, reject) => httpServer.close(error => error ? reject(error) : resolve()))
+    } catch (error) { errors.push(error) }
+    const results = await Promise.allSettled([...active])
+    errors.push(...results.flatMap(result => result.status === 'rejected' ? [result.reason] : []))
+    throwCleanupErrors(errors, 'MCP shutdown failed')
+  })
+  try {
+    httpServer.listen(config.port, config.host, () => { ctx.logger('mcp').info('MCP server on http://' + config.host + ':' + config.port + '/mcp') })
+  } catch (error) { httpServer.emit('error', error) }
 
   ctx.provide('mcp', { createServer, getRecordingIntervalStatus: (deviceId: number) => recorder.getRecordingIntervalStatus(deviceId) })
 }

@@ -10,6 +10,7 @@ import { decodeHistoricalSample } from '../../core/src/history-integrity.ts'
 import { HISTORY_EXPORT_RAW_LIMIT, type HistoryExportReadRange } from '../../core/src/history-export-policy.ts'
 import type { SamplePersistenceStatus } from '../../core/src/sample-persistence.ts'
 import { deviceRetentionPolicy, type DeviceRetentionPolicy } from '../../core/src/retention-policy.ts'
+import { closeResourceDependents, registerResourceCleanup, throwCleanupErrors } from '../../core/src/resource-close.ts'
 
 function rawTimestampMs(value: unknown): number {
   const text = String(value)
@@ -56,6 +57,10 @@ export class ExportReadHandleError extends Error {
   constructor() { super('时序库导出读取句柄已失效或尚未就绪。'); this.name = 'ExportReadHandleError' }
 }
 interface OwnedExportRead { ready: Promise<DuckDBConnection>; validate: () => void }
+export class StoreClosedError extends Error {
+  readonly code = 'STORE_CLOSED'
+  constructor() { super('Store is closing or closed'); this.name = 'StoreClosedError' }
+}
 
 /**
  * Columnar time-series store (DuckDB) with an in-memory hot buffer.
@@ -83,6 +88,47 @@ export class DuckDBStore {
   private flushing = false
   private lastCommitAt: string | null = null
   private lastFailureAt: string | null = null
+  private closing = false
+  private closeTask: Promise<void> | undefined
+  private reopening: Promise<void> | undefined
+  private readonly reads = new Set<Promise<unknown>>()
+  private assertOpen(): void { if (this.closing) throw new StoreClosedError() }
+  private read<T>(action: () => Promise<T>): Promise<T> {
+    if (this.closing) return Promise.reject(new StoreClosedError())
+    if (this.switching) return Promise.reject(new Error('Store is reopening'))
+    const task = Promise.resolve().then(action)
+    this.reads.add(task)
+    void task.then(() => this.reads.delete(task), () => this.reads.delete(task))
+    return task
+  }
+  /** Recovery snapshot only; an uncertain transaction must be investigated before any replay. */
+  getPendingPoints(): PollPoint[] { return this.buffer.map(point => ({ ...point })) }
+  /** Idempotent, terminal shutdown. Failed writes remain in memory and close errors are not swallowed. */
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask
+    this.closing = true
+    if (this.flushTimer) clearInterval(this.flushTimer)
+    if (this.retentionTimer) clearInterval(this.retentionTimer)
+    this.flushTimer = this.retentionTimer = null
+    this.exportReadBlocked = true; this.exportReadScope = randomUUID(); this.exportReadHandles = new WeakMap()
+    return this.closeTask = this.finishClose()
+  }
+  private async finishClose(): Promise<void> {
+    const errors = await closeResourceDependents(this)
+    try { await this.reopening } catch (error) { errors.push(error) }
+    await this.mutations
+    await Promise.allSettled([...this.reads])
+    let connection: DuckDBConnection | undefined
+    try { connection = await this.ready } catch (error) { errors.push(error) }
+    if (connection) {
+      try { await this.flushPending(true) } catch (error) { errors.push(error) }
+      if (this.persistenceError != null) errors.push(this.persistenceError)
+    }
+    try { connection?.closeSync() } catch (error) { errors.push(error) }
+    try { this.instance?.closeSync() } catch (error) { errors.push(error) }
+    this.instance = null
+    throwCleanupErrors(errors, 'Store shutdown failed; inspect pending samples and cleanup errors')
+  }
   private background(task: Promise<unknown>): void {
     void task.catch(error => this.onError(error instanceof Error ? error : new Error(String(error))))
   }
@@ -98,11 +144,13 @@ export class DuckDBStore {
   /** Memory metadata only. The write state is shared by the service, counts may be device-filtered. */
   getSamplePersistenceStatus(objectId?: number): SamplePersistenceStatus {
     if (objectId !== undefined && (!Number.isSafeInteger(objectId) || objectId < 1)) throw new Error('Invalid persistence scope')
+    if (this.closing) return Object.freeze({ version: 1, available: false, objectId: objectId ?? null })
     const failure = this.initialization === 'failed' ? 'initialization-failed' : this.initError != null ? 'write-uncertain' : this.persistenceError != null ? 'flush-failed' : null
     const phase = this.switching ? 'switching' : this.initialization === 'opening' ? 'initializing' : this.initError != null ? 'blocked' : this.persistenceError != null ? 'failed' : 'ready'
     return Object.freeze({ version: 1, available: true, objectId: objectId ?? null, stateScope: 'service', checkedAt: new Date().toISOString(), phase, failure, flushing: this.flushing, pendingRows: this.pendingRows(objectId), globalPendingRows: this.buffer.length, lastCommitAt: this.lastCommitAt, lastFailureAt: this.lastFailureAt })
   }
-  private mutate<T>(action: () => Promise<T>): Promise<T> {
+  private mutate<T>(action: () => Promise<T>, duringClose = false): Promise<T> {
+    if (this.closing && !duringClose) return Promise.reject(new StoreClosedError())
     const result = this.mutations.then(action)
     this.mutations = result.catch(() => {})
     return result
@@ -119,7 +167,7 @@ export class DuckDBStore {
     if (this.config.retentionCheckMs > 0) {
       this.retentionTimer = setInterval(() => { if (!this.switching) this.background(this.cleanup()) }, this.config.retentionCheckMs)
     }
-    this.background(this.ready.then(() => this.cleanup()))
+    this.background(this.ready.then(() => { if (!this.closing) return this.cleanup() }))
   }
 
   private async init(): Promise<DuckDBConnection> {
@@ -135,21 +183,30 @@ export class DuckDBStore {
     } catch (error) {
       this.initError = this.persistenceError = error
       this.initialization = 'failed'; this.lastFailureAt = new Date().toISOString()
-      conn?.closeSync()
-      instance?.closeSync()
+      const errors: unknown[] = [error]
+      try { conn?.closeSync() } catch (cleanup) { errors.push(cleanup) }
+      try { instance?.closeSync() } catch (cleanup) { errors.push(cleanup) }
       this.instance = null
+      throwCleanupErrors(errors, 'Store initialization and cleanup failed')
       throw error
     }
   }
 
   /** 切换工作区：冲刷旧缓冲、关闭旧连接，重开新库并清空热层。 */
   async reopen(dbPath: string): Promise<void> {
+    this.assertOpen()
     if (this.switching) throw new Error('Store is already reopening')
+    const task = this.reopenStore(dbPath)
+    this.reopening = task
+    try { await task } finally { if (this.reopening === task) this.reopening = undefined }
+  }
+  private async reopenStore(dbPath: string): Promise<void> {
     this.exportReadBlocked = true; this.exportReadScope = randomUUID(); this.exportReadHandles = new WeakMap()
     this.switching = true
     try {
       await this.flush()
       await this.mutations
+      await Promise.allSettled([...this.reads])
       const old = await this.ready
       old.closeSync()
       this.instance?.closeSync()
@@ -162,11 +219,12 @@ export class DuckDBStore {
       await this.ready
       this.exportReadBlocked = false
     } finally { this.switching = false }
-    this.background(this.cleanup())
+    if (!this.closing) this.background(this.cleanup())
   }
 
   /** Enqueue points into the hot buffer; auto-flush when the batch is full. */
   write(points: PollPoint[]): void {
+    this.assertOpen()
     if (this.switching) throw new Error('Store is reopening')
     if (this.initError) throw this.initError
     for (const p of points) {
@@ -190,8 +248,13 @@ export class DuckDBStore {
 
   /** Flush buffered points to DuckDB. */
   async flush(): Promise<void> {
+    this.assertOpen()
+    return this.flushPending()
+  }
+  private async flushPending(duringClose = false): Promise<void> {
     await this.mutate(async () => {
       let conn: DuckDBConnection | undefined
+      const errors: unknown[] = []
       try {
         if (this.initError) throw this.initError
         await this.ready
@@ -221,13 +284,21 @@ export class DuckDBStore {
         this.buffer.splice(0, batch.length)
         this.persistenceError = null
         this.lastCommitAt = new Date().toISOString()
-      } catch (error) { this.persistenceError = error; this.lastFailureAt = new Date().toISOString(); throw error }
-      finally { this.flushing = false; conn?.closeSync() }
-    })
+      } catch (error) { errors.push(error) }
+      finally {
+        this.flushing = false
+        try { conn?.closeSync() } catch (error) { errors.push(error) }
+      }
+      if (errors.length) {
+        this.persistenceError = errors.length === 1 ? errors[0] : new AggregateError(errors, 'Sample write and writer cleanup failed')
+        this.lastFailureAt = new Date().toISOString(); throw this.persistenceError
+      }
+    }, duringClose)
   }
 
   /** Explicit device/time range only; leaves the live cache and configuration intact. */
   async deleteHistory(objectId: number, start: string, end: string, dryRun = true) {
+    this.assertOpen()
     if (!Number.isSafeInteger(objectId) || objectId < 1) throw new Error('设备 ID 无效')
     const from = new Date(start), to = new Date(end)
     if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from > to) throw new Error('历史时间范围无效')
@@ -255,6 +326,7 @@ export class DuckDBStore {
 
   /** 运行时改全局保留时长（秒，0=永久），改完立即清理一次。 */
   setRetentionSeconds(seconds: number): void {
+    this.assertOpen()
     this.retentionSeconds = Math.max(0, Math.floor(seconds))
     this.background(this.cleanup())
   }
@@ -307,12 +379,13 @@ export class DuckDBStore {
 
   /** Export-only lookahead. Ordinary raw-query limits remain unchanged. */
   async queryObjectForExport(objectId: number, start: string, end: string, ranges?: readonly HistoryExportReadRange[]) {
+    this.assertOpen()
     if (ranges?.length === 0) return []
     return this.readObjectRows(objectId, start, end, HISTORY_EXPORT_RAW_LIMIT + 1, ranges)
   }
 
   private assertExportReadReady() {
-    if (this.switching || this.exportReadBlocked || this.initialization !== 'ready' || this.initError) throw new ExportReadHandleError()
+    if (this.closing || this.switching || this.exportReadBlocked || this.initialization !== 'ready' || this.initError) throw new ExportReadHandleError()
   }
   captureExportReadHandle(): ExportReadHandle {
     this.assertExportReadReady()
@@ -336,35 +409,37 @@ export class DuckDBStore {
   }
 
   private async readObjectRows(objectId: number, start: string, end: string, limit: number, ranges?: readonly HistoryExportReadRange[], owned?: OwnedExportRead): Promise<Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>> {
-    try {
-      owned?.validate()
-      await this.mutations
-      owned?.validate()
-      const conn = await (owned?.ready ?? this.ready)
-      owned?.validate()
-      const startUtc = this.normalizeToUtc(start)
-      const endUtc = this.normalizeToUtc(end)
-      const params: Record<string, string | number | null> = { objectId, start: startUtc, end: endUtc, limit }
-      const scopes = ranges?.map((range, i) => {
-        params[`exportArea${i}`] = range.area; params[`exportStart${i}`] = range.startAddress; params[`exportEnd${i}`] = range.endAddress; params[`exportSlave${i}`] = range.slaveId ?? null
-        return `($exportArea${i}, $exportStart${i}, $exportEnd${i}, CAST($exportSlave${i} AS INTEGER))`
-      })
-      const selected = scopes?.length ? `AND EXISTS (SELECT 1 FROM (VALUES ${scopes.join(',')}) AS export_scope(area, lo, hi, slave_id)
-      WHERE export_scope.area = poll_data.area AND poll_data.address BETWEEN export_scope.lo AND export_scope.hi AND (export_scope.slave_id IS NULL OR poll_data.slave_id = export_scope.slave_id OR poll_data.slave_id IS NULL))` : ''
-      owned?.validate()
-      const reader = await conn.runAndReadAll(
-        `SELECT ts, area, address, raw_value, quality, batch_id, slave_id FROM poll_data
-       WHERE object_id = $objectId AND ts >= $start AND ts <= $end
-       ${selected}
-       ORDER BY ts
-       LIMIT $limit`,
-        params,
-      )
-      owned?.validate()
-      const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
-      const result = rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }))
-      owned?.validate(); return result
-    } catch (error) { owned?.validate(); throw error }
+    return this.read(async () => {
+      try {
+        owned?.validate()
+        await this.mutations
+        owned?.validate()
+        const conn = await (owned?.ready ?? this.ready)
+        owned?.validate()
+        const startUtc = this.normalizeToUtc(start)
+        const endUtc = this.normalizeToUtc(end)
+        const params: Record<string, string | number | null> = { objectId, start: startUtc, end: endUtc, limit }
+        const scopes = ranges?.map((range, i) => {
+          params[`exportArea${i}`] = range.area; params[`exportStart${i}`] = range.startAddress; params[`exportEnd${i}`] = range.endAddress; params[`exportSlave${i}`] = range.slaveId ?? null
+          return `($exportArea${i}, $exportStart${i}, $exportEnd${i}, CAST($exportSlave${i} AS INTEGER))`
+        })
+        const selected = scopes?.length ? `AND EXISTS (SELECT 1 FROM (VALUES ${scopes.join(',')}) AS export_scope(area, lo, hi, slave_id)
+        WHERE export_scope.area = poll_data.area AND poll_data.address BETWEEN export_scope.lo AND export_scope.hi AND (export_scope.slave_id IS NULL OR poll_data.slave_id = export_scope.slave_id OR poll_data.slave_id IS NULL))` : ''
+        owned?.validate()
+        const reader = await conn.runAndReadAll(
+          `SELECT ts, area, address, raw_value, quality, batch_id, slave_id FROM poll_data
+         WHERE object_id = $objectId AND ts >= $start AND ts <= $end
+         ${selected}
+         ORDER BY ts
+         LIMIT $limit`,
+          params,
+        )
+        owned?.validate()
+        const rows = reader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
+        const result = rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), area: String(r.area ?? 'holding-register') as ModbusArea, address: Number(r.address), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }))
+        owned?.validate(); return result
+      } catch (error) { owned?.validate(); throw error }
+    })
   }
 
   /** 全局快照主键为 objectId:slave:slaveId:area:address；旧别名仅单一已观测来源保留。timestamp 输出为服务器本地时间。 */
@@ -404,96 +479,102 @@ export class DuckDBStore {
   async queryObjectPage(
     objectId: number, start: string, end: string, page = 0, pageSize = 200,
   ): Promise<{ points: Array<{ ts: string; area: ModbusArea; address: number; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>; total: number; page: number; pageSize: number; hasMore: boolean }> {
-    await this.mutations
-    const conn = await this.ready
-    const startUtc = this.normalizeToUtc(start)
-    const endUtc = this.normalizeToUtc(end)
-    const size = Math.max(1, Math.min(10000, Math.trunc(pageSize) || 200))
-    const p = Math.max(0, Math.trunc(page) || 0)
+    return this.read(async () => {
+      await this.mutations
+      const conn = await this.ready
+      const startUtc = this.normalizeToUtc(start)
+      const endUtc = this.normalizeToUtc(end)
+      const size = Math.max(1, Math.min(10000, Math.trunc(pageSize) || 200))
+      const p = Math.max(0, Math.trunc(page) || 0)
 
-    // 1) 时间戳去重偏移分页（升序，最早的在前）
-    const tsReader = await conn.runAndReadAll(
-      `SELECT DISTINCT ts FROM poll_data
-       WHERE object_id = $objectId AND ts >= $start AND ts <= $end
-       ORDER BY ts ASC
-       LIMIT $size OFFSET $offset`,
-      { objectId, start: startUtc, end: endUtc, size, offset: p * size },
-    )
-    const tsRows = tsReader.getRowObjects() as Array<{ ts: unknown }>
-    const pageTs = tsRows.map(r => String(r.ts))
+      // 1) 时间戳去重偏移分页（升序，最早的在前）
+      const tsReader = await conn.runAndReadAll(
+        `SELECT DISTINCT ts FROM poll_data
+         WHERE object_id = $objectId AND ts >= $start AND ts <= $end
+         ORDER BY ts ASC
+         LIMIT $size OFFSET $offset`,
+        { objectId, start: startUtc, end: endUtc, size, offset: p * size },
+      )
+      const tsRows = tsReader.getRowObjects() as Array<{ ts: unknown }>
+      const pageTs = tsRows.map(r => String(r.ts))
 
-    // 2) 总数（去重时间戳数）
-    const cntReader = await conn.runAndReadAll(
-      `SELECT COUNT(DISTINCT ts) AS c FROM poll_data
-       WHERE object_id = $objectId AND ts >= $start AND ts <= $end`,
-      { objectId, start: startUtc, end: endUtc },
-    )
-    const total = Number(cntReader.getRowObjects()[0]?.c ?? 0)
+      // 2) 总数（去重时间戳数）
+      const cntReader = await conn.runAndReadAll(
+        `SELECT COUNT(DISTINCT ts) AS c FROM poll_data
+         WHERE object_id = $objectId AND ts >= $start AND ts <= $end`,
+        { objectId, start: startUtc, end: endUtc },
+      )
+      const total = Number(cntReader.getRowObjects()[0]?.c ?? 0)
 
-    if (pageTs.length === 0) return { points: [], total, page: p, pageSize: size, hasMore: false }
+      if (pageTs.length === 0) return { points: [], total, page: p, pageSize: size, hasMore: false }
 
-    // 3) 取该页时间戳对应的全部原始点
-    const ptsReader = await conn.runAndReadAll(
-      `SELECT ts, area, address, raw_value, quality, batch_id, slave_id FROM poll_data
-       WHERE object_id = $objectId AND ts >= $lo AND ts <= $hi
-       ORDER BY ts ASC, address ASC`,
-      { objectId, lo: pageTs[0], hi: pageTs[pageTs.length - 1] },
-    )
-    const rows = ptsReader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
-    const points = rows.map(r => ({
-      ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts),
-      area: String(r.area ?? 'holding-register') as ModbusArea,
-      address: Number(r.address),
-      rawValue: Number(r.raw_value),
-      quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id),
-    }))
-    return { points, total, page: p, pageSize: size, hasMore: p * size + pageTs.length < total }
+      // 3) 取该页时间戳对应的全部原始点
+      const ptsReader = await conn.runAndReadAll(
+        `SELECT ts, area, address, raw_value, quality, batch_id, slave_id FROM poll_data
+         WHERE object_id = $objectId AND ts >= $lo AND ts <= $hi
+         ORDER BY ts ASC, address ASC`,
+        { objectId, lo: pageTs[0], hi: pageTs[pageTs.length - 1] },
+      )
+      const rows = ptsReader.getRowObjects() as Array<{ ts: unknown; area: unknown; address: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
+      const points = rows.map(r => ({
+        ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts),
+        area: String(r.area ?? 'holding-register') as ModbusArea,
+        address: Number(r.address),
+        rawValue: Number(r.raw_value),
+        quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id),
+      }))
+      return { points, total, page: p, pageSize: size, hasMore: p * size + pageTs.length < total }
+    })
   }
 
   /** Query the cold tier for a single address over a time range. */
   async query(
     objectId: number, address: number, start: string, end: string, area: ModbusArea, limit?: number, slaveId?: number,
   ): Promise<Array<{ ts: string; rawValue: number; quality: string; slaveId: number | null; batchId: string | null; timestampMs: number }>> {
-    await this.mutations
-    const conn = await this.ready
-    const startUtc = this.normalizeToUtc(start)
-    const endUtc = this.normalizeToUtc(end)
-    const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
-    const reader = await conn.runAndReadAll(
-      `SELECT ts, raw_value, quality, batch_id, slave_id FROM poll_data
-       WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
-       AND (CAST($sourceSlave AS INTEGER) IS NULL OR slave_id = $sourceSlave OR slave_id IS NULL)
-       ORDER BY ts
-       LIMIT $limit`,
-      { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped, sourceSlave: slaveId ?? null },
-    )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
-    return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }))
+    return this.read(async () => {
+      await this.mutations
+      const conn = await this.ready
+      const startUtc = this.normalizeToUtc(start)
+      const endUtc = this.normalizeToUtc(end)
+      const limitClamped = limit != null ? Math.max(1, Math.min(200000, Math.trunc(limit))) : 200000
+      const reader = await conn.runAndReadAll(
+        `SELECT ts, raw_value, quality, batch_id, slave_id FROM poll_data
+         WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
+         AND (CAST($sourceSlave AS INTEGER) IS NULL OR slave_id = $sourceSlave OR slave_id IS NULL)
+         ORDER BY ts
+         LIMIT $limit`,
+        { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped, sourceSlave: slaveId ?? null },
+      )
+      const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
+      return rows.map(r => ({ ts: localTs(String(r.ts)), timestampMs: rawTimestampMs(r.ts), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }))
+    })
   }
 
   /** 单地址查询 + offset 分页（升序，最早的在前），供 MCP 等需要翻完整大时间范围的场景。 */
   async queryWithOffset(
     objectId: number, address: number, start: string, end: string, area: ModbusArea, limit: number, offset = 0, slaveId?: number,
   ): Promise<Array<{ ts: string; rawValue: number; quality: string; timestampMs: number; batchId: string | null; slaveId: number | null }>> {
-    await this.mutations
-    const conn = await this.ready
-    const startUtc = this.normalizeToUtc(start)
-    const endUtc = this.normalizeToUtc(end)
-    const limitClamped = Math.max(1, Math.min(200000, Math.trunc(limit)))
-    const off = Math.max(0, Math.trunc(offset) || 0)
-    const reader = await conn.runAndReadAll(
-      `SELECT ts, raw_value, quality, batch_id, slave_id FROM poll_data
-       WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
-       AND (CAST($sourceSlave AS INTEGER) IS NULL OR slave_id = $sourceSlave OR slave_id IS NULL)
-       ORDER BY ts
-       LIMIT $limit OFFSET $off`,
-      { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped, off, sourceSlave: slaveId ?? null },
-    )
-    const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
-    return rows.map(r => {
-      const timestamp = String(r.ts)
-      const utc = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(timestamp) ? timestamp : timestamp + 'Z'
-      return { ts: localTs(timestamp), timestampMs: Date.parse(utc), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }
+    return this.read(async () => {
+      await this.mutations
+      const conn = await this.ready
+      const startUtc = this.normalizeToUtc(start)
+      const endUtc = this.normalizeToUtc(end)
+      const limitClamped = Math.max(1, Math.min(200000, Math.trunc(limit)))
+      const off = Math.max(0, Math.trunc(offset) || 0)
+      const reader = await conn.runAndReadAll(
+        `SELECT ts, raw_value, quality, batch_id, slave_id FROM poll_data
+         WHERE object_id = $objectId AND area = $area AND address = $address AND ts >= $start AND ts <= $end
+         AND (CAST($sourceSlave AS INTEGER) IS NULL OR slave_id = $sourceSlave OR slave_id IS NULL)
+         ORDER BY ts
+         LIMIT $limit OFFSET $off`,
+        { objectId, area, address, start: startUtc, end: endUtc, limit: limitClamped, off, sourceSlave: slaveId ?? null },
+      )
+      const rows = reader.getRowObjects() as Array<{ ts: unknown; raw_value: unknown; quality: unknown; batch_id: unknown; slave_id: unknown }>
+      return rows.map(r => {
+        const timestamp = String(r.ts)
+        const utc = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(timestamp) ? timestamp : timestamp + 'Z'
+        return { ts: localTs(timestamp), timestampMs: Date.parse(utc), rawValue: Number(r.raw_value), quality: String(r.quality ?? ''), slaveId: r.slave_id == null ? null : Number(r.slave_id), batchId: r.batch_id == null ? null : String(r.batch_id) }
+      })
     })
   }
 
@@ -504,66 +585,68 @@ export class DuckDBStore {
 
   /** Timestamp-grouped samples with explicit response verification; bounded display memory. */
   async queryRegisterCurve(objectId: number, start: string, end: string, registers: Array<{ id: number; functionCode: number; startAddress: number; dataType: string; slaveId?: number; sourceAmbiguous?: boolean }>, maxPoints = 1200, signal?: AbortSignal) {
-    const startMs = Date.parse(start), endMs = Date.parse(end)
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) throw Object.assign(new Error('时间范围无效'), { statusCode: 400 })
-    const buckets = Math.max(1, Math.min(5000, Math.floor(maxPoints / 6) || 1))
-    const bucketMs = Math.max(1, Math.ceil((endMs - startMs) / buckets))
-    if (!registers.length) return { series: [], sourceSamples: 0, displayedSamples: 0, downsampled: false, complete: true, start, end }
-    await this.ready
-    const conn = await this.instance!.connect()
-    const interrupted = () => conn.interrupt()
-    signal?.addEventListener('abort', interrupted, { once: true })
-    try {
-      signal?.throwIfAborted()
-      const params: Record<string, any> = { objectId, start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString() }
-      const defs = registers.map((r, i) => {
-        Object.assign(params, { ['id' + i]: r.id, ['area' + i]: areaForFunction(r.functionCode as ModbusFunctionCode), ['addr' + i]: r.startAddress, ['width' + i]: registerWidth(r.dataType), ['slave' + i]: r.slaveId ?? null })
-        return `($id${i}, $area${i}, $addr${i}, $width${i}, CAST($slave${i} AS INTEGER))`
-      }).join(',')
-      const samplers = new Map(registers.map(r => [r.id, new CurveSampler(startMs, bucketMs)]))
-      const byId = new Map(registers.map(r => [r.id, r]))
-      const continuity = new Map<number, { previous: number; segment: number; sourceGapMs: number | null }>()
-      const result = await conn.stream(`WITH grouped AS (SELECT r.id, date_diff('millisecond', DATE '1970-01-01', p.ts) AS time,
-        list(p.raw_value ORDER BY p.address) AS words, list(p.quality ORDER BY p.address) AS qualities,
-        list(p.address ORDER BY p.address) AS addresses, list(p.batch_id ORDER BY p.address) AS batch_ids, list(p.slave_id ORDER BY p.address) AS slave_ids,
-        count(DISTINCT p.address) AS word_count
-        FROM poll_data p JOIN (VALUES ${defs}) AS r(id, area, addr, width, slave_id)
-        ON p.area = r.area AND p.address >= r.addr AND p.address < r.addr + r.width AND (r.slave_id IS NULL OR p.slave_id = r.slave_id OR p.slave_id IS NULL)
-        WHERE p.object_id = $objectId AND p.ts >= $start AND p.ts <= $end
-        GROUP BY r.id, p.ts), timed AS (
-          SELECT *, time - lag(time) OVER (PARTITION BY id ORDER BY time) AS interval_ms FROM grouped
-        ) SELECT *, median(CASE WHEN interval_ms > 0 THEN interval_ms END) OVER (PARTITION BY id) AS cadence_ms
-        FROM timed ORDER BY time, id`, params)
-      for await (const rows of result.yieldRowObjects()) {
+    return this.read(async () => {
+      const startMs = Date.parse(start), endMs = Date.parse(end)
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) throw Object.assign(new Error('时间范围无效'), { statusCode: 400 })
+      const buckets = Math.max(1, Math.min(5000, Math.floor(maxPoints / 6) || 1))
+      const bucketMs = Math.max(1, Math.ceil((endMs - startMs) / buckets))
+      if (!registers.length) return { series: [], sourceSamples: 0, displayedSamples: 0, downsampled: false, complete: true, start, end }
+      await this.ready
+      const conn = await this.instance!.connect()
+      const interrupted = () => conn.interrupt()
+      signal?.addEventListener('abort', interrupted, { once: true })
+      try {
         signal?.throwIfAborted()
-        for (const row of rows) {
-          const id = Number(row.id), reg = byId.get(id)!
-          const words = (row.words as any).items.map(Number) as number[]
-          const qualities = (row.qualities as any).items.map(String) as string[]
-          const addresses = (row.addresses as any).items.map(Number) as number[]
-          const ids = (row.batch_ids as any).items as Array<string | null>
-          const slaves = (row.slave_ids as any).items as Array<number | null>
-          const decoded = decodeHistoricalSample(reg, words.map((rawValue, i) => ({ address: addresses[i], rawValue, quality: qualities[i], batchId: ids[i], slaveId: slaves[i] == null ? null : Number(slaves[i]) })))
-          const raw = decoded.value ?? NaN
-          const number = typeof raw === 'bigint' && (raw > BigInt(Number.MAX_SAFE_INTEGER) || raw < BigInt(Number.MIN_SAFE_INTEGER)) ? NaN : Number(raw)
-          const time = Number(row.time), cadence = Number(row.cadence_ms)
-          const state = continuity.get(id) ?? { previous: time, segment: 0, sourceGapMs: cadence > 0 ? cadence * 3 : null }
-          if (state.sourceGapMs !== null && time - state.previous > state.sourceGapMs) state.segment++
-          if (!Number.isFinite(number)) state.segment++
-          samplers.get(id)!.add({ time, value: Number.isFinite(number) ? number : null, words, qualities, verification: Number.isFinite(number) ? decoded.verification : 'unknown', segment: state.segment })
-          state.previous = time
-          continuity.set(id, state)
+        const params: Record<string, any> = { objectId, start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString() }
+        const defs = registers.map((r, i) => {
+          Object.assign(params, { ['id' + i]: r.id, ['area' + i]: areaForFunction(r.functionCode as ModbusFunctionCode), ['addr' + i]: r.startAddress, ['width' + i]: registerWidth(r.dataType), ['slave' + i]: r.slaveId ?? null })
+          return `($id${i}, $area${i}, $addr${i}, $width${i}, CAST($slave${i} AS INTEGER))`
+        }).join(',')
+        const samplers = new Map(registers.map(r => [r.id, new CurveSampler(startMs, bucketMs)]))
+        const byId = new Map(registers.map(r => [r.id, r]))
+        const continuity = new Map<number, { previous: number; segment: number; sourceGapMs: number | null }>()
+        const result = await conn.stream(`WITH grouped AS (SELECT r.id, date_diff('millisecond', DATE '1970-01-01', p.ts) AS time,
+          list(p.raw_value ORDER BY p.address) AS words, list(p.quality ORDER BY p.address) AS qualities,
+          list(p.address ORDER BY p.address) AS addresses, list(p.batch_id ORDER BY p.address) AS batch_ids, list(p.slave_id ORDER BY p.address) AS slave_ids,
+          count(DISTINCT p.address) AS word_count
+          FROM poll_data p JOIN (VALUES ${defs}) AS r(id, area, addr, width, slave_id)
+          ON p.area = r.area AND p.address >= r.addr AND p.address < r.addr + r.width AND (r.slave_id IS NULL OR p.slave_id = r.slave_id OR p.slave_id IS NULL)
+          WHERE p.object_id = $objectId AND p.ts >= $start AND p.ts <= $end
+          GROUP BY r.id, p.ts), timed AS (
+            SELECT *, time - lag(time) OVER (PARTITION BY id ORDER BY time) AS interval_ms FROM grouped
+          ) SELECT *, median(CASE WHEN interval_ms > 0 THEN interval_ms END) OVER (PARTITION BY id) AS cadence_ms
+          FROM timed ORDER BY time, id`, params)
+        for await (const rows of result.yieldRowObjects()) {
+          signal?.throwIfAborted()
+          for (const row of rows) {
+            const id = Number(row.id), reg = byId.get(id)!
+            const words = (row.words as any).items.map(Number) as number[]
+            const qualities = (row.qualities as any).items.map(String) as string[]
+            const addresses = (row.addresses as any).items.map(Number) as number[]
+            const ids = (row.batch_ids as any).items as Array<string | null>
+            const slaves = (row.slave_ids as any).items as Array<number | null>
+            const decoded = decodeHistoricalSample(reg, words.map((rawValue, i) => ({ address: addresses[i], rawValue, quality: qualities[i], batchId: ids[i], slaveId: slaves[i] == null ? null : Number(slaves[i]) })))
+            const raw = decoded.value ?? NaN
+            const number = typeof raw === 'bigint' && (raw > BigInt(Number.MAX_SAFE_INTEGER) || raw < BigInt(Number.MIN_SAFE_INTEGER)) ? NaN : Number(raw)
+            const time = Number(row.time), cadence = Number(row.cadence_ms)
+            const state = continuity.get(id) ?? { previous: time, segment: 0, sourceGapMs: cadence > 0 ? cadence * 3 : null }
+            if (state.sourceGapMs !== null && time - state.previous > state.sourceGapMs) state.segment++
+            if (!Number.isFinite(number)) state.segment++
+            samplers.get(id)!.add({ time, value: Number.isFinite(number) ? number : null, words, qualities, verification: Number.isFinite(number) ? decoded.verification : 'unknown', segment: state.segment })
+            state.previous = time
+            continuity.set(id, state)
+          }
         }
-      }
-      let sourceSamples = 0, displayedSamples = 0
-      const series = registers.map(r => {
-        const sampler = samplers.get(r.id)!, displayed = sampler.samples(), samples = displayed.map(s => [s.time, s.value] as [number, number | null])
-        sourceSamples += sampler.count; displayedSamples += samples.length
-        const intervals = samples.slice(1).map((p, i) => p[0] - samples[i][0]).filter(v => v > 0).sort((a, b) => a - b)
-        return { id: r.id, samples, segments: displayed.map(s => [s.time, s.segment!] as const), sourceGapMs: continuity.get(r.id)?.sourceGapMs ?? null, verification: displayed.map(s => [s.time, s.verification] as const), integrity: sampler.integrity(), summary: sampler.summary(), gapMs: intervals.length ? intervals[Math.floor(intervals.length / 2)] * 3 : null }
-      })
-      return { series, sourceSamples, displayedSamples, downsampled: displayedSamples < sourceSamples, complete: true, start, end }
-    } finally { signal?.removeEventListener('abort', interrupted); conn.disconnectSync() }
+        let sourceSamples = 0, displayedSamples = 0
+        const series = registers.map(r => {
+          const sampler = samplers.get(r.id)!, displayed = sampler.samples(), samples = displayed.map(s => [s.time, s.value] as [number, number | null])
+          sourceSamples += sampler.count; displayedSamples += samples.length
+          const intervals = samples.slice(1).map((p, i) => p[0] - samples[i][0]).filter(v => v > 0).sort((a, b) => a - b)
+          return { id: r.id, samples, segments: displayed.map(s => [s.time, s.segment!] as const), sourceGapMs: continuity.get(r.id)?.sourceGapMs ?? null, verification: displayed.map(s => [s.time, s.verification] as const), integrity: sampler.integrity(), summary: sampler.summary(), gapMs: intervals.length ? intervals[Math.floor(intervals.length / 2)] * 3 : null }
+        })
+        return { series, sourceSamples, displayedSamples, downsampled: displayedSamples < sourceSamples, complete: true, start, end }
+      } finally { signal?.removeEventListener('abort', interrupted); conn.disconnectSync() }
+    })
   }
 
   /** 单设备数据统计：总行数 / 时间跨度 / 按数据区分布 / 待落盘缓冲（供数据 tab 只显示当前设备）。 */
@@ -575,22 +658,24 @@ export class DuckDBStore {
     bufferPending: number
     retention: { retention_seconds: number; policy: DeviceRetentionPolicy }
   }> {
-    const conn = await this.ready
-    const num = (v: unknown): number => Number(v ?? 0)
-    const str = (v: unknown): string | null => (v == null ? null : String(v))
-    const countRows = (await conn.runAndReadAll('SELECT COUNT(*) AS c FROM poll_data WHERE object_id = $objectId', { objectId })).getRowObjects()
-    const totalRows = num(countRows[0]?.c)
-    const spanRows = (await conn.runAndReadAll('SELECT MIN(ts) AS mn, MAX(ts) AS mx FROM poll_data WHERE object_id = $objectId', { objectId })).getRowObjects()
-    const span = spanRows[0]
-    const byAreaRows = (await conn.runAndReadAll('SELECT area, COUNT(*) AS c FROM poll_data WHERE object_id = $objectId GROUP BY area ORDER BY c DESC', { objectId })).getRowObjects()
-    return {
-      totalRows,
-      oldestTs: span?.mn == null ? null : localTs(String(span.mn)),
-      newestTs: span?.mx == null ? null : localTs(String(span.mx)),
-      byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
-      bufferPending: this.pendingRows(objectId),
-      retention: { retention_seconds: this.getRetentionSeconds(), policy: deviceRetentionPolicy(this.getRetentionSeconds(), objectId, this.cfg ? this.cfg.listObjects() : []) },
-    }
+    return this.read(async () => {
+      const conn = await this.ready
+      const num = (v: unknown): number => Number(v ?? 0)
+      const str = (v: unknown): string | null => (v == null ? null : String(v))
+      const countRows = (await conn.runAndReadAll('SELECT COUNT(*) AS c FROM poll_data WHERE object_id = $objectId', { objectId })).getRowObjects()
+      const totalRows = num(countRows[0]?.c)
+      const spanRows = (await conn.runAndReadAll('SELECT MIN(ts) AS mn, MAX(ts) AS mx FROM poll_data WHERE object_id = $objectId', { objectId })).getRowObjects()
+      const span = spanRows[0]
+      const byAreaRows = (await conn.runAndReadAll('SELECT area, COUNT(*) AS c FROM poll_data WHERE object_id = $objectId GROUP BY area ORDER BY c DESC', { objectId })).getRowObjects()
+      return {
+        totalRows,
+        oldestTs: span?.mn == null ? null : localTs(String(span.mn)),
+        newestTs: span?.mx == null ? null : localTs(String(span.mx)),
+        byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
+        bufferPending: this.pendingRows(objectId),
+        retention: { retention_seconds: this.getRetentionSeconds(), policy: deviceRetentionPolicy(this.getRetentionSeconds(), objectId, this.cfg ? this.cfg.listObjects() : []) },
+      }
+    })
   }
 
   /** 数据量统计：总行数 / 时间跨度 / 按设备与数据区分布 / 待落盘缓冲。 */
@@ -602,27 +687,31 @@ export class DuckDBStore {
     byArea: Array<{ area: string; rows: number }>
     bufferPending: number
   }> {
-    const conn = await this.ready
-    const num = (v: unknown): number => Number(v ?? 0)
-    const str = (v: unknown): string | null => (v == null ? null : String(v))
-    const countRows = (await conn.runAndReadAll('SELECT COUNT(*) AS c FROM poll_data')).getRowObjects()
-    const totalRows = num(countRows[0]?.c)
-    const spanRows = (await conn.runAndReadAll('SELECT MIN(ts) AS mn, MAX(ts) AS mx FROM poll_data')).getRowObjects()
-    const span = spanRows[0]
-    const byDeviceRows = (await conn.runAndReadAll('SELECT object_id, COUNT(*) AS c, MIN(ts) AS mn, MAX(ts) AS mx FROM poll_data GROUP BY object_id ORDER BY c DESC')).getRowObjects()
-    const byAreaRows = (await conn.runAndReadAll('SELECT area, COUNT(*) AS c FROM poll_data GROUP BY area ORDER BY c DESC')).getRowObjects()
-    return {
-      totalRows,
-      oldestTs: span?.mn == null ? null : localTs(String(span.mn)),
-      newestTs: span?.mx == null ? null : localTs(String(span.mx)),
-      byDevice: byDeviceRows.map((r: any) => ({ objectId: num(r.object_id), rows: num(r.c), oldestTs: r.mn == null ? null : localTs(String(r.mn)), newestTs: r.mx == null ? null : localTs(String(r.mx)) })),
-      byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
-      bufferPending: this.buffer.length,
-    }
+    return this.read(async () => {
+      const conn = await this.ready
+      const num = (v: unknown): number => Number(v ?? 0)
+      const str = (v: unknown): string | null => (v == null ? null : String(v))
+      const countRows = (await conn.runAndReadAll('SELECT COUNT(*) AS c FROM poll_data')).getRowObjects()
+      const totalRows = num(countRows[0]?.c)
+      const spanRows = (await conn.runAndReadAll('SELECT MIN(ts) AS mn, MAX(ts) AS mx FROM poll_data')).getRowObjects()
+      const span = spanRows[0]
+      const byDeviceRows = (await conn.runAndReadAll('SELECT object_id, COUNT(*) AS c, MIN(ts) AS mn, MAX(ts) AS mx FROM poll_data GROUP BY object_id ORDER BY c DESC')).getRowObjects()
+      const byAreaRows = (await conn.runAndReadAll('SELECT area, COUNT(*) AS c FROM poll_data GROUP BY area ORDER BY c DESC')).getRowObjects()
+      return {
+        totalRows,
+        oldestTs: span?.mn == null ? null : localTs(String(span.mn)),
+        newestTs: span?.mx == null ? null : localTs(String(span.mx)),
+        byDevice: byDeviceRows.map((r: any) => ({ objectId: num(r.object_id), rows: num(r.c), oldestTs: r.mn == null ? null : localTs(String(r.mn)), newestTs: r.mx == null ? null : localTs(String(r.mx)) })),
+        byArea: byAreaRows.map((r: any) => ({ area: String(r.area ?? 'holding-register'), rows: num(r.c) })),
+        bufferPending: this.buffer.length,
+      }
+    })
   }
 }
 
 /** Provide `ctx.store` to consumers (poller, api). */
 export function apply(ctx: Context, config: Config): void {
-  ctx.provide('store', new DuckDBStore(config, (ctx as any).config))
+  const cfg = (ctx as any).config, store = new DuckDBStore(config, cfg)
+  registerResourceCleanup(ctx, [cfg], () => store.close())
+  ctx.provide('store', store)
 }

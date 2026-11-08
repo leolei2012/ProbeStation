@@ -1,4 +1,5 @@
 import { DeviceSlaves } from './devices.ts'
+import { registerResourceCleanup, throwCleanupErrors } from '../../core/src/resource-close.ts'
 import type { Context } from 'cordis'
 import z from 'schemastery'
 import net from 'node:net'
@@ -103,5 +104,11 @@ export function apply(ctx: Context, config: Config): void {
   const devices = configStore && store ? new DeviceSlaves(configStore, store, (event, data) => (ctx as any).emit(event, data)) : null
   if (devices) { ctx.provide('deviceSlaves', devices); devices.start() }
   void slave.start().then(() => ctx.logger('slave').info(`slave listening on 0.0.0.0:${config.port}`)).catch((e: Error) => ctx.logger('slave').error(e.message))
-  ctx.effect(() => async () => { await slave.stop('tcp'); await slave.stop('rtu'); await devices?.stop() })
+  registerResourceCleanup(ctx, [configStore, store], async () => {
+    const errors: unknown[] = []
+    for (const stop of [() => devices?.stop(), () => slave.stop('tcp'), () => slave.stop('rtu')]) {
+      try { await stop() } catch (error) { errors.push(error) }
+    }
+    throwCleanupErrors(errors, 'Slave shutdown failed')
+  })
 }

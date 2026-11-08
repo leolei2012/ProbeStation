@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { EventEmitter } from 'node:events'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -20,7 +21,7 @@ cfg.log = ((...args: Parameters<typeof log>) => { if (failLog) throw new Error('
 const originalCreate = http.createServer, originalRegister = McpServer.prototype.registerTool
 let factory: (() => McpServer) | undefined
 try {
-  http.createServer = (() => ({ listen() { listens++ } })) as any
+  http.createServer = (() => Object.assign(new EventEmitter(), { listening: false, listen() { listens++; queueMicrotask(() => this.emit('listening')); return this } })) as any
   McpServer.prototype.registerTool = function (name: string, options: any, callback: any) { handlers.set(name, callback); schemas.set(name, options.inputSchema); configs.set(name, options); registrations.set(name, (registrations.get(name) ?? 0) + 1); return {} as any } as any
   apply({ config: cfg, store: {}, poller: { async reconnectDevice() { reconnects++; if (failReconnect) throw new Error('synthetic reconnect failure') } }, ota: {}, sink: {}, on() {}, get(name: string) { if (name === 'deviceSlaves') return { async sync() { syncs++; if (failSync) throw new Error('synthetic sync failure') } } }, provide(_name: string, value: any) { factory = value.createServer } } as any, { host: '127.0.0.1', port: 0 })
   const server = factory!(); await server.close()

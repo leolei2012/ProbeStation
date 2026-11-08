@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { closeResourceDependents, throwCleanupErrors } from '../../core/src/resource-close.ts'
 import {
   crc32, buildStartPdu, buildDataPdu, buildEndPdu, buildStatusPdu,
   wrapRtu, wrapTcp, unwrapRtu, unwrapTcp, parseResponsePdu, expectLen,
@@ -35,6 +36,19 @@ export class OtaEngine {
   private tasks = new Map<number, UpgradeTask>()
   private busy = new Map<number, Promise<void>>()
   private readonly dataDir: string
+  private closing = false
+  private closeTask: Promise<void> | undefined
+  /** Wait for accepted work; do not invent a hardware abort policy or send additional commands. */
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask
+    this.closing = true
+    return this.closeTask = this.finishClose()
+  }
+  private async finishClose(): Promise<void> {
+    const errors = await closeResourceDependents(this), results = await Promise.allSettled([...this.busy.values()])
+    errors.push(...results.flatMap(result => result.status === 'rejected' ? [result.reason] : []))
+    throwCleanupErrors(errors, 'OTA work failed during shutdown')
+  }
 
   constructor(private ctx: any, dataDir?: string) {
     this.dataDir = resolve(dataDir ?? 'data')
@@ -85,6 +99,7 @@ export class OtaEngine {
 
   /** 发起升级（异步，立即返回）。 */
   startUpgrade(deviceId: number, firmwareId: number, chunkSize?: number): { task_id: string; device_id: number } {
+    if (this.closing) throw new Error('OTA is closing or closed')
     const obj = this.ctx.config.getObject(deviceId)
     if (!obj) throw new Error('device not found')
     if (this.busy.has(deviceId)) throw new Error('device is already upgrading')
@@ -162,8 +177,10 @@ export class OtaEngine {
       if (task.state === 'aborted') task.state = 'aborted'
       else { task.state = 'failed'; task.error = e?.message ?? String(e) }
     } finally {
-      this.ctx.poller.resumeObject(deviceId)
-      try { await this.ctx.poller.reconnectDevice(deviceId) } catch { /* ignore */ }
+      if (!this.closing) {
+        this.ctx.poller.resumeObject(deviceId)
+        try { await this.ctx.poller.reconnectDevice(deviceId) } catch { /* ignore */ }
+      }
     }
   }
 }

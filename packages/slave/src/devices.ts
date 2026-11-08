@@ -3,12 +3,14 @@ import { areaForFunction, registerWidth } from '../../core/src/index.ts'
 import type { SlaveArea } from './protocol.ts'
 import type { RecordingSourceGuard } from '../../config/src/recording-interval.ts'
 import { captureAcquisitionOrigin } from '../../core/src/acquisition-origin.ts'
+import { throwCleanupErrors } from '../../core/src/resource-close.ts'
 /** One listener and memory per configured slave device. Reconciliation is serialized. */
 export class DeviceSlaves {
   private entries = new Map<number, { server: ModbusSlave; signature: string; transport: 'tcp' | 'rtu'; error: string; retryAt: number; published: number; source?: RecordingSourceGuard }>()
   private chain: Promise<void> = Promise.resolve()
   private timer?: ReturnType<typeof setTimeout>
   private closed = false
+  private closeTask: Promise<void> | undefined
   private groupStates = new Map<number, string>()
   private groupState(objectId: number, groupId: number, error: string) {
     if (this.groupStates.get(groupId) === error) return
@@ -93,5 +95,17 @@ export class DeviceSlaves {
     if (!this.sourceCurrent(entry.source, device)) throw new Error('从站来源已变化，请核对当前配置后重试')
     entry.server.write(area, address, values); this.publish(device, entry)
   }
-  async stop() { this.closed = true; if (this.timer) clearTimeout(this.timer); await this.chain; for (const entry of this.entries.values()) await entry.server.stop(entry.transport); this.entries.clear() }
+  stop(): Promise<void> {
+    if (this.closeTask) return this.closeTask
+    this.closed = true; if (this.timer) clearTimeout(this.timer)
+    return this.closeTask = this.finishStop()
+  }
+  private async finishStop(): Promise<void> {
+    const errors: unknown[] = []
+    try { await this.chain } catch (error) { errors.push(error) }
+    const results = await Promise.allSettled([...this.entries.values()].map(entry => Promise.resolve().then(() => entry.server.stop(entry.transport))))
+    this.entries.clear()
+    errors.push(...results.flatMap(result => result.status === 'rejected' ? [result.reason] : []))
+    throwCleanupErrors(errors, 'Device slave shutdown failed')
+  }
 }

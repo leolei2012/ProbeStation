@@ -1,4 +1,5 @@
 import type { Context } from 'cordis'
+import { closeResourceDependents, registerResourceCleanup, throwCleanupErrors } from '../../core/src/resource-close.ts'
 import z from 'schemastery'
 import { areaForFunction, planReadChunks, type ModbusArea, type ModbusFunctionCode } from '@probebench/core'
 import { randomUUID } from 'node:crypto'
@@ -50,6 +51,7 @@ class PollingEngine {
   private timer: NodeJS.Timeout | undefined
   private watchdogTimer: NodeJS.Timeout | undefined
   private running = false
+  private closing = false
   private groupErrors = new Map<number, string>()
   private connectCooldown = new Map<string, number>() // driverKey -> 最近一次连接失败时间戳（冷却期内不重连）
   private lastOutcomeAt = new Map<number, number>() // objectId -> 最近一次有结果/错误的时间戳（看门狗用）
@@ -76,6 +78,7 @@ class PollingEngine {
 
   /** 一次性轮询（测试/手动）：忽略扫描间隔，读所有组。 */
   async pollOnce(device: Device): Promise<void> {
+    if (this.closing) throw new Error('Poller is closing or closed')
     const lifecycle = this.lifecycle, scope = this.ctx.config.getRecordingIntervalScope()
     const row = this.ctx.config.getObject(device.id)
     const readOrigin = row ? this.ctx.config.captureRecordingSource(device.id) : undefined
@@ -103,6 +106,7 @@ class PollingEngine {
   }
 
   startAll(): void {
+    if (this.closing) throw new Error('Poller is closing or closed')
     if (this.running) return // 幂等
     this.running = true
     this.refreshSchedule()
@@ -116,15 +120,21 @@ class PollingEngine {
     this.ctx.logger('poller').info('started polling loop (round-robin + deadline queue)')
   }
 
-  async stopAll(): Promise<void> {
+  /** Stop scheduling and invalidate late frames while accepted users may still need the channel. */
+  quiesce(): void {
     this.running = false
     this.lifecycle = Symbol(); this.driverSlots.clear()
     this.nextAt.clear(); this.pollJobs.clear()
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined }
     if (this.watchdogTimer) { clearInterval(this.watchdogTimer); this.watchdogTimer = undefined }
+  }
+  beginShutdown(): void { this.closing = true; this.quiesce() }
+  async stopAll(): Promise<void> {
+    this.quiesce()
     const drivers = [...this.drivers.values()]
     this.drivers.clear()
-    await Promise.all(drivers.map((d) => Promise.resolve(d.disconnect()).catch(() => {})))
+    const results = await Promise.allSettled(drivers.map(d => Promise.resolve().then(() => d.disconnect())))
+    throwCleanupErrors(results.flatMap(result => result.status === 'rejected' ? [result.reason] : []), 'Driver shutdown failed')
   }
 
   isRunning(): boolean { return this.running }
@@ -561,6 +571,7 @@ class PollingEngine {
   }
 
   private async getDriver(obj: any, current: () => boolean = () => true): Promise<any> {
+    if (this.closing) throw new Error('Poller is closing or closed')
     const fresh = this.ctx.config.getObject(obj.id) ?? obj
     if (fresh.mode === 'slave') throw new Error('从站不使用主站连接')
     const key = this.driverKey(fresh)
@@ -603,5 +614,10 @@ export function apply(ctx: Context, config: Config): void {
   const engine = new PollingEngine(ctx, config)
   ctx.provide('poller', engine)
   // Invalidate old in-flight work when Cordis disposes this producer.
-  ctx.effect?.(() => () => engine.stopAll())
+  registerResourceCleanup(ctx, [(ctx as any).config, (ctx as any).store], async () => {
+    engine.beginShutdown()
+    const errors = await closeResourceDependents(engine)
+    try { await engine.stopAll() } catch (error) { errors.push(error) }
+    throwCleanupErrors(errors, 'Poller shutdown failed')
+  })
 }

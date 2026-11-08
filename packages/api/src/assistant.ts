@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { areaForFunction, registerWidth } from '@probebench/core'
+import { throwCleanupErrors } from '../../core/src/resource-close.ts'
 
 type Services = { cfg: any; store: any; poller: any }
 type Settings = { provider: string; baseUrl: string; model: string; apiKey: string; reasoningProtocol: 'default' | 'reasoning_effort'; contextWindow?: number | null }
@@ -61,6 +62,13 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
   const budgetFor = (config: Settings, model = config.model) => contextBudget(config.provider === 'custom' ? config.contextWindow ?? null : providerModel(config.provider, model).contextWindow)
   if (settings.model && settings.baseUrl) { profiles[settings.provider] = { ...settings }; delete (profiles[settings.provider] as any).profiles }
   const sessions = new Map<string, Session>()
+  let closing = false
+  const background = new Set<Promise<void>>()
+  const startBackground = (action: () => Promise<void>) => {
+    if (closing) fail('助手正在关闭', 503)
+    const task = action(); background.add(task)
+    void task.then(() => background.delete(task), error => { background.delete(task); app.log.error(error) })
+  }
   const sessionDir = join(dataDir, 'ai-sessions')
   const persist = (s: Session) => {
     if (!sessions.has(s.id)) return false
@@ -268,6 +276,7 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
   }
   // No cross-origin/browser form writes. Sessions use unguessable IDs; secrets are never returned.
   const guard = async (req: any, reply: any) => {
+    if (closing) return reply.code(503).send({ error: '助手正在关闭' })
     if (req.headers['x-probestation-ai'] !== '1') return reply.code(403).send({ error: '缺少 AI 请求标识' })
     if (req.headers.origin) { try { if (new URL(req.headers.origin).host !== req.headers.host) return reply.code(403).send({ error: '不允许跨站访问 AI' }) } catch { return reply.code(403).send({ error: '无效来源' }) } }
   }
@@ -439,7 +448,7 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
       catch (e: any) { s.error = controller.signal.aborted ? '压缩已停止，原上下文已保留' : e.statusCode ? e.message : '压缩失败，原上下文已保留，请检查模型服务' }
       finally { s.running = false; s.compacting = false; s.activity = undefined; s.controller = undefined; s.touched = Date.now(); persist(s) }
     }
-    void summarize()
+    startBackground(summarize)
     return view(s)
   })
   app.post<{ Params: { id: string } }>('/api/ai/sessions/:id/messages', { ...options, bodyLimit: Number.MAX_SAFE_INTEGER }, async req => {
@@ -465,7 +474,7 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
     const parts: any[] = [{ type: 'text', text }, ...images.map(a => ({ type: 'image_url', image_url: { url: `data:${a.mime};base64,${a.data}` } }))]
     const message = { role: 'user', content: images.length ? parts : text }
     s.entries.push({ role: 'user', content: content + attachments.map(a => `\n📎 ${a.name} (${Math.ceil(a.size / 1024)} KB)`).join('') }); s.messages.push(message)
-    void run(s, { ...selectedConfig, model: selectedModel, mode, effort }); return view(s)
+    startBackground(() => run(s, { ...selectedConfig, model: selectedModel, mode, effort })); return view(s)
   })
   app.post<{ Params: { id: string; proposal: string } }>('/api/ai/sessions/:id/proposals/:proposal', options, async req => {
     const s = get(req.params.id)
@@ -518,5 +527,16 @@ export function registerAssistant(app: FastifyInstance, services: Services, data
     s.entries.push({ role: 'result', content: resultContent }); s.messages.push({ role: 'user', content: '应用确认结果：' + resultContent })
     persist(s); return view(s)
   })
-  app.addHook('onClose', async () => { for (const c of inquiries) c.abort(); for (const s of sessions.values()) { s.controller?.abort(); persist(s) } })
+  app.addHook('preClose', async () => {
+    closing = true
+    for (const c of inquiries) c.abort()
+    for (const s of sessions.values()) s.controller?.abort()
+  })
+  app.addHook('onClose', async () => {
+    const errors: unknown[] = []
+    for (const s of sessions.values()) { try { s.controller?.abort(); persist(s) } catch (error) { errors.push(error) } }
+    const results = await Promise.allSettled([...background])
+    errors.push(...results.flatMap(result => result.status === 'rejected' ? [result.reason] : []))
+    throwCleanupErrors(errors, 'Assistant shutdown failed')
+  })
 }

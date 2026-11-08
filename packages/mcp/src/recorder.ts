@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { throwCleanupErrors } from '../../core/src/resource-close.ts'
 import { acquisitionOriginMatches, type AcquisitionOrigin } from '../../core/src/acquisition-origin.ts'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import { areaForFunction, type ModbusFunctionCode } from '../../core/src/protocol.ts'
@@ -92,14 +93,32 @@ export class Recorder {
   private readonly sampleLimits: RecordingSampleLimits
   private retainedSamples = 0
   private pageSnapshots = new WeakMap<RecordingSession, string>()
+  private closed = false
+  private closeTask: Promise<void> | undefined
+  close(): Promise<void> {
+    return this.closeTask ??= Promise.resolve().then(() => {
+      this.closed = true
+      const errors: unknown[] = []
+      for (const session of this.sessions.values()) {
+        try { if (session.status === 'recording') this.finish(session.id) } catch (error) { errors.push(error) }
+      }
+      for (const timer of this.timers.values()) clearTimeout(timer)
+      this.timers.clear()
+      for (const lease of this.intervalLeases.values()) {
+        try { this.cfg.revokeRecordingInterval(lease) } catch (error) { errors.push(error) }
+      }
+      this.intervalLeases.clear()
+      throwCleanupErrors(errors, 'Recording shutdown failed')
+    })
+  }
 
   constructor(private readonly ctx: any, private readonly cfg: any, limits: Partial<RecordingSampleLimits> = {}) {
     if (!limits || typeof limits !== 'object' || Array.isArray(limits) || Object.keys(limits).some(key => !['maxSamplesPerSession', 'maxTotalSamples'].includes(key))) throw new Error('invalid recording sample limits')
     this.sampleLimits = Object.freeze({ maxSamplesPerSession: limits.maxSamplesPerSession === undefined ? DEFAULT_RECORDING_SAMPLE_LIMITS.maxSamplesPerSession : limits.maxSamplesPerSession, maxTotalSamples: limits.maxTotalSamples === undefined ? DEFAULT_RECORDING_SAMPLE_LIMITS.maxTotalSamples : limits.maxTotalSamples })
     if (Object.values(this.sampleLimits).some(value => !Number.isSafeInteger(value) || value < 1)) throw new Error('invalid recording sample limits')
     this.intervalScope = cfg.getRecordingIntervalScope()
-    ctx.on('poller/result', ({ objectId, points, readOrigin }: any) => this.onResult(objectId, points, readOrigin))
-    ctx.on('config/changed', (payload: any) => { if (payload?.scope === 'object') this.inspectSources(Number.isSafeInteger(payload.id) && payload.id > 0 ? payload.id : undefined) })
+    ctx.on('poller/result', ({ objectId, points, readOrigin }: any) => { if (!this.closed) this.onResult(objectId, points, readOrigin) })
+    ctx.on('config/changed', (payload: any) => { if (!this.closed && payload?.scope === 'object') this.inspectSources(Number.isSafeInteger(payload.id) && payload.id > 0 ? payload.id : undefined) })
   }
 
   private checkSlave(slaveId?: number) {
@@ -131,6 +150,7 @@ export class Recorder {
     }) : null
   }
   private prepare(deviceId: number, intervalMs: number) {
+    if (this.closed) throw new Error('Recorder is closed')
     this.syncIntervalScope()
     if (this.changingInterval.has(deviceId)) throw new Error('recording interval operation is already in progress')
     this.inspectSources(deviceId)

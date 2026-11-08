@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { Context } from 'cordis'
+import Fastify from 'fastify'
+import { readFileSync } from 'node:fs'
+import { registerAssistant } from '../packages/api/src/assistant.ts'
 import * as configPlugin from '../packages/config/src/index.ts'
 import * as storePlugin from '../packages/store/src/index.ts'
 import * as apiPlugin from '../packages/api/src/index.ts'
@@ -67,10 +70,30 @@ try {
       await ctx.fiber.dispose()
       await app?.close().catch(() => {}) // The deliberately failed bootstrap may reject close too.
       for (const timer of apiTimers) clearInterval(timer)
-      await store.mutations; const connection = await store.ready.catch(() => null); connection?.closeSync(); store.instance?.closeSync(); cfg.db.close()
+      await store.close().catch(() => {}); await cfg.close().catch(() => {})
       assert(directory.startsWith(join(tmpdir(), 'probestation-api-exit-')))
       rmSync(directory, { recursive: true, force: true })
     }
+  }
+  // No model service: the injected fetch waits for explicit abort and then a controlled release.
+  const assistantDir = mkdtempSync(join(tmpdir(), 'probestation-api-exit-')), assistant = Fastify(), cfg = new configPlugin.ConfigStore({ dbPath: ':memory:' })
+  let entered!: () => void, aborted!: () => void, release!: () => void
+  const fetching = new Promise<void>(done => { entered = done }), aborting = new Promise<void>(done => { aborted = done }), released = new Promise<void>(done => { release = done })
+  registerAssistant(assistant, { cfg, store: {}, poller: {} }, assistantDir, async (_url, options) => new Promise((_resolve, reject) => {
+    entered(); options!.signal!.addEventListener('abort', () => { aborted(); void released.then(() => reject(new Error('synthetic aborted model'))) }, { once: true })
+  }))
+  const request = (method: any, url: string, payload?: any) => assistant.inject({ method, url: '/api/ai' + url, headers: { 'x-probestation-ai': '1' }, payload })
+  let closing: Promise<unknown> | undefined, done = false
+  try {
+    assert.equal((await request('POST', '/settings', { baseUrl: 'https://mock.invalid/v1', model: 'synthetic' })).statusCode, 200)
+    const session = (await request('POST', '/sessions', {})).json()
+    assert.equal((await request('POST', `/sessions/${session.id}/messages`, { message: 'synthetic' })).statusCode, 200)
+    await fetching; closing = assistant.close(); void closing.then(() => { done = true }); await aborting; await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(done, false, 'close must wait until an aborted background task settles'); assert((cfg as any).db.isOpen)
+    release(); await closing; assert.equal(JSON.parse(readFileSync(join(assistantDir, 'ai-sessions', session.id + '.json'), 'utf8')).running, false)
+  } finally {
+    release(); await (closing ?? assistant.close()); await cfg.close()
+    assert(assistantDir.startsWith(join(tmpdir(), 'probestation-api-exit-'))); rmSync(assistantDir, { recursive: true, force: true })
   }
   await new Promise<void>(resolve => setImmediate(resolve)); assert.deepEqual(failures, [])
 } finally { process.off('unhandledRejection', unhandled) }

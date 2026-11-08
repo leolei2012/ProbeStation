@@ -1,5 +1,7 @@
 # @probebench/store
 
+新增终止性`close():Promise<void>`：立即停止定时器/新写入和新查询，使落盘元数据available=false并撤销导出句柄；等待按实例绑定的消费者、已接受的读/写/重开，尝试最终flush，随后尽力关闭主连接和实例。重复调用返回同一个Promise，失败也不自动重试；单个原错误直接保留，多处错误用AggregateError.errors。写失败不会清空待写缓冲，可在保留的实例上用`getPendingPoints()`取得独立副本，事务结果不明时不得盲目重放；此副本仅在内存，关闭异常不可吞掉后直接退出。close后不能reopen同一实例，应用需创建新实例。未更改正常查询/存储格式，见[有序关闭与边界](../../docs/develop/87-存储与配置资源有序关闭.md)。
+
 可选的 `captureExportReadHandle()` / `queryObjectForExportWithHandle(handle, objectId, start, end, ranges?)` 仅用于后续条件导出的内部基础：句柄必须是本实例创建的原对象，复制或反序列化无效；库重开即撤销，旧等待/SQL迟到结果拒绝返回。范围参数在调用时复制，旧查询仍保留原语义。未接入Sink/API，不证明配置库配对、数据已提交/完整或物理身份，见[读取句柄](../../docs/develop/70-导出时序库读取句柄隔离.md)。
 
 `validateExportReadHandle(handle)`仅同步核对上述所有权/就绪/打开周期，不等待、不查SQL、不flush，也不阻止旧连接关闭；用于可选工作区配对的后置核对。配对尚未接入实际导出，见[工作区门禁](../../docs/develop/71-工作区导出配对生命周期保护.md)。

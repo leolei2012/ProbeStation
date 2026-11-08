@@ -27,6 +27,7 @@ import { registerDeviceSettings } from './device-settings.ts'
 import { registerGroupSettings } from './group-settings.ts'
 import { registerActivationSettings } from './activation-settings.ts'
 import { registerReadiness } from './readiness.ts'
+import { registerResourceCleanup } from '../../core/src/resource-close.ts'
 
 export const name = 'api'
 export const inject = ['config', 'store', 'poller', 'sink', 'importer', 'ota']
@@ -76,7 +77,7 @@ export function apply(ctx: Context, config: Config): void {
     for (const socket of [...sockets]) { removeSocket(socket); try { socket.terminate() } catch { /* ignore */ } }
   }
   // Register before asynchronous bootstrap: failures may occur before route-level onClose exists.
-  ctx.effect(() => async () => { disposed = true; closeSockets(); await app.close() })
+  registerResourceCleanup(ctx, [cfg, store, poller], async () => { disposed = true; closeSockets(); await app.close() })
 
   // 压缩 + 所有路由 + WebSocket + 静态托管，都放进同一个异步 register：
   // compress 必须「await 注册完成后」再定义路由，onRoute 钩子才会对后续路由生效。

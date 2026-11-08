@@ -22,6 +22,7 @@ import { alarmRuleMatches, parseAlarmEdit, invalidAlarmEdit } from '../../core/s
 import { captureAlarmContext, alarmContextMatches, parseAlarmContext, type AlarmContext } from '../../core/src/alarm-settings-context.ts'
 import { parseLogCleanupPreview, parseLogCleanupRequest, type LogCleanupPreview, type LogCleanupResult } from '../../core/src/log-cleanup.ts'
 import { activationMatches, activationTarget, captureActivation, parseActivationRequest, type ActivationKind, type ActivationSnapshot } from '../../core/src/activation-settings.ts'
+import { closeResourceDependents, registerResourceCleanup, throwCleanupErrors } from '../../core/src/resource-close.ts'
 
 export const name = 'config'
 
@@ -63,6 +64,22 @@ export class ConfigStore {
   private exportSnapshotBlocked = false
   private db: DatabaseSync
   private dbPath: string
+  private closing = false
+  private closeTask: Promise<void> | undefined
+  /** Wait for owned consumers before releasing SQLite; repeated callers share success or failure. */
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask
+    this.closing = true
+    return this.closeTask = this.finishClose()
+  }
+  private async finishClose(): Promise<void> {
+    const errors = await closeResourceDependents(this)
+    this.exportSnapshotScope = randomUUID(); this.exportSnapshotBlocked = true
+    this.logCleanupScope = randomUUID(); this.logCleanupBlocked = true
+    this.recordingIntervals.reset()
+    try { if (this.db.isOpen) this.db.close() } catch (error) { errors.push(error) }
+    throwCleanupErrors(errors, 'Configuration shutdown failed')
+  }
   private recordingIntervals = new RecordingIntervals(() => this.db, id => this.getObject(id), (id, intervalMs) => this.update('monitor_objects', id, { pollIntervalMs: intervalMs }, OBJECT_MAP), () => this.restoring, id => this.notify('object', id))
   acquireRecordingInterval(id: number, intervalMs: number, expectedSource?: RecordingSourceGuard) { return this.recordingIntervals.acquire(id, intervalMs, expectedSource) }
   captureRecordingSource(id: number) { return this.recordingIntervals.captureSource(id) }
@@ -88,9 +105,12 @@ export class ConfigStore {
   private open(dbPath: string): DatabaseSync {
     if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true })
     const db = new DatabaseSync(dbPath)
-    db.exec(this.schema())
-    this.migrate(db)
-    return db
+    try { db.exec(this.schema()); this.migrate(db); return db }
+    catch (error) {
+      const errors: unknown[] = [error]
+      try { db.close() } catch (cleanup) { errors.push(cleanup) }
+      throwCleanupErrors(errors, 'Configuration initialization and cleanup failed'); throw error
+    }
   }
 
   /** 旧库补列（幂等，列已存在则忽略）。 */
@@ -128,6 +148,7 @@ export class ConfigStore {
 
   /** 切换工作区：关闭旧库、打开新库（幂等，CREATE TABLE IF NOT EXISTS）。 */
   reopen(dbPath: string): void {
+    if (this.closing) throw new Error('Configuration is closing or closed')
     this.exportSnapshotScope = randomUUID(); this.exportSnapshotBlocked = true
     this.logCleanupScope = randomUUID()
     this.recordingIntervals.reset()
@@ -826,5 +847,7 @@ export class ConfigStore {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  ctx.provide('config', new ConfigStore(config, (scope, id) => ctx.emit('config/changed', { scope, id })))
+  const store = new ConfigStore(config, (scope, id) => ctx.emit('config/changed', { scope, id }))
+  registerResourceCleanup(ctx, [], () => store.close())
+  ctx.provide('config', store)
 }

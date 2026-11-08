@@ -1,5 +1,7 @@
 # @probebench/config
 
+新增终止性`close():Promise<void>`，等待按资源身份绑定的消费者（含存储）清理后，再撤销快照/录制租约并关闭SQLite；重复调用共享同一成功或失败Promise，失败时仍尝试关闭，不吞原错误。初始化schema失败也尝试释放刚打开的连接，多处错误保留在AggregateError.errors。close后不能reopen该对象，不改变库schema。插件会自动登记退出依赖；独立new对象及自定义消费者须显式管理关闭顺序。主入口退出信号尚未接入，见[契约与隔离验收](../../docs/develop/87-存储与配置资源有序关闭.md)。
+
 新增`setActivation(kind,id,{expected,isActive})`只SET设备/分组开关。BEGIN IMMEDIATE内核对ActivationSnapshot，写回完整条件核验后COMMIT，提交后保留原object/group通知并汇总同步抛错；失败尝试回滚，回滚未知不报成功。旧toggleObject/toggleGroup保持反转行为，无迁移或持久操作身份；边界见[条件开关](../../docs/develop/82-设备与分组条件开关.md)。
 
 `getHistoryExportConfigurationScope()`仅返回本配置实例当前打开周期的内存标识，不运行SQL或暴露路径；恢复中或导出快照状态不明时拒绝，与`getHistoryExportConfiguration`使用同一门禁。它不是内容revision，普通编辑不会变更；用于后续生命周期配对，未接入实际导出。见[工作区门禁](../../docs/develop/71-工作区导出配对生命周期保护.md)。

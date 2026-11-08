@@ -38,12 +38,15 @@ try {
   const second = store.captureExportReadHandle(); assert.notEqual(second.storeScope, handle.storeScope)
   const entered = deferred<void>(), late = deferred<ReturnType<typeof reader>>(); next.read = async () => { entered.resolve(); return late.promise }
   const pending = store.queryObjectForExportWithHandle(second, 1, start, end), rejected = assert.rejects(pending, ExportReadHandleError)
-  await entered.promise; const thirdConnection = connection(30); plans.push(async () => thirdConnection); await store.reopen(':memory:'); late.resolve(reader(20)); await rejected
+  await entered.promise; const thirdConnection = connection(30); plans.push(async () => thirdConnection); const waitingReopen = store.reopen(':memory:')
+  await new Promise<void>(resolve => setImmediate(resolve)); assert.equal(next.closes, 0, 'reopen must not close the old connection while its SQL is still pending')
+  late.resolve(reader(20)); await waitingReopen; await rejected
   assert.equal(thirdConnection.queries, 0, 'a late old result must not query or return replacement rows')
   const third = store.captureExportReadHandle(), errors = deferred<ReturnType<typeof reader>>(), errorEntered = deferred<void>()
   thirdConnection.read = async () => { errorEntered.resolve(); return errors.promise }
   const bad = store.queryObjectForExportWithHandle(third, 1, start, end), ignored = assert.rejects(bad, error => error instanceof ExportReadHandleError && !error.message.includes('PRIVATE'))
-  await errorEntered.promise; const fourthConnection = connection(40); plans.push(async () => fourthConnection); await store.reopen(':memory:'); errors.reject(new Error('PRIVATE obsolete driver error')); await ignored
+  await errorEntered.promise; const fourthConnection = connection(40); plans.push(async () => fourthConnection); const errorReopen = store.reopen(':memory:')
+  errors.reject(new Error('PRIVATE obsolete driver error')); await errorReopen; await ignored
 
   const fourth = store.captureExportReadHandle(), nativeError = new Error('mock current SQL error')
   fourthConnection.read = async () => { throw nativeError }; await assert.rejects(store.queryObjectForExportWithHandle(fourth, 1, start, end), error => error === nativeError)

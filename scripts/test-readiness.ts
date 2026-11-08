@@ -14,7 +14,7 @@ import { DuckDBStore } from '../packages/store/src/index.ts'
 import { registerReadiness } from '../packages/api/src/readiness.ts'
 
 const config = { dbPath: ':memory:', flushIntervalMs: 0, flushBatchSize: 1000, retentionSeconds: 0, retentionCheckMs: 0 }
-const close = async (store: DuckDBStore) => { await (store as any).mutations; const conn = await (store as any).ready.catch(() => null); conn?.closeSync(); (store as any).instance?.closeSync() }
+const close = async (store: DuckDBStore) => { await store.close().catch(() => {}) }
 const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0))
 const source = ts.createSourceFile('api.ts', readFileSync(new URL('../packages/api/src/index.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true)
 let health: ts.CallExpression | undefined
@@ -119,7 +119,7 @@ try {
   await apiFork.dispose(); for (const instance of apps) await instance.close()
   await storeFork.dispose(); await inert.dispose(); await configFork.dispose()
   for (const instance of stores) await close(instance)
-  cfg?.db.close()
+  await cfg?.close()
   await loggerFork.dispose()
   rmSync(dataDir, { recursive: true, force: true })
 }
