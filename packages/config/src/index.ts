@@ -8,6 +8,7 @@ import { dirname } from 'node:path'
 import { ALARM_OPERATORS } from '../../core/src/alarm.ts'
 import { parseConfigBackup, type ConfigBackup } from './backup.ts'
 import { parseRegisterQuantity } from './register-quantity.ts'
+import { CommittedConfigurationNotificationError } from './notification-error.ts'
 import { assertImportedPointTable, type ImportedPointGroup, type ImportedPointDefinition } from '../../core/src/point-import.ts'
 import { withRegisterSources } from '../../core/src/sample-source.ts'
 import { selectSourceRegister } from '../../core/src/register-selection.ts'
@@ -98,7 +99,10 @@ export class ConfigStore {
   /** 元数据变更后回调（供上层广播 config/changed，让前端/MCP 状态同步）。 */
   private notify(scope: string, id?: number): void {
     if (this.restoring) return
-    this.onChange?.(scope, id)
+    // Observe before invoking a possibly reentrant callback. Unknown runtimes fail closed.
+    const committed = this.db.isTransaction === false
+    try { this.onChange?.(scope, id) }
+    catch (error) { if (committed) throw new CommittedConfigurationNotificationError(error); throw error }
   }
 
   /** 打开（或重开）一个库文件并确保 schema 存在。 */

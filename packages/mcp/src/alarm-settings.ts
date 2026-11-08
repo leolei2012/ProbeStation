@@ -1,12 +1,13 @@
 import { z as zz } from 'zod'
 import type { ConfigStore } from '../../config/src/index.ts'
 import type { ConfigEditRegistrar } from './config-edit.ts'
+import { CommittedConfigurationNotificationError } from '../../config/src/notification-error.ts'
 
 /** Keep legacy tool names/results; explicit conditions never fall back to an unguarded call. */
 export function registerAlarmTools(server: ConfigEditRegistrar, cfg: Pick<ConfigStore, 'createRule' | 'updateRule' | 'deleteRule' | 'listRules' | 'getAlarmEditContext' | 'createRuleSettings' | 'updateRuleSettings' | 'deleteRuleSettings'>) {
   const alarmReply = (value: unknown, warnings: readonly string[] = []) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }, ...warnings.map(text => ({ type: 'text' as const, text }))] })
   const legacyAlarmWarning = '兼容调用未携带原点位/来源条件，未验证先前看到的快照。新调用请先get_alarm_edit_context并原样传回条件；勿为覆盖旧草稿临时刷新条件。'
-  const alarmError = (error: any, read = false) => ({ content: [{ type: 'text' as const, text: [400, 404, 409].includes(error?.statusCode) ? error.message : read ? '告警条件读取失败，请重读；本次未修改配置。' : '告警操作结果待核实，请读取核对，勿重复操作。' }], isError: true })
+  const alarmError = (error: any, read = false) => ({ content: [{ type: 'text' as const, text: !read && error instanceof CommittedConfigurationNotificationError ? error.message : [400, 404, 409].includes(error?.statusCode) ? error.message : read ? '告警条件读取失败，请重读；本次未修改配置。' : '告警操作结果待核实，请读取核对，勿重复操作。' }], isError: true })
   server.registerTool('get_alarm_edit_context', {
     title: 'Read alarm edit context', description: '只读一致快照：rule_id读取原规则及点位/来源条件，register_id读取新增用条件，二选一。修改/删除传expected_rule和expected_context，新增传expected_context；保留原条件，不用重读条件替换旧草稿。',
     annotations: { readOnlyHint: true, destructiveHint: false },
