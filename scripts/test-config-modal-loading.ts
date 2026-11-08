@@ -10,10 +10,10 @@ import { captureDeviceEditBaseline } from '../packages/core/src/device-settings-
 import { captureGroupOpening, parseGroupEditChanges, planGroupResize } from '../packages/core/src/group-settings-edit.ts'
 import { readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings } from '../apps/web/src/group-settings-save.ts'
 import { configurationWriteBlocked } from '../apps/web/src/configuration-write-outcome.ts'
-import { draftEditor, syntheticDevice } from './fixtures/draft-navigation-driver.ts'
+import { draftEditor, draftSurface, assertDraftWiring, syntheticDevice } from './fixtures/draft-navigation-driver.ts'
 import { hookDriver } from './fixtures/component-hook-driver.ts'
 
-const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
+const deferred = <T,>() => { let resolve!: (value: T) => void, reject!: (error: Error) => void; const promise = new Promise<T>((done, failed) => { resolve = done; reject = failed }); return { promise, resolve, reject } }
 const tick = () => new Promise<void>(done => setImmediate(done))
 let passed = 0
 async function check(name: string, action: () => void | Promise<void>) { await action(); passed++; console.log('CONFIG MODAL LOADING OK: ' + name) }
@@ -92,6 +92,75 @@ await check('loaded group creates only on explicit submit and retains an uncerta
     const editor = hookDriver('GroupModal.tsx', 'GroupModal', { captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }, forwarded)
     try { assert.equal(writes, 0); editor.one('input').props.onChange({ target: { value: 'NEW GROUP DRAFT' } }); editor.render(); editor.one('form').props.onSubmit({ preventDefault() {} }); editor.one('form').props.onSubmit({ preventDefault() {} }); assert.equal(writes, 1); pending.resolve(Promise.reject(Error('synthetic response lost'))); await tick(); editor.render(); assert.equal(editor.one('input').props.value, 'NEW GROUP DRAFT'); assert.match(editor.one('div', value => value.role === 'alert').props.children, /待核实/); assert.equal(writes, 1) } finally { editor.dispose() }
   } finally { view.driver.dispose() }
+})
+// Reconcile explicit simulated mounts against the actual App branch key and navigation callbacks.
+// This drives the existing component functions, not a React DOM/browser renderer.
+function deviceHost(page: ReturnType<typeof draftSurface>, resource: DeferredResource<typeof DeviceModal>, onEdit: (...args: any[]) => Promise<void> = async () => { assert.fail('no automatic configuration write') }) {
+  const opening = page.render(), owner = opening.props.device as typeof syntheticDevice, draftScope = page.registration()
+  let active = true, editor: ReturnType<typeof draftEditor> | null = null, closes = 0
+  const props = { ...deviceProps, initial: owner, draftScope, onClose() { closes++ }, onSave: page.deviceSaveHandler(onEdit, () => { closes++ }) }, view = wrapper(resource, props)
+  const dispose = () => { if (!active) return; active = false; editor?.driver.dispose(); view.surface.isConnected = false; view.driver.dispose() }
+  const reconcile = () => {
+    if (!active) return
+    const current = page.render()
+    if (current.type !== opening.type || current.key !== opening.key) { dispose(); return }
+    view.update()
+    if (!editor && resource.snapshot().status === 'ready') { const forwarded = view.driver.one(DeviceModal).props; editor = draftEditor('device', forwarded.draftScope, forwarded.onSave, null, undefined, forwarded.initial) }
+  }
+  return { view, reconcile, dispose, active: () => active, editor: () => { assert(editor); return editor }, closes: () => closes }
+}
+await check('cold navigation unloads only the owner identified by the actual App key', async () => {
+  for (const route of ['device', 'database', 'reference'] as const) {
+    const page = draftSurface(), code = deferred<typeof DeviceModal>(), resource = new DeferredResource<typeof DeviceModal>(() => code.promise), host = deviceHost(page, resource)
+    try { assertDraftWiring(page); await tick(); assert.equal(page.drafts.retained().length, 0); if (route === 'device') page.select(2); else if (route === 'database') page.global('database'); else page.reference(2)
+      host.reconcile(); assert(!host.active()); assert.equal(page.prompts.length, 0, 'no editor or draft exists while code loads'); const destination = page.state(); code.resolve(DeviceModal); await resource.load(); host.reconcile(); assert.deepEqual(page.state(), destination); assert.equal(host.view.driver.lateWrites, 0); assert.equal(host.closes(), 0)
+    } finally { code.resolve(DeviceModal); await resource.load(); host.dispose() }
+  }
+})
+await check('failed load retry cannot bypass another dirty editor or cancelled navigation', async () => {
+  const page = draftSurface(), point = draftEditor('point', page.registration()); let imports = 0
+  const resource = new DeferredResource<typeof DeviceModal>(async () => { if (++imports === 1) throw Error('synthetic code error'); return DeviceModal }), host = deviceHost(page, resource)
+  try {
+    point.change('POINT DRAFT BEFORE RETRY'); await resource.load(); host.reconcile(); const before = page.state(); page.select(2); host.reconcile(); assert.deepEqual(page.state(), before); assert(host.active()); assert.equal(page.prompts.length, 1)
+    host.view.driver.one(ConfigModalLoading).props.retry(); await resource.load(); host.reconcile(); const editor = host.editor(); editor.change('DEVICE DRAFT AFTER RETRY'); page.global('database'); host.reconcile(); assert.deepEqual(page.state(), before); assert.equal(page.prompts.length, 2, 'one shared confirmation for both dirty editors'); assert.equal(point.value(), 'POINT DRAFT BEFORE RETRY'); assert.equal(editor.value(), 'DEVICE DRAFT AFTER RETRY'); assert.equal(point.calls.save + editor.calls.save, 0); assert.equal(imports, 2)
+    page.setAnswer(true); page.select(2); host.reconcile(); assert(!host.active()); assert.equal(page.state().selectedId, 2)
+  } finally { point.driver.dispose(); host.dispose() }
+})
+await check('loaded device preserves navigation ranges and a pending or unknown save', async () => {
+  const page = draftSurface(), resource = new DeferredResource<typeof DeviceModal>(async () => DeviceModal), save = deferred<void>(); let writes = 0
+  const host = deviceHost(page, resource, async (id: number) => { assert.equal(id, 1); writes++; return save.promise })
+  try {
+    await resource.load(); host.reconcile(); const editor = host.editor(); editor.change('PENDING OWNER DRAFT'); page.localTab(2); host.reconcile(); assert.equal(page.state().tab, 2, 'device editor is a sibling and remains mounted across local tabs'); assert(host.active()); assert.equal(page.prompts.length, 0)
+    editor.submit(); const before = page.state(); page.select(2); host.reconcile(); assert.deepEqual(page.state(), before); assert.equal(page.prompts.length, 0, 'pending save blocks without asking for consent'); assert.equal(writes, 1)
+    save.reject(Error('synthetic unverified result')); await tick(); editor.driver.render(); page.global('database'); host.reconcile(); assert.deepEqual(page.state(), before); assert.equal(page.prompts.length, 1); assert.equal(editor.value(), 'PENDING OWNER DRAFT'); assert.equal(writes, 1); assert.equal(host.closes(), 0)
+  } finally { host.dispose() }
+})
+await check('A-to-B-to-A navigation plus timed-out old code cannot replace fresh drafts', async () => {
+  const page = draftSurface(), oldCode = deferred<typeof DeviceModal>(); let imports = 0
+  const resource = new DeferredResource<typeof DeviceModal>(() => ++imports === 1 ? oldCode.promise : Promise.resolve(DeviceModal), 5), old = deviceHost(page, resource)
+  await resource.load(); old.reconcile(); page.select(2); old.reconcile(); assert(!old.active())
+  const fresh = deviceHost(page, resource)
+  try {
+    fresh.view.driver.one(ConfigModalLoading).props.retry(); await resource.load(); fresh.reconcile(); const editor = fresh.editor(); editor.change('FRESH B DRAFT'); const before = page.state(); oldCode.resolve(DeviceModal); await tick(); fresh.reconcile(); old.reconcile(); assert.deepEqual(page.state(), before); assert.equal(editor.value(), 'FRESH B DRAFT'); assert.equal(old.view.driver.lateWrites, 0); assert.equal(imports, 2)
+    page.select(1); fresh.reconcile(); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 1); page.setAnswer(true); page.select(1); fresh.reconcile(); assert(!fresh.active()); const returned = deviceHost(page, resource)
+    try { returned.reconcile(); assert.equal(returned.editor().value(), 'synthetic A'); assert.equal(returned.editor().calls.save, 0); assert.equal(page.drafts.retained().length, 0) } finally { returned.dispose() }
+  } finally { oldCode.resolve(DeviceModal); old.dispose(); fresh.dispose() }
+})
+await check('group code retry after owner navigation uses only the new device callbacks', async () => {
+  const page = draftSurface(), late = deferred<typeof GroupModal>(); let imports = 0, oldWrites = 0, newWrites = 0
+  const resource = new DeferredResource<typeof GroupModal>(() => ++imports === 1 ? late.promise : Promise.resolve(GroupModal), 5)
+  const old = wrapper(resource, { ...groupProps, async create() { oldWrites++; assert.fail('closed group callback') } }); await resource.load(); old.update(); page.select(2); assert.equal(page.prompts.length, 0); old.driver.dispose()
+  const props = { ...groupProps, device: captureDeviceEditBaseline(page.render().props.device), onSaved() {}, async create(url: string) { assert.equal(url, '/api/monitor_objects/2/groups'); newWrites++; return {} } }, fresh = wrapper(resource, props)
+  try {
+    fresh.driver.one(ConfigModalLoading).props.retry(); await resource.load(); fresh.update(); const forwarded = fresh.driver.one(GroupModal).props; assert.equal(forwarded.device.id, 2)
+    const editor = hookDriver('GroupModal.tsx', 'GroupModal', { captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }, forwarded)
+    try { editor.one('input').props.onChange({ target: { value: 'B GROUP DRAFT' } }); editor.render(); late.resolve(GroupModal); await tick(); fresh.update(); assert.equal(editor.one('input').props.value, 'B GROUP DRAFT'); assert.equal(page.state().selectedId, 2); assert.equal(old.driver.lateWrites, 0); assert.equal(oldWrites + newWrites, 0); editor.one('form').props.onSubmit({ preventDefault() {} }); await tick(); assert.equal(oldWrites, 0); assert.equal(newWrites, 1) } finally { editor.dispose() }
+  } finally { late.resolve(GroupModal); fresh.driver.dispose() }
+})
+await check('existing group navigation ownership gap is recorded without claiming protection', () => {
+  const source = fs.readFileSync(new URL('../apps/web/src/GroupModal.tsx', import.meta.url), 'utf8'); assert(!source.includes('draftScope'))
+  const page = draftSurface(), editor = hookDriver('GroupModal.tsx', 'GroupModal', { captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }, groupProps)
+  try { editor.one('input').props.onChange({ target: { value: 'UNREGISTERED GROUP DRAFT' } }); editor.render(); page.select(2); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 0); assert.equal(page.drafts.retained().length, 0); console.log('CONFIG MODAL LEGACY LIMIT: GroupModal has no shared draft registration before or after code splitting. Navigation can discard its draft; this audit does not claim group navigation or unload protection.') } finally { editor.dispose() }
 })
 await deviceModalResource.load(); await groupModalResource.load(); assert.equal(deviceModalResource.snapshot().value, DeviceModal); assert.equal(groupModalResource.snapshot().value, GroupModal)
 console.log('CONFIG MODAL LOADING TEST OK: ' + passed + ' source/SSR and controlled loader/device/group/keyboard/focus lifecycle groups; no actual browser, network, storage, serial enumeration, model or hardware')
