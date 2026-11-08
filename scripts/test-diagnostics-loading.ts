@@ -167,7 +167,7 @@ await check('late code success after returning live leaves a dirty point draft a
   let tab = 5, saved = 0, closed = 0
   const pending = begin(resource); await entered.promise
   evaluate(closeExpression, source, { setTab: (next: number) => { tab = next } })(); assert.equal(tab, 0)
-  const live = find(deviceView, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'tab === 0')!
+  const live = find(deviceView, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'tab === 0' && ts.isJsxSelfClosingElement(node.right) && node.right.tagName.getText(source) === 'LiveTable')!
   assert(live && live.getText(source).includes('<LiveTable'), 'point draft owner is the live tab, not the diagnostic chunk')
   const modal = hookDriver('PointSettingsEditor.tsx', 'PointSettingsEditor', settingsScope, { name: 'synthetic point', address: 0, settings: { dataType: 'uint16', unit: 'V', factor: 0, offset: 0, enumJson: null, decimalPlaces: null }, available: 1, typeGroups: [{ key: 'types', types: ['uint16'] }], t: (key: string) => key === 'cancel' ? '取消' : key, guarded: true, onClose() { closed++ }, async onSave() { saved++ } })
   try {

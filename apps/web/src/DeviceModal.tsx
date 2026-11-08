@@ -1,3 +1,4 @@
+import type { DraftRegistration } from './draft-navigation'
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { captureDeviceEditBaseline, type DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { SerialPortPicker } from './SerialPortPicker'
@@ -8,7 +9,7 @@ import { PointDraftDiscard } from './PointDraftDiscard'
 
 export type DeviceFields = { mode: string; name: string; ip: string; port: number; transport: string; serialPath: string; baudRate: number; parity: string; stopBits: number; dataBits: number; flowControl: string; slaveId: number; pollIntervalMs: number; timeoutMs: number }
 
-export function DeviceModal({ t, initial, onClose, onSave, portFetcher }: { t: (key: string) => string; initial: DeviceEditBaseline | null; onClose: () => void; onSave: (f: DeviceFields, expected: DeviceEditBaseline | null) => Promise<void>; portFetcher?: (signal: AbortSignal) => Promise<SerialPortList> }) {
+export function DeviceModal({ t, initial, onClose, onSave, portFetcher, draftScope }: { t: (key: string) => string; initial: DeviceEditBaseline | null; onClose: () => void; onSave: (f: DeviceFields, expected: DeviceEditBaseline | null) => Promise<void>; portFetcher?: (signal: AbortSignal) => Promise<SerialPortList>; draftScope?: DraftRegistration }) {
   const [opening] = useState(() => { const fields = deviceDraftFields(initial); try { return { fields, expected: initial ? captureDeviceEditBaseline(initial) : null, error: '' } } catch { return { fields, expected: null, error: '设备配置不完整，请关闭窗口并刷新后重新编辑。' } } })
   const [name, setName] = useState(opening.fields.name)
   const [mode, setMode] = useState(opening.fields.mode)
@@ -30,6 +31,9 @@ export function DeviceModal({ t, initial, onClose, onSave, portFetcher }: { t: (
   const [closeGuard] = useState(() => new PointDraftCloseGuard()), [discarding, setDiscarding] = useState(false)
   const resumeButton = useRef<HTMLButtonElement>(null), closeTrigger = useRef<HTMLElement | null>(null), restoreFocus = useRef(false)
   const dirty = deviceDraftChanged(opening.fields, { name, mode, transport, ip, port, serialPath, baudRate, parity, stopBits, flowControl, slaveId, pollInterval, timeout, dataBits })
+  const navigationState = useRef(() => ({ dirty: false, busy: false }))
+  navigationState.current = () => ({ dirty: dirty && (closeGuard.canSave || closeGuard.confirming), busy: locked.current })
+  useEffect(() => draftScope?.register('device', () => navigationState.current()), [draftScope])
   const closeAction = (action: 'none' | 'prompt' | 'resume' | 'close') => {
     if (action === 'none') return
     setDiscarding(closeGuard.confirming)

@@ -1,3 +1,4 @@
+import type { DraftRegistration } from './draft-navigation'
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { isBinType, isHexType, registerWidth } from '../../../packages/core/src/codec'
 import { parsePointSettingsUpdate, type PointSettings, type PointSettingsUpdate } from './point-settings'
@@ -7,9 +8,10 @@ import { pointDraftFields, pointDraftChanged, PointDraftCloseGuard, type PointCl
 import { PointDraftDiscard } from './PointDraftDiscard'
 export type { PointSettings } from './point-settings'
 
-export function PointSettingsEditor({ name, address, settings, available, typeGroups, t, onClose, onSave, guarded = false }: {
+export function PointSettingsEditor({ name, address, settings, available, typeGroups, t, onClose, onSave, guarded = false, draftScope }: {
   name: string; address: number; settings: PointSettings; available: number; typeGroups: { key: string; types: string[] }[]; t: (key: string) => string
   onClose: () => void; onSave: (value: PointSettingsUpdate) => Promise<void>
+  draftScope?: DraftRegistration
   guarded?: boolean
 }) {
   const titleId = useId()
@@ -30,6 +32,9 @@ export function PointSettingsEditor({ name, address, settings, available, typeGr
   const resumeButton = useRef<HTMLButtonElement>(null), closeTrigger = useRef<HTMLElement | null>(null)
   const restoreFocus = useRef(false)
   const dirty = pointDraftChanged(opening, { dataType, unit, factor, offset, decimalPlaces }, enums)
+  const navigationState = useRef(() => ({ dirty: false, busy: false }))
+  navigationState.current = () => ({ dirty: dirty && (closeGuard.canSave || closeGuard.confirming), busy: lock.current })
+  useEffect(() => draftScope?.register('live', () => navigationState.current()), [draftScope])
   const closeAction = (action: PointCloseAction) => {
     if (action === 'none') return
     setDiscarding(closeGuard.confirming)

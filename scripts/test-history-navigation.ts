@@ -98,7 +98,7 @@ assert(consumeCall && cancelDeclaration?.initializer)
 function deviceLifetime(deviceId = 1) {
   const refs: Array<{ current: unknown }> = []
   return { leave() {
-    const names = ['setTab', ...(parentAllocation ? [parentAllocation.name] : [])], values = [() => {}, ...(parentAllocation ? [parentAllocation.render(refs)] : [])]
+    const names = ['tab', 'onLeaveDrafts', 'setTab', ...(parentAllocation ? [parentAllocation.name] : [])], values = [2, undefined, () => {}, ...(parentAllocation ? [parentAllocation.render(refs)] : [])]
     expression((tabChange.initializer as ts.JsxExpression).expression!, names, values)(0)
   }, mount() {
     const parent = parentAllocation?.render(refs)
@@ -142,13 +142,13 @@ let appView = 'monitor', appTarget: any = exact, appDevice = 1
 // App setters are executed through evaluated callbacks; TS cannot infer those mutations.
 const readTarget = (): any => appTarget
 const appSequence = { current: 10 }, setView = (value: string) => { appView = value }, setDataTarget = (value: unknown) => { appTarget = value }
-const manualGlobal = (next: string) => expression((globalChange.initializer as ts.JsxExpression).expression!, ['setView', 'setDataTarget'], [setView, setDataTarget])(next)
+const manualGlobal = (next: string) => expression((globalChange.initializer as ts.JsxExpression).expression!, ['canNavigate', 'setView', 'setDataTarget'], [() => true, setView, setDataTarget])(next)
 const freshDeviceTab = () => { let tab = 0; expression(targetEffect.arguments[0], ['target', 'device', 'setTab'], [appTarget, { id: appDevice, mode: 'master' }, (next: number) => { tab = next }])(); return tab }
 manualGlobal('database'); assert.equal(appView, 'database')
 manualGlobal('monitor'); assert.equal(appView, 'monitor')
 assert.equal(freshDeviceTab(), 0, 'monitor→database→monitor must not replay the dismissed history target in a fresh DeviceView')
 assert.equal(appTarget, null)
-const emit = expression(navigateDeclaration.initializer!, ['setSelectedId', 'setView', 'setDataTarget', 'navigationSequence'], [(id: number) => { appDevice = id }, setView, setDataTarget, appSequence])
+const emit = expression(navigateDeclaration.initializer!, ['canNavigate', 'setSelectedId', 'setView', 'setDataTarget', 'navigationSequence'], [() => true, (id: number) => { appDevice = id }, setView, setDataTarget, appSequence])
 manualGlobal('database'); emit(exact)
 assert.equal(appView, 'monitor'); assert.equal(appDevice, 1); assert.equal(freshDeviceTab(), 2); assert.equal(readTarget().token, 11); assert.equal(readTarget().start, exact.start); assert.equal(readTarget().valueMode, 'raw')
 manualGlobal('monitor'); assert.equal(readTarget().token, 11, 'clicking the already-active monitor does not discard a fresh intent')

@@ -89,7 +89,7 @@ function navigation(initial = 0) {
 const navigate = collect(navFile, node => ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'navigateData')[0] as ts.VariableDeclaration
 assert(navigate?.initializer)
 let selectedDevice = 0, selectedView = '', target: any
-const sequence = { current: 0 }, emitTarget = evaluate(navigate.initializer, ['setSelectedId', 'setView', 'setDataTarget', 'navigationSequence'], [(id: number) => { selectedDevice = id }, (view: string) => { selectedView = view }, (value: unknown) => { target = value }, sequence])
+const sequence = { current: 0 }, emitTarget = evaluate(navigate.initializer, ['canNavigate', 'setSelectedId', 'setView', 'setDataTarget', 'navigationSequence'], [() => true, (id: number) => { selectedDevice = id }, (view: string) => { selectedView = view }, (value: unknown) => { target = value }, sequence])
 const targetAttribute = collect(navFile, node => ts.isJsxAttribute(node) && node.name.getText(navFile) === 'target' && ts.isJsxSelfClosingElement(node.parent.parent) && node.parent.parent.tagName.getText(navFile) === 'DeviceView')[0] as ts.JsxAttribute
 assert(targetAttribute?.initializer && ts.isJsxExpression(targetAttribute.initializer) && targetAttribute.initializer.expression)
 for (const issue of actual.issues) {

@@ -42,6 +42,8 @@
     "scripts/test-history-navigation.ts",
     "scripts/test-diagnostics-loading.ts",
     "scripts/audit-draft-unmount.ts",
+    "scripts/test-draft-navigation.ts",
+    "scripts/fixtures/draft-navigation-driver.ts",
     "scripts/fixtures/component-hook-driver.ts",
     "scripts/test-history-capacity.ts",
     "scripts/audit-history-export-memory.ts",

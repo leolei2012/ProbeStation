@@ -1,3 +1,4 @@
+import { DraftNavigation, type DraftRange, type DraftRegistration } from './draft-navigation'
 import { RecordingIntervalNotice } from './RecordingIntervalNotice'
 import { PersistenceStatus } from './PersistenceStatus'
 import { RetentionSummary } from './RetentionSummary'
@@ -472,10 +473,20 @@ export default function App() {
   const [view, setView] = useState<'monitor' | 'database'>('monitor')
   const [dataTarget, setDataTarget] = useState<DataTarget | null>(null)
   const navigationSequence = useRef(0)
-  const navigateData = (target: DataTarget) => { setSelectedId(target.deviceId); setView('monitor'); setDataTarget({ ...target, token: ++navigationSequence.current }) }
+  const draftNavigation = useMemo(() => new DraftNavigation(), [])
+  const navigateData = (target: DataTarget) => { if (!canNavigate('monitor', target.deviceId, target.view)) return; setSelectedId(target.deviceId); setView('monitor'); setDataTarget({ ...target, token: ++navigationSequence.current }) }
 
   const t: T = useCallback((key: string) => I18N[lang][key] ?? key, [lang])
   const operation = useOperation(t)
+  const confirmDraftLeave = (ownerId: number | null, range: DraftRange) => draftNavigation.allow(ownerId, range,
+    () => window.confirm(lang === 'en' ? 'Leaving discards local editor changes. Continue? Cancel keeps editing. Nothing is saved or retried automatically.' : '离开将丢弃编辑器中的本地修改。确定继续？选择取消可继续编辑，不会自动保存或重试。'),
+    () => operation.setNotice({ error: true, text: lang === 'en' ? 'The affected editor is saving or its state is unverified. Wait before leaving; no save is interrupted or retried.' : '将离开的编辑器正在保存或状态待核实，请等待完成；不会中断或重试保存。' }))
+  const canNavigate = (nextView: 'monitor' | 'database', nextDeviceId = selectedId, targetView?: DataTarget['view']) => {
+    if (view !== 'monitor' || !devices.some(device => device.id === selectedId)) return true
+    const range = nextView !== 'monitor' || nextDeviceId !== selectedId ? 'all' : targetView === 'history' || targetView === 'diagnostics' && devices.find(device => device.id === nextDeviceId)?.mode !== 'slave' ? 'live' : null
+    return range === null || confirmDraftLeave(selectedId, range)
+  }
+
   const [deviceLoadError, setDeviceLoadError] = useState<ConfigReadFailure | null>(null)
   const [groupLoadError, setGroupLoadError] = useState<ConfigReadFailure | null>(null)
   const deviceRead = useRef<LatestConfigRead>()
@@ -725,7 +736,7 @@ export default function App() {
                   }}
                   onPointerCancel={() => { setDraggedDevice(null); setDropTarget(null) }}
                   onLostPointerCapture={() => { setDraggedDevice(null); setDropTarget(null) }}>⠿</span>}
-                <button className="device-select" aria-current={selectedId === d.id ? 'page' : undefined} onClick={() => { setDataTarget(null); setSelectedId(d.id); setView('monitor'); if (window.innerWidth <= 768) setCollapsed(true) }}>
+                <button className="device-select" aria-current={selectedId === d.id ? 'page' : undefined} onClick={() => { if (!canNavigate('monitor', d.id)) return; setDataTarget(null); setSelectedId(d.id); setView('monitor'); if (window.innerWidth <= 768) setCollapsed(true) }}>
                   <span className={'device-dot' + (realtime.status === 'connected' && deviceConnected[d.id] === true ? ' on' : '')} title={realtime.status !== 'connected' || deviceConnected[d.id] === undefined ? t('connectionUnverified') : undefined} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="device-name">{d.name}</div>
@@ -757,11 +768,11 @@ export default function App() {
 
         <ConfigLoadNotice deviceError={deviceLoadError} groupError={groupLoadError} english={lang === 'en'} onRetry={() => { refreshDevices(); if (selectedId != null) refreshRegisters(selectedId) }} />
         <DeviceIssues onNavigate={navigateData} english={lang === 'en'} />
-        <GlobalTabBar t={t} view={view} onChange={next => { if (next === 'database') setDataTarget(null); setView(next) }} />
+        <GlobalTabBar t={t} view={view} onChange={next => { if (!canNavigate(next)) return; if (next === 'database') setDataTarget(null); setView(next) }} />
         {view === 'database'
           ? <DatabaseView t={t} devices={devices} />
           : (selected
-              ? <DeviceView onNavigate={navigateData} configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={realtime.status === 'connected' ? deviceConnected[selected.id] : undefined} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+              ? <DeviceView drafts={draftNavigation} onLeaveDrafts={range => confirmDraftLeave(selected.id, range)} onNavigate={navigateData} configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={realtime.status === 'connected' ? deviceConnected[selected.id] : undefined} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
               : <EmptyState t={t} onAdd={() => setShowAdd(true)} />)}
       </main>
 
@@ -856,13 +867,15 @@ function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
   )
 }
 
-function DeviceView({ onNavigate, configurationReady, target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
+function DeviceView({ drafts, onLeaveDrafts, onNavigate, configurationReady, target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
   configurationReady: boolean; target: DataTarget | null; t: T; device: Device; connected: boolean | undefined; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
+  drafts?: DraftNavigation; onLeaveDrafts?: (range: DraftRange) => boolean
   onNavigate: (target: DataTarget) => void
   realtime: { status: RealtimeStatus; attempt: number }
   fallbackOk?: boolean
   busy: boolean; onToggle: (id: number) => void; onEdit: (id: number, fields: DeviceFields, expected: DeviceEditBaseline) => Promise<void>; onDelete: (id: number) => void; onRefresh: (id: number) => void
 }) {
+  const draftScope = useMemo(() => drafts?.scope(device.id), [drafts, device.id])
   const [tab, setTab] = useState(0)
   const queryMemory = useRef<HistoryQueryMemory>()
   if (!queryMemory.current) queryMemory.current = new HistoryQueryMemory(device.id)
@@ -899,15 +912,15 @@ function DeviceView({ onNavigate, configurationReady, target, t, device, connect
       </div>
       {device.mode === 'slave' && <DeviceSlaveStatus deviceId={device.id} />}
       <RecordingIntervalNotice deviceId={device.id} />
-      <TabBar tabs={[{ id: 0, label: t('tabLive') }, { id: 1, label: t('liveCurve') }, { id: 2, label: t('tabHistory') }, ...(device.mode === 'slave' ? [] : [{ id: 3, label: t('tabRaw') }, { id: 4, label: t('tabFirmware') }]), { id: 5, label: t('pointCheckTab') }]} active={tab} onChange={next => { if (next !== 2) historyNavigation.current!.cancelPending(); setTab(next) }} />
+      <TabBar tabs={[{ id: 0, label: t('tabLive') }, { id: 1, label: t('liveCurve') }, { id: 2, label: t('tabHistory') }, ...(device.mode === 'slave' ? [] : [{ id: 3, label: t('tabRaw') }, { id: 4, label: t('tabFirmware') }]), { id: 5, label: t('pointCheckTab') }]} active={tab} onChange={next => { if (tab === 0 && next !== 0 && onLeaveDrafts?.('live') === false) return; if (next !== 2) historyNavigation.current!.cancelPending(); setTab(next) }} />
       <AlarmPanel configurationReady={configurationReady} onHistory={onNavigate} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
-      {tab === 0 && <LiveTable t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
+      {tab === 0 && <LiveTable draftScope={draftScope} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
       {tab === 2 && <HistoryView navigation={historyNavigation.current} memory={queryMemory.current} configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
       {tab === 5 && (configurationReady ? <DeferredPointDiagnostics onClose={() => setTab(0)} key={pointCheckContext} deviceId={device.id} points={registers} groups={groups} pointLabels={pointCheckLabels} fetcher={fetchPointDiagnostics} english={t('cancel') === 'Cancel'} /> : <p role="status">{t('pointCheckWaiting')}</p>)}
       <div hidden={tab !== 1}><LiveCurve active={tab === 1} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} threshold={threshold} /></div>
-      {showEdit && <DeviceModal t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f, expected) => { if (!expected) throw new Error(t('operationFailed')); await onEdit(device.id, f, expected); setShowEdit(false) }} />}
+      {showEdit && <DeviceModal draftScope={draftScope} t={t} initial={device} onClose={() => setShowEdit(false)} onSave={async (f, expected) => { if (!expected) throw new Error(t('operationFailed')); await onEdit(device.id, f, expected); setShowEdit(false) }} />}
     </div>
   )
 }
@@ -922,8 +935,8 @@ function TabBar({ tabs, active, onChange }: { tabs: { id: number; label: string 
   )
 }
 
-function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onRefresh }: {
-  t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; now: number; threshold: number; onRefresh: () => void
+function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, threshold, onRefresh }: {
+  draftScope?: DraftRegistration; t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; now: number; threshold: number; onRefresh: () => void
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
@@ -1067,7 +1080,7 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
       {modal && <GroupModal t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={warnings => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') }) }} get={(url, signal) => request(url, { signal })} put={api.put} create={api.post} />}
       {alarmReg && <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} point={alarmReg} onClose={() => setAlarmReg(null)} />}
-      {settingsReg && <PointSettingsEditor guarded name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} typeGroups={TYPE_GROUPS} available={(() => { const group = groups.find(g => g.id === settingsReg.groupId); return group ? group.startAddress + group.quantity - settingsReg.startAddress : 0 })()} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
+      {settingsReg && <PointSettingsEditor draftScope={draftScope} guarded name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} typeGroups={TYPE_GROUPS} available={(() => { const group = groups.find(g => g.id === settingsReg.groupId); return group ? group.startAddress + group.quantity - settingsReg.startAddress : 0 })()} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
         const warnings = await saveGuardedPointSettings(settingsReg.editBaseline, fields, api.put)
         onRefresh(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') })
       }} />}
