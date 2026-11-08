@@ -6,6 +6,7 @@ import { hookDriver } from './component-hook-driver.ts'
 import { withDraftDialogFocus } from './dialog-focus-hook.ts'
 import { DraftNavigation, type DraftRegistration } from '../../apps/web/src/draft-navigation.ts'
 import { LatestConfigRead, type ConfigReadFailure } from '../../apps/web/src/config-read.ts'
+import { configurationWriteBlocked } from '../../apps/web/src/configuration-write-outcome.ts'
 import { ActivationUncertainError } from '../../apps/web/src/activation-settings-save.ts'
 import { DetachedEditorNotice, ConfigurationSaveHint } from '../../apps/web/src/RetainedDraftNotice.tsx'
 import { bindBeforeUnload } from '../../apps/web/src/before-unload.ts'
@@ -103,7 +104,7 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
     },
     cancelRefresh() { read.cancel() },
     deleteDevice(id: number, send: (url: string) => Promise<unknown>, refresh: () => void = () => {}) {
-      return evaluate(variable('deleteDevice'), { ...setters, devices, selectedId, selectedIdRef: { get current() { return selectedId } }, draftNavigation: drafts, setRetainedDrafts, window, t, lang: options.english ? 'en' : 'zh', operation, api: { del: send }, refreshDevices: refresh })(id) as Promise<void>
+      return evaluate(variable('deleteDevice'), { ...setters, devices, selectedId, selectedIdRef: { get current() { return selectedId } }, draftNavigation: drafts, setRetainedDrafts, window, t, lang: options.english ? 'en' : 'zh', operation, configurationWriteBlocked, api: { del: send }, refreshDevices: refresh })(id) as Promise<void>
     },
     retentionNotice() {
       const notice = find(app, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'RetainedDraftNotice')!

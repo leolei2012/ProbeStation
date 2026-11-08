@@ -16,6 +16,9 @@ export async function uploadPointBook(objectId: number, file: Blob, fetcher: typ
   const response = await fetcher('/api/monitor_objects/' + objectId + '/points/book', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file })
   if (!response.ok) {
     const data = await response.json().catch(() => null)
+    if (response.status === 503 && data?.version === 1 && data.code === 'CONFIG_WRITE_NOT_STARTED' && data.outcome === 'not-applied') {
+      try { const report = parsePointBookReport(data.report); if (report.groups === 0 && report.registers === 0 && report.errors.length > 0) return report } catch { /* An incomplete or contradictory receipt stays uncertain. */ }
+    }
     const detail = typeof data?.error === 'string' ? data.error : typeof data?.message === 'string' ? data.message : ''
     throw new Error(`HTTP ${response.status}${detail ? ': ' + detail.slice(0, 1000) : ''}`)
   }

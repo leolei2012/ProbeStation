@@ -143,7 +143,11 @@ export function apply(ctx: Context, config: Config): void {
       // 编辑参数后重建对应监听或连接
       return updated
     })
-    fastify.delete('/api/monitor_objects/:id', async (req: any) => { cfg.deleteObject(Number((req.params as any).id)); await ctx.get('deviceSlaves', false)?.sync(); return { ok: true } })
+    fastify.delete('/api/monitor_objects/:id', async (req: any, reply: any) => {
+      const state = cfg.getConfigurationReadinessStatus?.()
+      if (state?.version === 1 && state.phase === 'quarantined' && state.failure === 'connection-quarantined') return reply.code(503).send({ error: '配置连接已隔离，本次删除未执行。请管理员核查并恢复，先前请求结果仍须单独核实；勿自动重删。', version: 1, code: 'CONFIG_WRITE_NOT_STARTED', outcome: 'not-applied' })
+      cfg.deleteObject(Number((req.params as any).id)); await ctx.get('deviceSlaves', false)?.sync(); return { ok: true }
+    })
     fastify.post('/api/monitor_objects/:id/toggle', async (req: any) => { const result = cfg.toggleObject(Number(req.params.id)); await ctx.get('deviceSlaves', false)?.sync(); return result })
     fastify.get('/api/monitor_objects/:id/slave', async (req: any) => {
       if (!ctx.get('deviceSlaves', false)) throw Object.assign(new Error('从站服务未启用'), { statusCode: 503 })
@@ -213,6 +217,11 @@ export function apply(ctx: Context, config: Config): void {
     fastify.post('/api/monitor_objects/:id/points/book', async (req: any, reply: any) => {
       const id = Number((req.params as any).id)
       if (!Buffer.isBuffer(req.body)) return reply.code(400).send({ error: 'expected xlsx binary body' })
+      const state = cfg.getConfigurationReadinessStatus?.()
+      if (state?.version === 1 && state.phase === 'quarantined' && state.failure === 'connection-quarantined') {
+        const error = '配置连接已隔离，本次导入未执行。请管理员核查并恢复，先前请求结果仍须单独核实；勿重复导入。'
+        return reply.code(503).send({ error, version: 1, code: 'CONFIG_WRITE_NOT_STARTED', outcome: 'not-applied', report: { groups: 0, registers: 0, errors: [error], warnings: [] } })
+      }
       const res = await sink.importPointBook(id, req.body, true)
       return res
     })

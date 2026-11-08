@@ -16,6 +16,7 @@ tests.push('config-quarantine')
 tests.push('core-readiness')
 tests.push('device-write-quarantine')
 tests.push('config-write-entrypoints')
+tests.push('destructive-write-outcomes')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {
