@@ -17,6 +17,7 @@ export function captureActivation(device: unknown, group?: unknown): ActivationS
 export function parseActivationSnapshot(value: unknown, kind: ActivationKind): ActivationSnapshot {
   if (kind !== 'device' && kind !== 'group') return invalid()
   const raw = object(value)
+  if (kind === 'group' && raw.group === undefined) return invalid()
   if (Object.keys(raw).some(key => !['device', 'group', 'isActive'].includes(key))) return invalid()
   const snapshot = kind === 'device' ? raw.group === null ? captureActivation({ ...object(raw.device), isActive: raw.isActive }) : invalid() : captureActivation(raw.device, raw.group)
   if (snapshot.isActive !== flag(raw.isActive)) return invalid()
