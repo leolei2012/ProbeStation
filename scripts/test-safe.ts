@@ -13,6 +13,7 @@ tests.push('config-notification')
 tests.push('config-delete')
 tests.push('delete-composition')
 tests.push('config-quarantine')
+tests.push('core-readiness')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {

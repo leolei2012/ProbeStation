@@ -1,5 +1,7 @@
 # @probebench/config
 
+新增只读`getConfigurationReadinessStatus()`，返回冻结的版本1本地状态：ready/null、quarantined/connection-quarantined或unavailable/lifecycle-unavailable；不做SQL、不解除隔离、不包含路径或cause。终止close及失败恢复不报告ready，显式成功reopen后恢复原可用状态。API新增/ready/core组合检查此状态与采样存储，原/ready仍只检查存储，详见[探针范围与兼容](../../docs/develop/131-配置与采样存储组合就绪探针.md)。状态不是下一次SQL成功或设备在线保证。
+
 运行期自管事务或保存点恢复未确认时，当前连接会隔离：所有通过原私有db入口的数据库读写拒绝，后续错误code=`CONFIG_TRANSACTION_UNCONFIRMED`、statusCode=503、cause保留首次错误；原操作仍保留原始及回滚异常。已有受保护路由可按原规则转译错误，不保证统一HTTP状态。仅显式reopen关闭旧连接并成功初始化新连接后解禁；失败重开、原生句柄手工ROLLBACK或正常通知失败不解禁/不误触发，close仍可终止释放。纯内存清理可继续，不自动重试/重连/重放事件。详细契约、14项隔离回归及RTU模拟接入见[配置事务隔离](../../docs/develop/130-配置连接事务未确认隔离与显式恢复.md)。现有/ready仅测样本存储，不是配置可用性证明。
 
 新增终止性`close():Promise<void>`，等待按资源身份绑定的消费者（含存储）清理后，再撤销快照/录制租约并关闭SQLite；重复调用共享同一成功或失败Promise，失败时仍尝试关闭，不吞原错误。初始化schema失败也尝试释放刚打开的连接，多处错误保留在AggregateError.errors。close后不能reopen该对象，不改变库schema。插件会自动登记退出依赖；独立new对象及自定义消费者须显式管理关闭顺序。主入口退出信号尚未接入，见[契约与隔离验收](../../docs/develop/87-存储与配置资源有序关闭.md)。

@@ -49,6 +49,10 @@ export interface RuleRecord { id: number; registerId: number; operator: string; 
 export interface LogRecord { id: number; ts: string; level: string | null; source: string | null; message: string | null }
 export interface FirmwareRecord { id: number; name: string; version: string | null; size: number; crc32: number; filePath: string | null; createdAt: string | null }
 export interface PointBookImportReport { groups: number; registers: number; errors: string[]; warnings: string[] }
+/** Known local lifecycle/quarantine state only; no SQL probe or guarantee about a future operation. */
+export type ConfigurationReadinessStatus = Readonly<{ version: 1; phase: 'ready'; failure: null }>
+  | Readonly<{ version: 1; phase: 'quarantined'; failure: 'connection-quarantined' }>
+  | Readonly<{ version: 1; phase: 'unavailable'; failure: 'lifecycle-unavailable' }>
 
 const OBJECT_SELECT = 'SELECT id, name, ip, port, mode, is_active AS isActive, transport, serial_path AS serialPath, baud_rate AS baudRate, parity, stop_bits AS stopBits, data_bits AS dataBits, flow_control AS flowControl, slave_id AS slaveId, poll_interval_ms AS pollIntervalMs, timeout_ms AS timeoutMs, data_retain_seconds AS dataRetainSeconds FROM monitor_objects'
 const GROUP_SELECT = 'SELECT id, object_id AS objectId, name, slave_id AS slaveId, function_code AS functionCode, start_address AS startAddress, quantity, mode, is_active AS isActive FROM register_groups'
@@ -85,6 +89,12 @@ export class ConfigStore {
   private dbPath: string
   private closing = false
   private closeTask: Promise<void> | undefined
+  getConfigurationReadinessStatus(): ConfigurationReadinessStatus {
+    if (this.closing) return Object.freeze({ version: 1, phase: 'unavailable', failure: 'lifecycle-unavailable' })
+    if (this.recoveryFailure) return Object.freeze({ version: 1, phase: 'quarantined', failure: 'connection-quarantined' })
+    if (!this.connection.isOpen) return Object.freeze({ version: 1, phase: 'unavailable', failure: 'lifecycle-unavailable' })
+    return Object.freeze({ version: 1, phase: 'ready', failure: null })
+  }
   /** Wait for owned consumers before releasing SQLite; repeated callers share success or failure. */
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask

@@ -2,7 +2,9 @@
 
 API退出现在同时登记到配置/存储资源的显式消费者关系，数据库关闭会等待HTTP清理完成，不依赖Cordis并发disposables的执行顺序。采样存储关闭中按现有协议available=false，/ready503，活动/health响应不变；关闭不是自动修库或成功落盘保证，见[资源关闭契约](../../docs/develop/87-存储与配置资源有序关闭.md)。
 
-新增`GET /ready`，只检查全服务采样存储元数据：`{version:1,status:'ready'|'not-ready',scope:'sample-storage',storage:{phase,failure}}`，只有已核实ready且failure=null为200，其余503；Cache-Control:no-store。不做SQL、flush、cleanup、重开或重试，不代表设备在线、历史完整或所有队列已落盘。原`/health`仍200及`{status:'ok',version:'0.1.0'}`，仅表示HTTP存活；发布/流量门禁需显式改用/ready，不能回退到/health判成功。详见[契约和降级边界](../../docs/develop/84-存活与采样存储就绪检查.md)。
+新增`GET /ready`，只检查全服务采样存储元数据：`{version:1,status:'ready'|'not-ready',scope:'sample-storage',storage:{phase,failure}}`，只有已核实ready且failure=null为200，其余503；Cache-Control:no-store。不做SQL、flush、cleanup、重开或重试，不代表设备在线、历史完整或所有队列已落盘。原`/health`仍200及`{status:'ok',version:'0.1.0'}`，仅表示HTTP存活；只检查存储的门禁用/ready，同时检查配置连接用下述/ready/core，不能回退到/health判成功。详见[原契约和降级边界](../../docs/develop/84-存活与采样存储就绪检查.md)。
+
+新增`GET /ready/core`独立组合探针，响应`{version:1,status,scope:'configuration-and-sample-storage',storage:{phase,failure},configuration:{phase,failure}}`；两项均可核实ready才200，否则503，Cache-Control:no-store。配置隔离/关闭/缺状态/未知不放行，不执行SQL、flush、恢复或重试。原/ready及两参数registerReadiness调用保持兼容，缺第三配置提供者时新/core始终非就绪。监控应验证新scope及两项状态，不回退到窄探针；设备/串口/从站/模型等未检查。详见[组合探针契约](../../docs/develop/131-配置与采样存储组合就绪探针.md)。
 
 关闭阶段的已进入请求，`/ready`返回503、`storage={phase:'unavailable',failure:'unavailable'}`；Cordis API/依赖卸载会关闭该Fastify实例，终止保留的WebSocket并清理扫描定时器，完成后新请求连接失败或inject拒绝也不能判成功。异步装配失败会立即清理扫描定时器并保留原初始化错误，整体资源仍由调用方卸载上下文。依赖恢复创建新 API 实例，不会复活旧实例。活动服务的`/health`旧响应未变，存储就绪不包含从站监听；见[监控规则](../../docs/develop/85-就绪关闭边界与监控复核.md)和[退出清理限制](../../docs/develop/86-API退出清理与剩余资源审计.md)。
 

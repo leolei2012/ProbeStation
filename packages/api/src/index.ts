@@ -86,7 +86,8 @@ export function apply(ctx: Context, config: Config): void {
     await fastify.register(compress, { global: true }) // gzip/brotli 压缩响应（静态资源 + API）
 
     fastify.get('/health', async () => ({ status: 'ok', version: '0.1.0' }))
-    registerReadiness(fastify, () => !disposed && typeof store?.getSamplePersistenceStatus === 'function' ? store : undefined)
+    registerReadiness(fastify, () => !disposed && typeof store?.getSamplePersistenceStatus === 'function' ? store : undefined,
+      () => !disposed && typeof cfg?.getConfigurationReadinessStatus === 'function' ? cfg : undefined)
     registerRecordingAttention(fastify, () => ctx.get('mcp', false) as any)
     registerPersistenceStatus(fastify, () => typeof store?.getSamplePersistenceStatus === 'function' ? store : undefined)
     registerSerialPorts(fastify)
