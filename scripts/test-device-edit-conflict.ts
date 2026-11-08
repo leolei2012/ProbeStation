@@ -102,6 +102,32 @@ try {
   await assert.rejects(saveGuardedDeviceSettings(capture(), { name: 'x' }, async () => { requests++; throw new Error('HTTP 404 old server') }), /HTTP 404/)
   assert.equal(requests, 2, 'no fallback or retry')
   for (const result of [null, {}, { device: cfg.getObject(device.id), warnings: 'bad' }, { device: { ...cfg.getObject(device.id), id: 999 }, warnings: [] }, { device: cfg.getObject(device.id), warnings: [] }]) await assert.rejects(saveGuardedDeviceSettings(capture(), { name: 'not yet saved' }, async () => result), /结果待核实/)
+  // The server committed; the client loses the response. This must not look like a definite failed write.
+  const lostExpected = capture(), lostChanges = { name: 'committed response lost' }
+  let lostRequests = 0; count = events; hooks = calls.length
+  await assert.rejects(saveGuardedDeviceSettings(lostExpected, lostChanges, async (url, body) => {
+    lostRequests++; const result = await app.inject({ method: 'PUT', url, payload: body as any })
+    assert.equal(result.statusCode, 200); throw new TypeError('Failed to fetch')
+  }), /保存结果待核实.*核对设备配置.*勿自动重复保存/)
+  assert.equal(lostRequests, 1); assert.equal(cfg.getObject(device.id)!.name, lostChanges.name)
+  assert.equal(events, count + 1); assert.deepEqual(calls.slice(hooks), ['reconnect:' + device.id, 'sync'])
+  const lostGraph = snapshot(); count = events; hooks = calls.length
+  const retry = await send(lostExpected, lostChanges)
+  assert.equal(retry.statusCode, 409, 'an explicit stale retry must still conflict, never switch to an unguarded write')
+  assert.equal(snapshot(), lostGraph); assert.equal(events, count); assert.equal(calls.length, hooks)
+  for (const error of [new Error('HTTP 500 unknown'), new Error('HTTP 502 gateway'), new SyntaxError('JSON response lost'), new Error('AbortError'), null, 'transport failed']) {
+    let attempts = 0
+    await assert.rejects(saveGuardedDeviceSettings(capture(), { name: 'unknown' }, async () => { attempts++; throw error }), /保存结果待核实.*勿自动重复保存/)
+    assert.equal(attempts, 1); assert.equal(snapshot(), lostGraph)
+  }
+  for (const status of [400, 403, 404, 409, 413, 415]) {
+    const rejected = new Error('HTTP ' + status + ' synthetic rejection'); let attempts = 0
+    await assert.rejects(saveGuardedDeviceSettings(capture(), { name: 'rejected' }, async () => { attempts++; throw rejected }), error => error === rejected)
+    assert.equal(attempts, 1)
+  }
+  let invalidRequests = 0
+  await assert.rejects(saveGuardedDeviceSettings(capture(), { name: ' ' }, async () => { invalidRequests++; return null }), error => (error as any).statusCode === 400)
+  assert.equal(invalidRequests, 0, 'local validation stays outside uncertain transport handling')
   const deleted = capture(); cfg.deleteObject(device.id); hooks = calls.length
   assert.equal((await send(deleted, { name: 'deleted' })).statusCode, 404); assert.equal(calls.length, hooks)
 } finally { await app.close(); (cfg as any).db.close() }
@@ -131,4 +157,4 @@ assert.match(render(sample), /&lt;synthetic device&gt;/); assert.doesNotMatch(re
 assert.match(render({ ...sample, transport: 'rtu', serialPath: 'SYNTHETIC_ONLY' }), /SYNTHETIC_ONLY/)
 assert.match(render({ ...sample, timeoutMs: undefined }), /设备配置不完整/)
 assert.equal(rendersSaved, 0); assert.equal(portsFetched, 0, 'SSR does not enumerate or open serial ports')
-console.log('DEVICE EDIT CONFLICT OK: stale connection rejection, frozen editor fields, independent activation/retention, children preserved, strict request and existing slave constraints, rollback/notification and mock-runtime warnings, no fallback/readback validation, dual-connection lock and production modal SSR; memory/isolated temp only, no DOM automation or real runtime hooks')
+console.log('DEVICE EDIT CONFLICT OK: stale connection rejection, frozen editor fields, independent activation/retention, children preserved, strict request and existing slave constraints, rollback/notification and mock-runtime warnings, committed response loss/unknown transport stays unverified with no retry, known rejection/local validation preserved, no fallback/readback validation, dual-connection lock and production modal SSR; memory/isolated temp only, no DOM automation or real runtime hooks')

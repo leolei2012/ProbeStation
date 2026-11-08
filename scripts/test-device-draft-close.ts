@@ -8,6 +8,10 @@ import { captureDeviceEditBaseline } from '../packages/core/src/device-settings-
 import { deviceDraftFields, deviceDraftChanged } from '../apps/web/src/device-draft-close.ts'
 import { PointDraftCloseGuard } from '../apps/web/src/point-draft-close.ts'
 import { PointDraftDiscard } from '../apps/web/src/PointDraftDiscard.tsx'
+import Fastify from 'fastify'
+import { ConfigStore } from '../packages/config/src/index.ts'
+import { registerDeviceSettings } from '../packages/api/src/device-settings.ts'
+import { saveGuardedDeviceSettings } from '../apps/web/src/device-settings-save.ts'
 
 const sample = { id: 1, name: 'synthetic', mode: 'master', ip: 'mock.invalid', port: 502, transport: 'tcp', serialPath: 'MOCK_PORT', baudRate: 9600, parity: 'even', stopBits: 1, dataBits: 8, flowControl: 'none', slaveId: 1, pollIntervalMs: 1000, timeoutMs: 3000 }
 const t = (key: string) => ({ cancel: '取消', name: '名称', ip: '地址', port: '端口', baudRate: '波特率', save: '保存', add: '新增', working: '处理中' }[key] ?? key)
@@ -85,6 +89,36 @@ busy.cancel(); assert(busy.prompt()); busy.discard(); assert.equal(busy.closes, 
 let parentClosed = 0
 const saved = driver(sample, async () => { parentClosed++ }); saved.set('名称', 'save normally'); saved.submit(); await tick(); saved.render(); assert.equal(parentClosed, 1); assert.equal(saved.closes, 0, 'successful onSave retains existing parent-owned close behavior'); assert(!saved.prompt())
 
+// Actual modal -> actual guarded helper -> actual API -> memory SQLite; only the response is lost.
+const cfg = new ConfigStore({ dbPath: ':memory:' }), app = Fastify(); let runtimeCalls = 0
+registerDeviceSettings(app, cfg, { async reconnect() { runtimeCalls++ }, async syncSlaves() { runtimeCalls++ } })
+try {
+  const device = cfg.createObject('response-loss form', 'mock.invalid', 502)
+  let requests = 0, successfulSaves = 0, settle!: () => void
+  let settled = new Promise<void>(resolve => { settle = resolve })
+  const lost = driver(cfg.getObject(device.id), async (fields, expected) => {
+    try {
+      await saveGuardedDeviceSettings(expected, fields, async (url, body) => {
+        requests++; const response = await app.inject({ method: 'PUT', url, payload: body as any })
+        if (response.statusCode !== 200) throw new Error('HTTP ' + response.statusCode + ': ' + response.body)
+        throw new TypeError('Failed to fetch')
+      })
+      successfulSaves++
+    } finally { settle() }
+  })
+  lost.set('名称', 'form committed response lost'); lost.submit(); lost.submit(); await settled; await tick(); lost.render()
+  assert.equal(requests, 1); assert.equal(lost.saves, 1); assert.equal(runtimeCalls, 2)
+  assert.equal(cfg.getObject(device.id)!.name, 'form committed response lost')
+  assert.equal(lost.value('名称'), 'form committed response lost'); assert.equal(lost.closes, 0); assert.equal(successfulSaves, 0)
+  const alert = () => elements(lost.tree).find(node => node.props.role === 'alert')?.props.children
+  assert.match(alert(), /保存结果待核实.*核对设备配置.*勿自动重复保存/)
+  await tick(); assert.equal(requests, 1, 'rendering and waiting never retry or read back to claim success')
+  settled = new Promise<void>(resolve => { settle = resolve }); lost.submit(); await settled; await tick(); lost.render()
+  assert.equal(requests, 2); assert.equal(runtimeCalls, 2, 'explicit stale retry is rejected before runtime hooks')
+  assert.match(alert(), /HTTP 409/); assert.equal(successfulSaves, 0); assert.equal(lost.closes, 0)
+  lost.cancel(); assert(lost.prompt()); lost.discard(); assert.equal(lost.closes, 1); assert.equal(requests, 2, 'discard cannot retry or undo an already-committed save')
+} finally { await app.close(); (cfg as any).db.close() }
+
 let callbacks = 0
 for (const initial of [null, sample, { ...sample, transport: 'rtu' }]) {
   const html = renderToStaticMarkup(createElement(DeviceModal, { initial, t, onClose() { callbacks++ }, async onSave() { callbacks++ }, portFetcher: async () => { callbacks++; throw new Error('SSR must not enumerate') } }))
@@ -96,4 +130,4 @@ for (const english of [false, true]) {
   const html = renderToStaticMarkup(createElement(PointDraftDiscard, { label, english, busy: false, onResume() {}, onDiscard() {} }))
   assert(html.includes(label)); assert(html.includes(english ? 'Continue editing' : '继续编辑')); assert(!html.includes('Point draft close confirmation'))
 }
-console.log('DEVICE DRAFT CLOSE OK: actual component/event driver, dirty close/cancel/Escape/IME/resume/discard, clean/revert/new/invalid/RTU inputs, stable opening, no-save while confirming/busy, failed save preservation and unchanged parent close/save payload; pure SSR; no DOM automation, network, database, enumeration or hardware')
+console.log('DEVICE DRAFT CLOSE OK: actual component/event driver, dirty close/cancel/Escape/IME/resume/discard, clean/revert/new/invalid/RTU inputs, stable opening, no-save while confirming/busy, failed save preservation and unchanged parent close/save payload; actual guarded API/memory DB committed response loss -> uncertain alert/draft/no retry, explicit stale retry conflict and discard without undo; pure SSR, no DOM automation, network, enumeration or real runtime/hardware')
