@@ -119,6 +119,65 @@ try {
   lost.cancel(); assert(lost.prompt()); lost.discard(); assert.equal(lost.closes, 1); assert.equal(requests, 2, 'discard cannot retry or undo an already-committed save')
 } finally { await app.close(); (cfg as any).db.close() }
 
+// Production App creation callback -> actual POST, with the component retaining a new-device draft.
+const appSource = ts.createSourceFile('App.tsx', readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+const appComponent = appSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'App') as ts.FunctionDeclaration
+const createDeclaration = appComponent.body!.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations]).find(node => node.name.getText(appSource) === 'addDevice')!
+const createCode = ts.transpileModule('return (' + (createDeclaration.initializer as ts.CallExpression).arguments[0].getText(appSource) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
+const apiSource = ts.createSourceFile('api.ts', readFileSync(new URL('../packages/api/src/index.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true)
+let createRoute: ts.CallExpression | undefined
+const visit = (node: ts.Node) => { if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'post' && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === '/api/monitor_objects') createRoute = node; ts.forEachChild(node, visit) }; visit(apiSource); assert(createRoute)
+let failCreateNotify = false
+const createCfg = new ConfigStore({ dbPath: ':memory:' }, () => { if (failCreateNotify) throw new Error('synthetic creation notify failure') }), createApp = Fastify()
+let loseResponse = true, failSync = false, createRequests = 0, createRefreshes = 0, createClosed = 0, syncCalls = 0
+const createNotices: any[] = []
+new Function('fastify', 'cfg', 'ctx', ts.transpileModule(createRoute.getText(apiSource), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(createApp, createCfg, { get(name: string) { assert.equal(name, 'deviceSlaves'); return { async sync() { syncCalls++; if (failSync) throw new Error('synthetic sync failure') } } } })
+const createEnv = { api: { async post(url: string, body: any) {
+  createRequests++; const response = await createApp.inject({ method: 'POST', url, payload: body })
+  if (response.statusCode !== 200) throw new Error('HTTP ' + response.statusCode + ' ' + response.body)
+  if (loseResponse) throw new TypeError('Failed to fetch')
+  return response.json()
+} }, setShowAdd(value: boolean) { assert.equal(value, false); createClosed++ }, refreshDevices() { createRefreshes++ }, operation: { setNotice(value: any) { createNotices.push(value) } }, t }
+const addDevice = new Function(...Object.keys(createEnv), createCode)(...Object.values(createEnv))
+try {
+  let finish!: () => void, submitted: any; const complete = new Promise<void>(resolve => { finish = resolve })
+  const lost = driver(null, async fields => { submitted = fields; try { await addDevice(fields) } finally { finish() } })
+  lost.set('名称', 'new device response lost'); lost.set('地址', 'mock.invalid'); lost.submit(); lost.submit(); await complete; await tick(); lost.render()
+  assert.equal(createRequests, 1); assert.equal(createCfg.listObjects().length, 1); assert.equal(syncCalls, 1)
+  assert.equal(lost.value('名称'), 'new device response lost'); assert.equal(lost.value('地址'), 'mock.invalid')
+  const alert = () => elements(lost.tree).find(node => node.props.role === 'alert')?.props.children
+  assert.match(alert(), /新增设备结果待核实.*核对设备列表.*勿重复新增/)
+  assert.equal(createClosed, 0); assert.equal(createRefreshes, 0); assert.equal(createNotices.length, 0)
+  await tick(); assert.equal(createRequests, 1); lost.cancel(); assert(lost.prompt()); lost.discard(); assert.equal(lost.closes, 1); assert.equal(createRequests, 1); assert.equal(createCfg.listObjects().length, 1)
+  // Existing POST can return 500 after its INSERT when notification or slave synchronization throws.
+  loseResponse = false; failSync = true
+  await assert.rejects(addDevice({ ...submitted, name: 'committed sync failed' }), /新增设备结果待核实.*勿重复新增/)
+  assert.equal(createCfg.listObjects().length, 2); assert.equal(syncCalls, 2); failSync = false; failCreateNotify = true
+  await assert.rejects(addDevice({ ...submitted, name: 'committed notification failed' }), /新增设备结果待核实.*勿重复新增/)
+  assert.equal(createCfg.listObjects().length, 3); assert.equal(syncCalls, 2); failCreateNotify = false
+  assert.equal(createClosed, 0); assert.equal(createRefreshes, 0); assert.equal(createNotices.length, 0)
+  const beforeRejected = JSON.stringify(createCfg.listObjects())
+  await assert.rejects(addDevice({ ...submitted, mode: 'invalid' }), /HTTP 400/)
+  assert.equal(JSON.stringify(createCfg.listObjects()), beforeRejected)
+  const actualPost = createEnv.api.post
+  try {
+    for (const status of [400, 403, 404, 409, 413, 415]) {
+      const rejected = new Error('HTTP ' + status + ' synthetic rejection'); let calls = 0
+      createEnv.api.post = async () => { calls++; throw rejected }
+      await assert.rejects(addDevice(submitted), error => error === rejected); assert.equal(calls, 1)
+    }
+    for (const error of [new SyntaxError('JSON response lost'), new Error('HTTP 502 gateway'), null, 'network failure']) {
+      let calls = 0; createEnv.api.post = async () => { calls++; throw error }
+      await assert.rejects(addDevice(submitted), /新增设备结果待核实.*勿重复新增/); assert.equal(calls, 1)
+    }
+  } finally { createEnv.api.post = actualPost }
+  assert.equal(JSON.stringify(createCfg.listObjects()), beforeRejected)
+  const requestsBeforeLocal = createRequests; await addDevice({ ...submitted, name: '' }); assert.equal(createRequests, requestsBeforeLocal, 'existing local preflight remains before sending')
+  await addDevice({ ...submitted, name: 'normal RTU metadata', transport: 'rtu', serialPath: 'MOCK_ENUMERATION_ONLY', ip: '' })
+  assert.equal(createClosed, 1); assert.equal(createRefreshes, 1); assert.equal(createNotices.length, 1); assert.equal(createNotices[0].error, false)
+  assert.equal(createCfg.listObjects().length, 4); assert.equal(createCfg.listObjects()[3].serialPath, 'MOCK_ENUMERATION_ONLY')
+} finally { await createApp.close(); (createCfg as any).db.close() }
+
 let callbacks = 0
 for (const initial of [null, sample, { ...sample, transport: 'rtu' }]) {
   const html = renderToStaticMarkup(createElement(DeviceModal, { initial, t, onClose() { callbacks++ }, async onSave() { callbacks++ }, portFetcher: async () => { callbacks++; throw new Error('SSR must not enumerate') } }))
@@ -130,4 +189,4 @@ for (const english of [false, true]) {
   const html = renderToStaticMarkup(createElement(PointDraftDiscard, { label, english, busy: false, onResume() {}, onDiscard() {} }))
   assert(html.includes(label)); assert(html.includes(english ? 'Continue editing' : '继续编辑')); assert(!html.includes('Point draft close confirmation'))
 }
-console.log('DEVICE DRAFT CLOSE OK: actual component/event driver, dirty close/cancel/Escape/IME/resume/discard, clean/revert/new/invalid/RTU inputs, stable opening, no-save while confirming/busy, failed save preservation and unchanged parent close/save payload; actual guarded API/memory DB committed response loss -> uncertain alert/draft/no retry, explicit stale retry conflict and discard without undo; pure SSR, no DOM automation, network, enumeration or real runtime/hardware')
+console.log('DEVICE DRAFT CLOSE OK: actual component/event driver, dirty close/cancel/Escape/IME/resume/discard, clean/revert/new/invalid/RTU inputs, stable opening, no-save while confirming/busy, failed save preservation and unchanged parent close/save payload; guarded API response loss/stale retry, actual App create callback/actual POST/memory DB committed response loss and postinsert notification/sync 500 -> uncertain alert/draft/no success/no retry, known rejection and normal RTU metadata creation; pure SSR, no DOM automation, network, enumeration or real runtime/hardware')

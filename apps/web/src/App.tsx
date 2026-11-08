@@ -627,7 +627,11 @@ export default function App() {
 
   const addDevice = useCallback(async (f: DeviceFields) => {
     if (!f.name || (f.transport !== 'rtu' && !f.ip)) return
-    await api.post('/api/monitor_objects', f)
+    try { await api.post('/api/monitor_objects', f) }
+    catch (error) {
+      if (error instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(error.message)) throw error
+      throw new Error('新增设备结果待核实，请核对设备列表，勿重复新增。')
+    }
     setShowAdd(false); refreshDevices(); operation.setNotice({ error: false, text: t('operationOk') })
   }, [refreshDevices])
   const toggleDevice = async (id: number) => { await operation.run(async () => { await api.post('/api/monitor_objects/' + id + '/toggle'); refreshDevices() }) }
