@@ -25,6 +25,7 @@
     "packages/api/src/assistant-config-edit.ts",
     "packages/api/src/device-settings.ts",
     "packages/api/src/group-settings.ts",
+    "packages/api/src/activation-settings.ts",
     "scripts/audit-history-export-version.ts",
     "scripts/audit-export-entry.ts",
     "scripts/audit-sink-condition.ts",

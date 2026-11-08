@@ -35,6 +35,8 @@ import { GroupModal } from './GroupModal'
 import { fullGroupForEditing } from './group-settings-save'
 import type { DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { saveGuardedDeviceSettings } from './device-settings-save'
+import { captureActivation } from '../../../packages/core/src/activation-settings'
+import { ActivationUncertainError, saveActivation } from './activation-settings-save'
 import { DeviceSlaveStatus } from './DeviceSlaveStatus'
 import { CommunicationSummary } from './CommunicationSummary'
 import { RawFramesRead, clampFrameLimit } from './raw-frames-read'
@@ -353,11 +355,11 @@ function useOperation(t: T) {
   const [busy, setBusy] = useState(false)
   const locked = useRef(false)
   const setNotice = (notice: { error: boolean; text: string }) => showOperationNotice(notice, t('dismiss'))
-  const run = async (action: () => Promise<unknown>) => {
+  const run = async (action: () => Promise<unknown>, successText?: (result: unknown) => string) => {
     if (locked.current) return false
     locked.current = true; setBusy(true)
-    try { await action(); setNotice({ error: false, text: t('operationOk') }); return true }
-    catch (error) { setNotice({ error: true, text: t('operationFailed') + ': ' + (error instanceof Error ? error.message : String(error)) }); return false }
+    try { const result = await action(); setNotice({ error: false, text: successText ? successText(result) : t('operationOk') }); return true }
+    catch (error) { setNotice({ error: true, text: error instanceof ActivationUncertainError ? error.message : t('operationFailed') + ': ' + (error instanceof Error ? error.message : String(error)) }); return false }
     finally { locked.current = false; setBusy(false) }
   }
   return { busy, setNotice, run }
@@ -634,7 +636,12 @@ export default function App() {
     }
     setShowAdd(false); refreshDevices(); operation.setNotice({ error: false, text: t('operationOk') })
   }, [refreshDevices])
-  const toggleDevice = async (id: number) => { await operation.run(async () => { await api.post('/api/monitor_objects/' + id + '/toggle'); refreshDevices() }) }
+  const toggleDevice = async (id: number) => {
+    await operation.run(async () => {
+      const expected = captureActivation(devices.find(value => value.id === id))
+      return saveActivation(expected, expected.isActive ? 0 : 1, api.put, refreshDevices)
+    }, warnings => [t('operationOk'), ...warnings as readonly string[]].join(' · '))
+  }
   const editDevice = useCallback(async (id: number, f: DeviceFields, expected: DeviceEditBaseline) => {
     if (!f.name) return
     if (id !== expected.id) throw new Error(t('operationFailed'))
@@ -937,7 +944,12 @@ function LiveTable({ t, device, groups, latest, groupErrors, now, threshold, onR
     await operation.run(async () => { await api.del('/api/groups/' + id); onRefresh() })
   }
   const toggleGroupPause = async (id: number) => {
-    await operation.run(async () => { await api.post('/api/groups/' + id + '/toggle-pause'); onRefresh() })
+    await operation.run(async () => {
+      const group = groups.find(value => value.id === id)
+      if (!group) throw new Error('当前分组不可核对，请刷新配置。')
+      const expected = captureActivation(device, { ...group, objectId: device.id })
+      return saveActivation(expected, expected.isActive ? 0 : 1, api.put, onRefresh)
+    }, warnings => [t('operationOk'), ...warnings as readonly string[]].join(' · '))
   }
   const [bookResult, setBookResult] = useState<PointBookResult | null>(null)
   const bookInputRef = useRef<HTMLInputElement>(null)

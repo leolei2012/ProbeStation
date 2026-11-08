@@ -1,5 +1,7 @@
 # @probebench/api
 
+开关新增`PUT /api/monitor_objects/:id/activation`和`PUT /api/groups/:id/activation`，body为`{expected:ActivationSnapshot,isActive:0|1}`，仅允许与expected不同的显式目标。事务核对设备字段/来源及开关状态，拒绝400/404/409在写前；成功`{snapshot,warnings}`，提交后同步/通知异常为warning，未知500需核对。原POST toggle/toggle-pause及返回形状不变，新UI不回退。不是请求幂等或防ABA，字段及限制见[条件开关](../../docs/develop/82-设备与分组条件开关.md)。
+
 诊断清空新增`GET /api/monitor_objects/:id/diagnostics/cleanup-preview`（no-store）与`POST /api/monitor_objects/:id/diagnostics/cleanup`，POST仅`{token}`、16KiB，并要求x-probestation-config:1及Origin若提供需Host匹配。预览503拒绝不支持目标；POST格式400/头403/条件409，其他500表示未知。预览绑定当前连接、配置库及driver；重复已完成token仅回原结果，不再次清空。不是前缀删除，预览后新增也在确认时清空；旧frames/clear仍无条件兼容，新UI不回退。字段与剩余限制见[说明](../../docs/develop/60-通信诊断清空确认与结果隔离.md)。
 
 日志条件清理新增只读`GET /api/logs/cleanup-preview`（no-store）和`POST /api/logs/cleanup`，body为`{expected:{version:1,throughId,count,revision}}`。POST要求x-probestation-config:1，Origin若提供需Host匹配；这不是鉴权。仅删除预览截止ID范围，返回deleted/alreadyRemoved/remaining；来源/条件不符409，非法400、来源头403，错误500不冒充未执行。原/api/logs/clear保持兼容，新UI不回退，见[精确契约](../../docs/develop/55-预览范围日志清理.md)。

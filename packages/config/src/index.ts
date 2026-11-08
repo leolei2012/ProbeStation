@@ -21,6 +21,7 @@ import { RecordingIntervals, type RecordingIntervalLease, type RecordingSourceGu
 import { alarmRuleMatches, parseAlarmEdit, invalidAlarmEdit } from '../../core/src/alarm-settings-edit.ts'
 import { captureAlarmContext, alarmContextMatches, parseAlarmContext, type AlarmContext } from '../../core/src/alarm-settings-context.ts'
 import { parseLogCleanupPreview, parseLogCleanupRequest, type LogCleanupPreview, type LogCleanupResult } from '../../core/src/log-cleanup.ts'
+import { activationMatches, activationTarget, captureActivation, parseActivationRequest, type ActivationKind, type ActivationSnapshot } from '../../core/src/activation-settings.ts'
 
 export const name = 'config'
 
@@ -250,6 +251,32 @@ export class ConfigStore {
     this.db.prepare('DELETE FROM register_groups WHERE object_id = ?').run(id)
     this.db.prepare('DELETE FROM monitor_objects WHERE id = ?').run(id)
     this.notify('object', id)
+  }
+  /** Additive conditional SET; legacy inversion methods remain unchanged for existing callers. */
+  setActivation(kind: ActivationKind, id: number, request: unknown): { snapshot: ActivationSnapshot; warnings: string[] } {
+    const { expected, isActive } = parseActivationRequest(request, kind, id)
+    if (this.restoring) throw Object.assign(new Error('配置正在批量更新，请刷新后核对开关。'), { statusCode: 409 })
+    const read = () => {
+      const group = kind === 'group' ? this.getGroup(id) : undefined
+      const device = this.getObject(kind === 'device' ? id : group?.objectId ?? 0)
+      if (!device || kind === 'group' && !group) throw Object.assign(new Error('设备或分组已不存在，本次未切换。'), { statusCode: 404 })
+      return captureActivation(device, group)
+    }
+    let snapshot!: ActivationSnapshot
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      if (!activationMatches(read(), expected)) throw Object.assign(new Error('开关状态或配置来源已变化，本次未切换。请刷新核对，勿直接重复操作。'), { statusCode: 409 })
+      this.db.prepare(kind === 'device' ? 'UPDATE monitor_objects SET is_active = ? WHERE id = ?' : 'UPDATE register_groups SET is_active = ? WHERE id = ?').run(isActive, id)
+      snapshot = read()
+      if (!activationMatches(snapshot, activationTarget(expected, isActive))) throw new Error('开关写回不一致，事务中止。')
+      this.db.exec('COMMIT')
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch (rollback) { throw new AggregateError([error, rollback], '开关结果待核实，勿直接重复操作。') }
+      throw error
+    }
+    const warnings: string[] = []
+    try { this.notify(kind === 'device' ? 'object' : 'group', id) } catch { warnings.push('开关配置已保存，但变更通知失败；请核对运行状态，勿重复切换。') }
+    return { snapshot, warnings }
   }
   toggleObject(id: number): DeviceRecord | undefined {
     this.db.prepare('UPDATE monitor_objects SET is_active = 1 - is_active WHERE id = ?').run(id)

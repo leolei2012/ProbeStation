@@ -1,5 +1,7 @@
 # @probebench/config
 
+新增`setActivation(kind,id,{expected,isActive})`只SET设备/分组开关。BEGIN IMMEDIATE内核对ActivationSnapshot，写回完整条件核验后COMMIT，提交后保留原object/group通知并汇总同步抛错；失败尝试回滚，回滚未知不报成功。旧toggleObject/toggleGroup保持反转行为，无迁移或持久操作身份；边界见[条件开关](../../docs/develop/82-设备与分组条件开关.md)。
+
 `getHistoryExportConfigurationScope()`仅返回本配置实例当前打开周期的内存标识，不运行SQL或暴露路径；恢复中或导出快照状态不明时拒绝，与`getHistoryExportConfiguration`使用同一门禁。它不是内容revision，普通编辑不会变更；用于后续生命周期配对，未接入实际导出。见[工作区门禁](../../docs/develop/71-工作区导出配对生命周期保护.md)。
 
 内部新增 `getHistoryExportConfiguration(objectId)`：单次只读事务获取设备、全部分组/点位的冻结副本，返回结构版本1与本实例配置库打开周期scope。scope不随普通字段修改变化，不是内容版本或工作区/时序库租约；尚无REST入口，现有导出不调用。读取回滚不明时仅阻止此能力，成功重开后恢复，无schema迁移；见[快照契约与临时库验收](../../docs/develop/69-导出配置只读事务快照.md)。
