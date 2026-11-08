@@ -701,7 +701,10 @@ export default function App() {
         setSelectedId(current => current === id ? null : current)
         refreshDevices()
       } finally { draftNavigation.endRemoval(id); setRetainedDrafts(draftNavigation.retained()) }
-    }, undefined, error => phase === 0 || phase === 1 && error instanceof Error && (/^HTTP (400|403|404|409|413|415)\b/.test(error.message) || configurationWriteBlocked(error)) ? (error instanceof Error ? error.message : String(error)) : phase === 2 ? (lang === 'en' ? 'Deletion returned success; page refresh failed. Check the device list; do not repeat automatically.' : '删除请求返回成功，但页面未同步；请核对设备清单，勿自动重删。') : (lang === 'en' ? 'Deletion outcome unverified; it may have applied. Check capture results and configuration; do not repeat automatically.' : '删除结果待核实，可能已生效；请核对本页留存及设备配置，勿自动重删。'))
+    }, undefined, error => {
+      const reported = phase === 1 ? configurationWriteBlocked(error, false, lang === 'en') : null
+      return reported?.message ?? (phase === 0 || phase === 1 && error instanceof Error && /^HTTP (400|403|404|409|413|415)\b/.test(error.message) ? (error instanceof Error ? error.message : String(error)) : phase === 2 ? (lang === 'en' ? 'Deletion returned success; page refresh failed. Check the device list; do not repeat automatically.' : '删除请求返回成功，但页面未同步；请核对设备清单，勿自动重删。') : (lang === 'en' ? 'Deletion outcome unverified; it may have applied. Check capture results and configuration; do not repeat automatically.' : '删除结果待核实，可能已生效；请核对本页留存及设备配置，勿自动重删。'))
+    })
   }
 
   const selected = devices.find((d) => d.id === selectedId) ?? null

@@ -47,7 +47,7 @@ try {
       db.exec = sql => { if (sql === 'COMMIT') { if (acknowledged) exec(sql); throw Error('PRIVATE commit acknowledgement') }; if (sql === 'ROLLBACK') throw Error('PRIVATE rollback'); return exec(sql) }
       await edit(/保存结果待核实/); assert.equal(lastStatus, 500); assert.equal(lastBody.code, undefined); assert.equal(requests, 1); assert.equal(cfg.getConfigurationReadinessStatus().phase, 'quarantined')
       db.exec = () => assert.fail('a blocked new request must execute no SQL'); db.prepare = () => assert.fail('a blocked new request must prepare no SQL')
-      await edit(/本次保存未执行/); assert.equal(lastStatus, 503); assert.deepEqual(lastBody, { error: '配置连接已隔离，本次保存未执行。请管理员核查并恢复，勿重复保存；之前请求结果仍须单独核实。', version: 1, code: 'CONFIG_WRITE_NOT_STARTED', outcome: 'not-applied' })
+      await edit(/后台报告写入受阻.*结果待核实/); assert.equal(lastStatus, 503); assert.deepEqual(lastBody, { error: '配置连接已隔离，本次保存未执行。请管理员核查并恢复，勿重复保存；之前请求结果仍须单独核实。', version: 1, code: 'CONFIG_WRITE_NOT_STARTED', outcome: 'not-applied' })
       assert.equal(requests, 2); assert.equal(hooks, 0); assert.equal(notifications, before)
       db.exec = exec; db.prepare = prepare
       assert.equal(db.isTransaction, !acknowledged, 'the same draft may be pending or already committed despite the same unknown response')
