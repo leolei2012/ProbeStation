@@ -3,6 +3,16 @@ import { readFileSync } from 'node:fs'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
+import { diagnosePointTable } from '../packages/core/src/point-diagnostics.ts'
+import { PointDiagnosticsLoader, initialPointDiagnosticState, pointDiagnosticDownload } from '../apps/web/src/point-diagnostics.ts'
+import { captureDeviceEditBaseline } from '../packages/core/src/device-settings-edit.ts'
+import { deviceDraftFields, deviceDraftChanged } from '../apps/web/src/device-draft-close.ts'
+import { pointDraftFields, pointDraftChanged, PointDraftCloseGuard } from '../apps/web/src/point-draft-close.ts'
+import { createPointEnumDraft, updatePointEnumDraft } from '../apps/web/src/point-enum-draft.ts'
+import { parsePointSettingsUpdate } from '../apps/web/src/point-settings.ts'
+import { isBinType, isHexType, registerWidth } from '../packages/core/src/codec.ts'
+import { PointDraftDiscard } from '../apps/web/src/PointDraftDiscard.tsx'
+import { PointEnumEditor } from '../apps/web/src/PointEnumEditor.tsx'
 import { DeferredResource } from '../apps/web/src/deferred-resource.ts'
 import { DeferredPointDiagnostics, DeferredPointDiagnosticsView, pointDiagnosticsResource, type PointDiagnosticsProps, type PointDiagnosticsRenderer } from '../apps/web/src/DeferredPointDiagnostics.tsx'
 
@@ -105,6 +115,113 @@ await check('actual module exports load without mounting report effects or chang
     assert(html.includes(english ? 'Check again' : '重新检查')); assert(!html.includes(english ? 'Retry interface loading' : '重试加载界面'))
   }
   assert.equal(requests, 0, 'module evaluation/SSR never executes the report read effect')
+})
+
+// Small deterministic hook driver: actual component/effect/event bodies, not React DOM.
+// Setters after disposal are counted; all effects are explicitly cleaned up.
+const tick = () => new Promise<void>(resolve => setImmediate(resolve))
+const elements = (node: any): any[] => Array.isArray(node) ? node.flatMap(elements) : React.isValidElement(node) ? [node, ...elements((node.props as any).children)] : []
+function hookDriver(file: string, name: string, scope: Record<string, unknown>, initialProps: any) {
+  const fileSource = ts.createSourceFile(file, readFileSync(new URL('../apps/web/src/' + file, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const declaration = find(fileSource, node => ts.isFunctionDeclaration(node) && node.name?.text === name)!
+  const cells: any[] = [], dependencies: any[][] = [], cleanup = new Map<number, () => void>()
+  let cursor = 0, effects: Array<() => void> = [], tree: any, currentProps = initialProps, disposed = false, lateWrites = 0
+  const useState = (init: any) => { const id = cursor++; if (!(id in cells)) cells[id] = typeof init === 'function' ? init() : init; return [cells[id], (value: any) => { if (disposed) { lateWrites++; return }; cells[id] = typeof value === 'function' ? value(cells[id]) : value }] }
+  const useRef = (init: any) => useState(() => ({ current: init }))[0]
+  const useEffect = (effect: () => void | (() => void), deps: any[]) => { const id = cursor++; if (!dependencies[id] || deps.some((v, i) => !Object.is(v, dependencies[id][i]))) effects.push(() => { cleanup.get(id)?.(); const next = effect(); if (next) cleanup.set(id, next); else cleanup.delete(id) }); dependencies[id] = deps }
+  const env = { React, useState, useRef, useEffect, useId: () => useState('mock-title')[0], ...scope }
+  const component = new Function(...Object.keys(env), compile('return (' + declaration.getText(fileSource).replace(/^export /, '') + ')'))(...Object.values(env))
+  const render = (next = currentProps) => { assert(!disposed); currentProps = next; cursor = 0; effects = []; tree = component(currentProps); for (const effect of effects) effect(); return tree }
+  render()
+  return { render, get tree() { return tree }, get lateWrites() { return lateWrites }, dispose() { if (disposed) return; disposed = true; for (const fn of cleanup.values()) fn(); cleanup.clear() }, one(type: any, predicate: (props: any) => boolean = () => true) { const item = elements(tree).find(node => node.type === type && predicate(node.props)); assert(item, 'control missing'); return item } }
+}
+const fakeDocument = { activeElement: { isConnected: true, focus() {} } }
+const settingsScope = { isBinType, isHexType, registerWidth, parsePointSettingsUpdate, createPointEnumDraft, updatePointEnumDraft, pointDraftFields, pointDraftChanged, PointDraftCloseGuard, PointDraftDiscard, PointEnumEditor, document: fakeDocument }
+await check('failed interface retry, actual report effect and device A/B/A late-response recovery compose safely', async () => {
+  const module = await import('../apps/web/src/PointDiagnostics.tsx')
+  let imports = 0
+  const resource = new DeferredResource<PointDiagnosticsRenderer>(async () => { if (++imports === 1) throw Error('synthetic chunk failure'); return module.PointDiagnosticsPanel })
+  const calls: Array<{ deviceId: number; signal: AbortSignal; reply: ReturnType<typeof deferred<unknown>> }> = []
+  const fetcher = async (url: string, signal: AbortSignal) => { const deviceId = Number(/monitor_objects\/(\d+)/.exec(url)?.[1]); assert([1, 2].includes(deviceId)); const reply = deferred<unknown>(); calls.push({ deviceId, signal, reply }); return reply.promise }
+  await begin(resource); assert.equal(resource.snapshot().status, 'error'); assert.equal(calls.length, 0)
+  await begin(resource); assert.equal(imports, 1); await resource.load(true); assert.equal(imports, 2)
+  const rootView = find(source, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'DeviceView') as ts.JsxSelfClosingElement
+  const key = rootView.attributes.properties.find(node => ts.isJsxAttribute(node) && node.name.getText(source) === 'key') as ts.JsxAttribute
+  assert.deepEqual([1, 2, 1].map(id => evaluate((key.initializer as ts.JsxExpression).expression!, source, { selected: { id } })), [1, 2, 1], 'actual App keys logical device lifetimes separately')
+  const scope = { PointDiagnosticsLoader, initialPointDiagnosticState, pointDiagnosticDownload, PointDiagnosticsView: module.PointDiagnosticsView }
+  const mount = (deviceId: number, alias: string) => {
+    const current = { ...props, deviceId, points: [{ ...props.points[0], alias, slaveId: deviceId }], fetcher }
+    const element = DeferredPointDiagnosticsView({ props: current, state: resource.snapshot(), retry() { throw Error('ready UI must not retry code') }, onClose() {} }) as React.ReactElement<any>
+    assert.equal(element.type, module.PointDiagnosticsPanel)
+    return hookDriver('PointDiagnostics.tsx', 'PointDiagnosticsPanel', scope, element.props)
+  }
+  const report = (deviceId: number, quantity: number) => diagnosePointTable({ devices: [{ id: deviceId, mode: 'master', slaveId: deviceId }], groups: [{ id: 9, objectId: deviceId, name: 'synthetic', slaveId: deviceId, functionCode: 3, startAddress: 0, quantity }], registers: [{ id: 7, objectId: deviceId, groupId: 9, alias: 'sample', functionCode: 3, startAddress: 0, dataType: 'uint32' }] })
+  const first = mount(1, 'old A'); await tick(); assert.equal(calls[0].deviceId, 1)
+  first.dispose(); await tick(); assert(calls[0].signal.aborted)
+  const second = mount(2, 'B'); await tick(); assert.equal(calls[1].deviceId, 2)
+  second.dispose(); await tick(); assert(calls[1].signal.aborted)
+  const current = mount(1, 'current A')
+  try {
+    await tick(); assert.equal(calls[2].deviceId, 1)
+    calls[2].reply.resolve({ malformed: true }); await tick(); current.render()
+    assert.equal(current.tree.props.state.status, 'error'); assert.equal(current.tree.props.state.error, 'invalid')
+    current.tree.props.refresh(); current.render(); await tick(); assert.equal(calls.length, 4)
+    calls[0].reply.resolve(report(1, 1)); calls[1].reply.resolve(report(2, 1)); await tick(); current.render()
+    assert.equal(current.tree.props.state.status, 'loading'); assert.equal(current.tree.props.state.snapshot, null)
+    calls[3].reply.resolve(report(1, 2)); await tick(); current.render()
+    const state = current.tree.props.state
+    assert.equal(state.status, 'ready'); assert.equal(state.snapshot.deviceId, 1); assert.equal(state.snapshot.report.summary.errors, 0)
+    assert.equal(current.tree.props.points[0].alias, 'current A'); assert.equal(current.tree.props.points[0].slaveId, 1)
+    assert.equal(first.lateWrites, 0); assert.equal(second.lateWrites, 0); assert.equal(imports, 2)
+  } finally { first.dispose(); second.dispose(); current.dispose() }
+})
+await check('late code success after returning live leaves a dirty point draft and its close guard intact', async () => {
+  const content = deferred<PointDiagnosticsRenderer>(), entered = deferred<void>()
+  const resource = new DeferredResource<PointDiagnosticsRenderer>(async () => { entered.resolve(); return content.promise })
+  let tab = 5, saved = 0, closed = 0
+  const pending = begin(resource); await entered.promise
+  evaluate(closeExpression, source, { setTab: (next: number) => { tab = next } })(); assert.equal(tab, 0)
+  const live = find(deviceView, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'tab === 0')!
+  assert(live && live.getText(source).includes('<LiveTable'), 'point draft owner is the live tab, not the diagnostic chunk')
+  const modal = hookDriver('PointSettingsEditor.tsx', 'PointSettingsEditor', settingsScope, { name: 'synthetic point', address: 0, settings: { dataType: 'uint16', unit: 'V', factor: 0, offset: 0, enumJson: null, decimalPlaces: null }, available: 1, typeGroups: [{ key: 'types', types: ['uint16'] }], t: (key: string) => key === 'cancel' ? '取消' : key, guarded: true, onClose() { closed++ }, async onSave() { saved++ } })
+  try {
+    modal.one('input', value => value['aria-label'] === 'pointUnit').props.onChange({ target: { value: 'unsaved point draft' } }); modal.render()
+    content.resolve(Fake); await pending
+    assert.equal(renderApp(resource, tab), ''); modal.render()
+    assert.equal(modal.one('input', value => value['aria-label'] === 'pointUnit').props.value, 'unsaved point draft')
+    modal.one('button', value => value.className === 'modal-close').props.onClick(); modal.render()
+    const prompt = modal.one(PointDraftDiscard)
+    assert.equal(saved, 0); assert.equal(closed, 0)
+    modal.one('form').props.onSubmit({ preventDefault() {} }); await tick(); modal.render(); assert.equal(saved, 0, 'confirming a close must not save via Enter')
+    prompt.props.onResume(); modal.render()
+    assert.equal(modal.one('input', value => value['aria-label'] === 'pointUnit').props.value, 'unsaved point draft')
+    assert.equal(saved, 0); assert.equal(closed, 0)
+  } finally { modal.dispose() }
+})
+await check('late code failure and explicit recovery leave a device draft and discard decision independent', async () => {
+  const content = deferred<void>(), entered = deferred<void>(); let imports = 0
+  const resource = new DeferredResource<PointDiagnosticsRenderer>(async () => { if (++imports === 1) { entered.resolve(); await content.promise; throw Error('synthetic late chunk failure') }; return Fake })
+  const pending = begin(resource); await entered.promise
+  let saved = 0, closed = 0
+  const initial = { id: 1, name: 'synthetic device', mode: 'master', ip: 'mock.invalid', port: 502, transport: 'tcp', serialPath: 'MOCK_PORT', baudRate: 9600, parity: 'even', stopBits: 1, dataBits: 8, flowControl: 'none', slaveId: 1, pollIntervalMs: 1000, timeoutMs: 3000 }
+  const edit = find(deviceView, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'showEdit')!
+  assert(edit && edit.getText(source).includes('<DeviceModal'), 'device editor is a sibling controlled by showEdit, independent of diagnostics status')
+  const modalProps = { initial, t: (key: string) => key === 'cancel' ? '取消' : key, onClose() { closed++ }, async onSave() { saved++ } }
+  const modal = hookDriver('DeviceModal.tsx', 'DeviceModal', { captureDeviceEditBaseline, deviceDraftFields, deviceDraftChanged, PointDraftCloseGuard, PointDraftDiscard, SerialPortPicker: () => null, document: fakeDocument }, modalProps)
+  try {
+    modal.one('input', value => value['aria-label'] === 'name').props.onChange({ target: { value: 'unsaved device draft' } }); modal.render()
+    content.resolve(); await pending; assert.equal(resource.snapshot().status, 'error'); modal.render()
+    assert.equal(modal.one('input', value => value['aria-label'] === 'name').props.value, 'unsaved device draft')
+    modal.render({ ...modalProps, initial: { ...initial, name: 'background config refresh' } })
+    assert.equal(modal.one('input', value => value['aria-label'] === 'name').props.value, 'unsaved device draft')
+    modal.one('button', value => value.className === 'modal-close').props.onClick(); modal.render(); const prompt = modal.one(PointDraftDiscard)
+    assert.equal(saved, 0); assert.equal(closed, 0)
+    prompt.props.onDiscard(); modal.render(); assert.equal(closed, 1); assert.equal(saved, 0, 'explicit discard never saves or restores configuration')
+    modal.dispose()
+    await resource.load(true); assert.equal(resource.snapshot().status, 'ready')
+    assert.equal(closed, 1); assert.equal(saved, 0); assert.equal(modal.lateWrites, 0, 'recovery after explicit discard cannot revive the closed editor')
+    assert.equal(imports, 2)
+  } finally { modal.dispose() }
 })
 assert.equal(closes, 2)
 console.log('DIAGNOSTICS LOADING TEST OK: ' + passed + ' controlled lifecycle/source/SSR groups; no browser, real report request, hardware or model')
