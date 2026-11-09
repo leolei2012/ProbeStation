@@ -119,6 +119,54 @@ assert.equal(focus(reader, bounded).visibleFrames.length, 500)
 // Capture markers describe observed byte chunks, not validated protocol responses.
 const localFormatter = appSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'formatLocalTs')!
 const renderRow = evaluate(map.arguments[0], { React: { createElement }, formatLocalTs: evaluate(localFormatter, {}), dir: evaluate(variable('dir').initializer!, {}) })
+let longRows = 0, damagedReads = 0
+for (const transport of ['tcp', 'rtu'] as const) {
+  const target = transport === 'tcp' ? device : serial, targetScope = communicationScope(target), key = engine.driverKey(target), previousDriver = engine.drivers.get(key)
+  try {
+    for (const size of [256, 65536, 262144]) {
+      const data = Buffer.from(Array.from({ length: size }, (_, index) => index % 256))
+      data.set(transport === 'tcp' ? [0, 1, 0, 0, 0, 3, 1, 3] : [1, 3]); data.set([0, 255, 126], size - 3)
+      const originalHex = data.toString('hex').toUpperCase(), diag = new ModbusDiagnostics(transport, 3, transport === 'tcp' ? { deviceId: 1, channelKey: key } : { channelKey: key })
+      for (const direction of ['tx', 'rx'] as const) diag.recordFrame(direction, data)
+      data.fill(0); assert(diag.getFrames().every(frame => frame.hex === originalHex), 'capture owns its bytes even if the source buffer is reused')
+      const mockDriver = driver(diag); engine.drivers.set(key, mockDriver); engine.driverBindings.set(mockDriver, engine.connectionSignature(target))
+      const source = JSON.parse(JSON.stringify(engine.getDeviceFrames(target.id, 200))), original = JSON.stringify(source), snapshot = parseRawFrames(source, targetScope, 200)
+      for (const frame of snapshot.frames) {
+        assert.equal(frame.hex, originalHex); assert.equal(frame.byteLength, size)
+        const row = renderRow(frame), bytes = row.props.children.at(-1).props.children, html = renderToStaticMarkup(row)
+        assert.equal(typeof bytes, 'string'); assert.equal(bytes.replace(/\s/g, ''), originalHex, 'all rendered byte text reconstructs the complete received capture, including zero and high bytes')
+        assert.equal(bytes.length, size * 3 - 1); assert(html.includes(bytes)); assert(html.includes(size + 'B')); assert(!bytes.includes('…') && !bytes.includes('...'))
+        assert.equal(Buffer.from(bytes.replace(/\s/g, ''), 'hex').length, size); longRows++
+      }
+      const read = new RawFramesRead(target, 200)
+      await read.refresh(async () => source); const retained = read.snapshot().value
+      for (const hex of [source[1].hex.slice(0, -2), source[1].hex.slice(0, -1), source[1].hex.slice(0, -3) + '...']) {
+        await read.refresh(async () => [source[0], { ...source[1], hex }]); assert.equal(read.snapshot().phase, 'error'); assert.equal(read.snapshot().error, 'invalid'); assert.equal(read.snapshot().value, retained)
+        for (const english of [false, true]) {
+          const html = renderToStaticMarkup(createElement(RawFramesStatus, { state: read.snapshot(), paused: false, english }))
+          assert(html.includes(english ? 'could not be verified' : '无法核实')); assert(html.includes(english ? 'Previous captures' : '保留上次显示'))
+          assert(!html.includes(english ? 'This read returned no captures' : '本次读取没有返回捕获记录'))
+        }
+        damagedReads++
+      }
+      await read.refresh(async () => source); assert.equal(read.snapshot().phase, 'ready'); read.cancel()
+      assert.equal(JSON.stringify(source), original); assert(diag.getFrames().every(frame => frame.hex === originalHex))
+    }
+    const boundedCapture = new ModbusDiagnostics(transport, 3, transport === 'tcp' ? { deviceId: 1, channelKey: key } : { channelKey: key })
+    for (let index = 0; index < 5; index++) boundedCapture.recordFrame('rx', Uint8Array.from(transport === 'tcp' ? [0, index, 0, 0, 0, 2, 1, 3] : [1, 3, index]))
+    const boundedDriver = driver(boundedCapture); engine.drivers.set(key, boundedDriver); engine.driverBindings.set(boundedDriver, engine.connectionSignature(target))
+    assert.deepEqual(boundedCapture.getFrames(2000).map(frame => frame.id), [3, 4, 5], 'bounded record retention does not imply byte truncation')
+    const value = parseRawFrames(JSON.parse(JSON.stringify(engine.getDeviceFrames(target.id, 2))), targetScope, 2)
+    assert.deepEqual(value.frames.map(frame => frame.id), [4, 5])
+    for (const english of [false, true]) {
+      const html = renderToStaticMarkup(createElement(RawFramesStatus, { state: { phase: 'ready', value }, paused: false, english }))
+      assert(html.includes(english ? 'Display limit reached' : '达到显示上限')); assert(html.includes(english ? 'not a full communication history' : '不是完整通信历史'))
+      assert(html.includes(english ? 'not proof of a complete frame' : '不证明完整帧'))
+    }
+  } finally { engine.drivers.set(key, previousDriver) }
+}
+assert.equal(effects, 0)
+console.log(`RAW CAPTURE LENGTH OK: ${longRows} complete 256/65536/262144-byte TX/RX row texts through producer/poller/JSON/parser; ${damagedReads} shortened/odd/ellipsis response rejections with retained/recovered state; TCP/RTU record eviction/limit hints; no clipboard/browser/hardware claim`)
 let semanticInputs = 0
 for (const transport of ['tcp', 'rtu'] as const) {
   const target = transport === 'tcp' ? device : serial, targetScope = communicationScope(target)
