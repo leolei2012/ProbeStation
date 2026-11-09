@@ -830,7 +830,7 @@ export default function App() {
         {view === 'database'
           ? <DatabaseView t={t} devices={devices} />
           : (selected
-              ? <DeviceView drafts={draftNavigation} onLeaveDrafts={range => confirmDraftLeave(selected.id, range)} onNavigate={navigateData} configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={realtime.status === 'connected' ? deviceConnected[selected.id] : undefined} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
+              ? <DeviceView drafts={draftNavigation} onLeaveDrafts={range => confirmDraftLeave(selected.id, range)} onNavigate={navigateData} configurationReady={groupSnapshot?.objectId === selectedId} deviceListReady={!deviceLoading && deviceLoadError === null} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={realtime.status === 'connected' ? deviceConnected[selected.id] : undefined} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
               : <EmptyState t={t} onAdd={() => setShowAdd(true)} unverified={deviceLoadError !== null} loading={deviceLoading} />)}
       </main>
 
@@ -925,8 +925,8 @@ function DatabaseView({ t, devices }: { t: T; devices: Device[] }) {
   )
 }
 
-function DeviceView({ drafts, onLeaveDrafts, onNavigate, configurationReady, target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
-  configurationReady: boolean; target: DataTarget | null; t: T; device: Device; connected: boolean | undefined; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
+function DeviceView({ drafts, onLeaveDrafts, onNavigate, configurationReady, deviceListReady, target, t, device, connected, groups, latest, groupErrors, realtime, fallbackOk, busy, onToggle, onEdit, onDelete, onRefresh }: {
+  configurationReady: boolean; deviceListReady: boolean; target: DataTarget | null; t: T; device: Device; connected: boolean | undefined; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>
   drafts?: DraftNavigation; onLeaveDrafts?: (range: DraftRange) => boolean
   onNavigate: (target: DataTarget) => void
   realtime: { status: RealtimeStatus; attempt: number }
@@ -972,7 +972,7 @@ function DeviceView({ drafts, onLeaveDrafts, onNavigate, configurationReady, tar
       <RecordingIntervalNotice deviceId={device.id} />
       <TabBar tabs={[{ id: 0, label: t('tabLive') }, { id: 1, label: t('liveCurve') }, { id: 2, label: t('tabHistory') }, ...(device.mode === 'slave' ? [] : [{ id: 3, label: t('tabRaw') }, { id: 4, label: t('tabFirmware') }]), { id: 5, label: t('pointCheckTab') }]} active={tab} onChange={next => { if (tab === 0 && next !== 0 && onLeaveDrafts?.('live') === false) return; if (next !== 2) historyNavigation.current!.cancelPending(); setTab(next) }} />
       <AlarmPanel configurationReady={configurationReady} onHistory={onNavigate} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
-      {tab === 0 && <LiveTable configurationReady={configurationReady} draftScope={draftScope} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
+      {tab === 0 && <LiveTable configurationReady={configurationReady && deviceListReady} draftScope={draftScope} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
       {tab === 2 && <HistoryView navigation={historyNavigation.current} memory={queryMemory.current} configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
@@ -1046,6 +1046,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
   const bookOpeningRef = useRef<ReturnType<typeof capturePointBookOpening>>(null), bookAlive = useRef(true)
   const bookCurrentRef = useRef((): ReturnType<typeof capturePointBookOpening> => null)
   bookCurrentRef.current = () => bookAlive.current && configurationReady ? capturePointBookOpening(snapshotComparisonScope, liveSnapshotComparisonKey(device, groups), device.id) : null
+  if (!configurationReady) bookOpeningRef.current = null
   useEffect(() => { bookAlive.current = true; return () => { bookAlive.current = false; bookOpeningRef.current = null } }, [])
   const chooseBook = () => { if (operation.busy) return; bookOpeningRef.current = bookCurrentRef.current(); if (bookOpeningRef.current) bookInputRef.current?.click() }
   const uploadBook = async (e: any) => {

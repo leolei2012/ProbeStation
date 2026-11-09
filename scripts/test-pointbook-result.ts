@@ -186,7 +186,27 @@ console.log('POINTBOOK RESULT OK: committed warnings vs rejected/uncertain outco
   const current = (find(tree, node => ts.isBinaryExpression(node) && node.left.getText(tree) === 'bookCurrentRef.current') as ts.BinaryExpression).right
   const lifetime = (find(tree, node => ts.isCallExpression(node) && node.expression.getText(tree) === 'useEffect' && !!node.arguments[0]?.getText(tree).includes('bookAlive.current = true')) as ts.CallExpression).arguments[0]
   const evaluate = (node: ts.Node, env: Record<string, unknown>) => new Function(...Object.keys(env), ts.transpileModule('return (' + node.getText(tree) + ')', { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText)(...Object.values(env))
-  assert(app.includes('<LiveTable configurationReady={configurationReady}')); assert(app.includes('disabled={operation.busy || !configurationReady || !snapshotComparisonScope} onClick={chooseBook}'))
+  const rootDevice = find(tree, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(tree) === 'DeviceView') as ts.JsxSelfClosingElement
+  const liveTable = find(tree, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(tree) === 'LiveTable') as ts.JsxSelfClosingElement
+  const prop = (node: ts.JsxSelfClosingElement, name: string) => { const attribute = node.attributes.properties.find(value => ts.isJsxAttribute(value) && value.name.getText(tree) === name) as ts.JsxAttribute | undefined; return (attribute?.initializer as ts.JsxExpression | undefined)?.expression }
+  const importReadiness = (loading: boolean, error: string | null) => {
+    const root = { groupSnapshot: { objectId: 7 }, selectedId: 7, deviceLoading: loading, deviceLoadError: error }
+    const configurationReady = evaluate(prop(rootDevice, 'configurationReady')!, root), list = prop(rootDevice, 'deviceListReady')
+    return evaluate(prop(liveTable, 'configurationReady')!, { configurationReady, deviceListReady: list ? evaluate(list, root) : undefined })
+  }
+  for (const deviceLoading of [true, false]) for (const deviceLoadError of [null, 'failed']) {
+    const ready = evaluate(prop(rootDevice, 'configurationReady')!, { groupSnapshot: { objectId: 7 }, selectedId: 7, deviceLoading, deviceLoadError })
+    assert.equal(ready, true, 'device-list write gating does not replace general read-view ownership')
+  }
+  for (const tag of ['HistoryView', 'AlarmPanel', 'LiveTable']) {
+    const node = find(tree, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(tree) === tag) as ts.JsxSelfClosingElement
+    const ready = evaluate(prop(node, 'configurationReady')!, { configurationReady: true, deviceListReady: false })
+    assert.equal(ready, tag !== 'LiveTable', 'only the existing import gate receives the additional list condition')
+  }
+  const invalidate = find(tree, node => ts.isIfStatement(node) && node.expression.getText(tree) === '!configurationReady' && node.getText(tree).includes('bookOpeningRef.current = null'))!
+  assert(invalidate)
+  const invalidateOpening = (env: Record<string, unknown>) => new Function(...Object.keys(env), ts.transpileModule(invalidate.getText(tree), { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText)(...Object.values(env))
+  assert(app.includes('<LiveTable configurationReady={configurationReady && deviceListReady}')); assert(app.includes('disabled={operation.busy || !configurationReady || !snapshotComparisonScope} onClick={chooseBook}'))
   const db = new ConfigStore({ dbPath: ':memory:' }), service = new Sink({ config: db })
   const device = (name: string) => { const d = db.createObject(name, 'mock.invalid', 502), g = db.createGroup(d.id, 'existing', 3, 99, 1), p = db.createRegister(g.id, d.id, 'OLD', 3, 99, 'uint16'); db.createRule(p.id, '>', 1, 'old alarm'); return d }
   const groups = (id: number) => db.listGroups(id).map(group => ({ ...group, registers: db.listRegisters(group.id) }))
@@ -202,10 +222,33 @@ console.log('POINTBOOK RESULT OK: committed warnings vs rejected/uncertain outco
         sendPointBook: (id: number, file: Blob) => uploadPointBook(id, file, async (url, options) => { posts++; sentFiles.push(file); assert.equal(url, '/api/monitor_objects/' + id + '/points/book'); assert.equal(options?.body, file); const report = await service.importPointBook(id, Buffer.from(await file.arrayBuffer()), true), reply = replyReport ?? report; await replyGate; if (lost) throw Error('synthetic lost committed response'); return new Response(JSON.stringify(reply)) }),
         window: { confirm(message: string) { prompts.push(message); onConfirm?.(); return answer } } }
       let choose!: () => void, upload!: (event: unknown) => Promise<void>, previousKey: string | null = null
-      function render(next: Record<string, unknown> = {}) { Object.assign(env, next); const key = liveSnapshotComparisonKey(env.device, env.groups); if (key !== previousKey) { env.snapshotComparisonScope = key ? Symbol('local') : null; previousKey = key }; refs.bookCurrentRef.current = evaluate(current, env); choose = evaluate(variable('chooseBook'), env); upload = evaluate(variable('uploadBook'), env) }
+      function render(next: Record<string, unknown> = {}) { Object.assign(env, next); const key = liveSnapshotComparisonKey(env.device, env.groups); if (key !== previousKey) { env.snapshotComparisonScope = key ? Symbol('local') : null; previousKey = key }; refs.bookCurrentRef.current = evaluate(current, env); invalidateOpening(env); choose = evaluate(variable('chooseBook'), env); upload = evaluate(variable('uploadBook'), env) }
       render(); const cleanup = evaluate(lifetime, env)()
       return { env, refs, input, notices, prompts, errors, sentFiles, render, choose() { choose() }, async select(file: Blob | null = blob) { input.files = file ? [file] : []; input.value = 'selected'; await upload({ target: input }) }, setAnswer(value: boolean) { answer = value }, duringConfirm(fn: () => void) { onConfirm = fn }, loseResponse() { lost = true }, replyWith(value: ReturnType<typeof parsePointBookReport>) { replyReport = value }, holdReply() { let release!: () => void; replyGate = new Promise<void>(resolve => { release = resolve }); return release }, dispose: cleanup, stats: () => ({ posts, clicks, refreshes, result }) }
     }
+    for (const [loading, error] of [[true, null], [false, 'failed']] as const) {
+      const h = host(); h.choose(); h.setAnswer(true); h.render({ configurationReady: importReadiness(loading, error) }); const before = graph()
+      await h.select(); assert.equal(h.stats().posts, 0, 'unverified device list must not replace the old target point table')
+      assert.equal(h.prompts.length, 0); assert.equal(graph(), before); assert.equal(h.stats().refreshes, 0); h.dispose()
+    }
+    {
+      const h = host(); h.render({ configurationReady: importReadiness(false, 'failed') }); h.choose(); assert.equal(h.stats().clicks, 0)
+      h.render({ configurationReady: importReadiness(false, null) }); h.choose(); h.setAnswer(true)
+      h.render({ configurationReady: importReadiness(true, null) }); h.render({ configurationReady: importReadiness(false, null) })
+      const before = graph(); await h.select(); assert.equal(h.stats().posts, 0); assert.equal(graph(), before, 'recovery does not revive a file selection opened before unreadiness')
+      h.choose(); await h.select(); assert.equal(h.stats().posts, 1, 'fresh explicit selection after recovery is admitted'); h.dispose()
+    }
+    {
+      const h = host(); h.choose(); h.setAnswer(true); h.duringConfirm(() => h.render({ configurationReady: importReadiness(false, 'failed') }))
+      const before = graph(); await h.select(); assert.equal(h.stats().posts, 0); assert.equal(graph(), before); h.dispose()
+    }
+    {
+      const h = host(); h.choose(); h.setAnswer(true); const release = h.holdReply(), pending = h.select()
+      await new Promise(resolve => setImmediate(resolve)); assert.equal(h.stats().posts, 1)
+      h.render({ configurationReady: importReadiness(false, 'failed') }); release(); await pending
+      assert.equal(h.stats().posts, 1); assert.equal(pointBookReportKind((h.stats().result as any).report), 'completed', 'read failure cannot cancel or relabel an already admitted import'); h.dispose()
+    }
+    console.log('POINTBOOK DEVICE READ OK: actual root-to-table readiness blocks picker/old selection/confirmation, recovery requires fresh selection, admitted import remains owned; memory only, no backend lock.')
     const cancelled = host(), beforeCancel = graph(); cancelled.choose(); await cancelled.select(); assert.equal(cancelled.stats().posts, 0); assert.equal(graph(), beforeCancel); assert.equal(cancelled.input.value, '')
     assert(cancelled.prompts[0].includes('不是追加') && cancelled.prompts[0].includes('后台未同步') && cancelled.prompts[0].includes('不是文件内容预览') && cancelled.prompts[0].includes('synthetic-target.xlsx')); cancelled.dispose()
     const noFile = host(); noFile.choose(); await noFile.select(null); assert.equal(noFile.stats().posts, 0); assert.equal(noFile.prompts.length, 0); assert.equal(noFile.refs.bookOpeningRef.current, null); noFile.dispose()
