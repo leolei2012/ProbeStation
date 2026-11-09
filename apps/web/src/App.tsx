@@ -105,6 +105,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointBookCompletedHint: '请核对目标设备的分组、点位（从站/地址/类型/倍率）和告警规则；导入回报不表示设备通信或采样已验证。',
     pointBookWarningsHint: '请逐条核对下方提示，再核对目标设备的分组、点位和告警规则。不要仅为消除提示重复导入；回报不表示设备通信或采样已验证。',
     pointBookRejectedHint: '先核对错误详情、源文件与目标设备当前配置，再决定是否修改文件并重新选择。',
+    pointBookTargetSnapshot: '发起时页面目标（仅作记录，不核验当前配置）',
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
     connectionUnverified: '设备连接状态未核实',
@@ -187,6 +188,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointBookCompletedHint: 'Check the target device\'s groups, points (slave/address/type/scale) and alarm rules; this report does not verify device communication or sampling.',
     pointBookWarningsHint: 'Review each item below, then check the target device\'s groups, points and alarm rules. Do not re-import just to clear warnings; this report does not verify device communication or sampling.',
     pointBookRejectedHint: 'Check the error details, source file and target device\'s current configuration before deciding whether to edit and select the file again.',
+    pointBookTargetSnapshot: 'Page target when sent (record only, not current configuration verification)',
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
     connectionUnverified: 'Device connection unverified',
@@ -1041,16 +1043,17 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
     if (!pointBookOpeningMatches(opening, bookCurrentRef.current())) { changed(); return }
     if (!window.confirm(pointBookReplacementPrompt(file.name, device, groups, t('cancel') === 'Cancel'))) return
     if (!pointBookOpeningMatches(opening, bookCurrentRef.current())) { changed(); return }
+    const targetLabel = `${device.name} (#${device.id}) · ${device.transport.toUpperCase()} ${device.transport === 'rtu' ? device.serialPath ?? '?' : device.ip + ':' + device.port}`
     await operation.run(async () => {
       setBookResult(null)
       let report: PointBookReport
       try { report = await sendPointBook(device.id, file) }
       catch (error) {
         const message = error instanceof InvalidPointBookReportError ? t('pointBookInvalidReport') : error instanceof Error ? error.message : String(error)
-        setBookResult({ fileName: file.name, report: null, error: message })
+        setBookResult({ fileName: file.name, targetLabel, report: null, error: message })
         throw new Error(message)
       }
-      setBookResult({ fileName: file.name, report })
+      setBookResult({ fileName: file.name, targetLabel, report })
       onRefresh()
       if (report.errors.length) throw new Error(t(pointBookReportKind(report) === 'uncertain' ? 'pointBookUncertain' : 'pointBookRejected'))
     })

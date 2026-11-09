@@ -58,6 +58,8 @@ assert.equal(dismissed, 0, 'rendering never dismisses, retries or changes config
     for (const value of [lost, contradictory]) for (const phrase of phrases.uncertain) assert(value.text.includes(phrase), language + ' unknown guidance: ' + phrase)
     for (const value of [clean, warned, refused, contradictory]) assert(value.text.includes(phrases.counts), 'counts must remain attributed to the response, including contradictory reports')
     assert(!lost.text.includes(phrases.counts), 'no response must not invent zero counts'); assert(refused.text.includes('row 7: invalid dtype'))
+    const recorded = show({ fileName: 'old-target.xlsx', targetLabel: '<old-target> (#7) · TCP old.mock.invalid:502', report: null, error: 'lost' })
+    assert(recorded.text.includes(labels[language].pointBookTargetSnapshot)); assert(recorded.markup.includes('&lt;old-target&gt;')); assert(!recorded.markup.includes('<old-target>'))
   }
   assert.equal(dismissed, 0, 'rendering guidance does not dismiss, retry or mutate anything')
   console.log('POINTBOOK GUIDANCE OK: actual zh/en labels for clean completion, committed warning, rejection, response loss and contradictory legacy counts; presentation only.')
@@ -75,6 +77,34 @@ await assert.rejects(uploadPointBook(2, file, (async () => new Response(JSON.str
 let failedCalls = 0
 await assert.rejects(uploadPointBook(2, file, (async () => { failedCalls++; throw new Error('connection lost') }) as typeof fetch), /connection lost/)
 assert.equal(failedCalls, 1, 'uncertain write failures are never automatically retried')
+
+// Response/body failures are not rollback receipts. Optional warnings remain legacy-compatible.
+{
+  const cases: { name: string; status?: number; body?: unknown; raw?: string; disconnected?: boolean; expected: string }[] = [
+    { name: 'missing counts', body: { errors: [], warnings: [] }, expected: 'uncertain' },
+    { name: 'missing errors', body: { groups: 1, registers: 2, warnings: [] }, expected: 'uncertain' },
+    { name: 'invalid warnings', body: { ...report, warnings: ['first', null] }, expected: 'uncertain' },
+    { name: 'truncated warning JSON', raw: '{"groups":1,"registers":2,"errors":[],"warnings":["first","last', expected: 'uncertain' },
+    { name: 'contradictory partial report', body: { ...report, errors: ['partial legacy report'] }, expected: 'uncertain' },
+    { name: 'refusal report', body: { groups: 0, registers: 0, errors: ['invalid row'], warnings: [] }, expected: 'rejected' },
+    { name: 'non-success status with success-shaped body', status: 503, body: report, expected: 'uncertain' },
+    { name: 'disconnect', disconnected: true, expected: 'uncertain' },
+    { name: 'legacy optional warnings absent', body: { groups: 1, registers: 2, errors: [] }, expected: 'completed' }
+  ]
+  for (const item of cases) {
+    let requests = 0, result: Parameters<typeof PointBookImportResult>[0]['result'] = { fileName: item.name, report: null }
+    try { result.report = await uploadPointBook(2, file, (async () => { requests++; if (item.disconnected) throw Error('synthetic disconnect'); return new Response(item.raw ?? JSON.stringify(item.body), { status: item.status ?? 200 }) }) as typeof fetch) }
+    catch (error) { result.error = error instanceof Error ? error.message : String(error) }
+    assert.equal(requests, 1, item.name + ' never retries'); assert.equal(pointBookReportKind(result.report), item.expected)
+    const visible = render(result); assert(visible.includes('data-import-outcome="' + item.expected + '"')); if (item.expected !== 'completed') assert(!visible.includes('pointBookCompleted'))
+    assert(!visible.includes('已回滚') && !visible.includes('rolled back'), 'unknown/refusal reports must not invent rollback')
+  }
+  const warnings = Array.from({ length: 250 }, (_, i) => 'warning-' + i + ': ' + 'long <unsafe> detail '.repeat(40) + 'END-' + i)
+  const normalized = await uploadPointBook(2, file, (async () => new Response(JSON.stringify({ ...report, warnings }))) as typeof fetch)
+  assert.deepEqual(normalized.warnings, warnings); const visible = render({ fileName: 'long-warnings.xlsx', report: normalized })
+  assert.equal((visible.match(/<li>/g) ?? []).length, 250); assert(visible.includes('END-0') && visible.includes('END-249')); assert(visible.includes('tabindex="0"')); assert(!visible.includes('<unsafe>'))
+  console.log('POINTBOOK RESPONSE MATRIX OK: 9 malformed/contradictory/status/disconnect/legacy cases, 250 long warnings retained without client truncation; no rollback or retry claim.')
+}
 
 // Real committed/validation reports, using only a fresh in-memory configuration and generated XLSX.
 let failNotify = false
@@ -166,6 +196,16 @@ console.log('POINTBOOK RESULT OK: committed warnings vs rejected/uncertain outco
     const newPage = host(), beforeNew = JSON.stringify(groups(newPage.env.device.id)); releaseOld(); await oldRequest
     assert(db.listRegistersByObject(oldTarget).every(point => point.alias === 'IMPORTED'), 'leaving does not undo an admitted import'); assert.equal(newPage.stats().result, undefined); assert.equal(newPage.stats().posts, 0); assert.equal(JSON.stringify(groups(newPage.env.device.id)), beforeNew); newPage.dispose()
     for (const prompt of [...pending.prompts, ...replacement.prompts]) { assert(prompt.includes('后台未同步') && prompt.includes('仍可能被替换')); assert(!prompt.includes('已锁定')) }
+    assert(app.includes('key={selected.id}'), 'actual device-ID selection remounts DeviceView; same-ID edits do not')
+    for (const transport of ['tcp', 'rtu']) for (const disconnected of [false, true]) {
+      const target = device('INITIATING ' + transport.toUpperCase()), changed = host({ ...target, transport, serialPath: transport === 'rtu' ? 'COM-MOCK' : null }), original = { ...changed.env.device }, releaseResult = changed.holdReply(); changed.setAnswer(true); if (disconnected) changed.loseResponse(); changed.choose(); const inFlight = changed.select(blob)
+      changed.render({ device: { ...original, name: 'REPLACED PAGE NAME', ip: 'new-page.mock.invalid' } }); releaseResult(); await inFlight
+      const result = changed.stats().result as Parameters<typeof PointBookImportResult>[0]['result']
+      assert.equal(changed.stats().posts, 1); assert.equal(pointBookReportKind(result.report), disconnected ? 'uncertain' : 'completed')
+      assert(result.targetLabel?.includes(original.name) && result.targetLabel.includes('#' + original.id) && result.targetLabel.includes(transport === 'rtu' ? original.serialPath : original.ip + ':' + original.port), 'late result must identify its initiating page target, not imply the current same-ID source was verified')
+      const visible = render(result); assert(visible.includes(original.name)); assert(!visible.includes('REPLACED PAGE NAME') && !visible.includes('new-page.mock.invalid')); assert(visible.includes('pointBookTargetSnapshot')); changed.dispose()
+    }
+    console.log('POINTBOOK RESULT TARGET OK: same-ID page target edits during successful/lost replies retain initiating target metadata; different-ID remount boundary retained.')
     console.log('POINTBOOK COMBINATION OK: cancel then different file, captured file identity, pending duplicate/unknown outcome, admitted old-owner completion; no backend-lock or rollback claim.')
     console.log('POINTBOOK CONFIRMATION OK: cancel; replacement/append contract; 7 changed/old-selection cases; confirmed exact target; unseen-backend-change boundary; committed response loss stays single-use; synthetic memory only.')
   } finally { (db as any).db.close() }
