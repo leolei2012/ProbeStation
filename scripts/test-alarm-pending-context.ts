@@ -199,4 +199,44 @@ await check('watch and search/slave filters can show no unknown rows while devic
     assert.equal(pending.rows.length, 2); assert.equal(requests, 0)
   } finally { panel.dispose() }
 })
+await check('point association lookup stays linear while preserving first definition, rule order and same-reference edits', () => {
+  let idReads = 0
+  const points = Array.from({ length: 1000 }, (_, i) => Object.defineProperty({ ...reg, id: i + 1 }, 'id', { enumerable: true, get() { idReads++; return i + 1 } }))
+  const groups = [{ ...group, registers: points }, { ...group, id: 2, slaveId: 2, registers: [{ ...reg, id: 1000, alias: 'WRONG DUPLICATE' }] }]
+  const rules = [...Array.from({ length: 1000 }, (_, i) => ({ ...rule, id: i + 1, registerId: 1000 })), { ...rule, id: 1001, registerId: 999999 }]
+  const panel = hookDriver('AlarmPanel.tsx', 'AlarmPanel', scope({ AlarmWriteGate, alarmOpeningState, readPointAlarmObservation, alarmMatches, alarmRuleSummaryKey, AlarmRuleReadStatus, DeferredAlarmPendingContext, symbols: {}, useAlarmRules: () => ({ rules, ready: true, reading: false, state: { status: 'ready', reading: false, rules, updatedAt: now }, lock: { current: false } }) }), { t, device: { id: 1, ...props.device }, groups, latest: {}, groupErrors: {}, now, threshold: 5000, configurationReady: true, api: async () => { assert.fail('no I/O') } })
+  try {
+    panel.one('button', p => p.children === '查看待定规则').props.onClick(); panel.render(); idReads = 0; panel.render()
+    const observedReads = idReads, detail = () => panel.one(DeferredAlarmPendingContext).props as AlarmPendingContextProps
+    assert.equal(detail().rows.length, 1000); assert.equal(detail().rows[0].reg, points[999]); assert.equal(detail().rows[0].group.id, 1)
+    assert.deepEqual(detail().rows.map(row => row.rule.id), rules.slice(0, 1000).map(rule => rule.id))
+    groups[0].registers[999] = { ...reg, id: 1000, alias: 'UPDATED IN SAME ARRAY' }; groups[0].slaveId = 3; panel.render()
+    assert.equal(detail().rows[0].reg.alias, 'UPDATED IN SAME ARRAY'); assert.equal(detail().rows[0].group.slaveId, 3)
+    console.log('PENDING LOOKUP ID READS: ' + observedReads + '; 1000 points / 1000 rules plus duplicate and missing definition')
+    assert(observedReads < 40000, 'rule-to-point association must not repeatedly scan the whole point table')
+  } finally { panel.dispose() }
+})
+await check('synthetic large-rule refresh separates full-panel evaluation from bounded pending-page rendering', () => {
+  const measurements: unknown[] = []
+  for (const size of [1000, 5000, 10000]) {
+    const points = Array.from({ length: size }, (_, i) => ({ ...reg, id: i + 1, startAddress: i })), groups = [{ ...group, registers: points }]
+    const rules = points.map(point => ({ ...rule, id: point.id, registerId: point.id }))
+    const panelProps = { t, device: { id: 1, ...props.device }, groups, latest: {}, groupErrors: {}, now, threshold: 5000, configurationReady: true, api: async () => { assert.fail('no I/O') } }
+    const panel = hookDriver('AlarmPanel.tsx', 'AlarmPanel', scope({ AlarmWriteGate, alarmOpeningState, readPointAlarmObservation, alarmMatches, alarmRuleSummaryKey, AlarmRuleReadStatus, DeferredAlarmPendingContext, symbols: {}, useAlarmRules: () => ({ rules, ready: true, reading: false, state: { status: 'ready', reading: false, rules, updatedAt: now }, lock: { current: false } }) }), panelProps)
+    panel.one('button', p => p.children === '查看待定规则').props.onClick(); panel.render()
+    const samples: number[] = []
+    for (let i = 0; i < 5; i++) { const start = performance.now(); panel.render({ ...panelProps, now: now + i }); samples.push(performance.now() - start) }
+    const detail = panel.one(DeferredAlarmPendingContext).props as AlarmPendingContextProps
+    assert.equal(detail.rows.length, size)
+    const view = hookDriver('AlarmPendingContext.tsx', 'AlarmPendingContext', { validSlaveId }, detail), pageSamples: number[] = []
+    for (let i = 0; i < 5; i++) { const start = performance.now(); view.render(detail); renderToStaticMarkup(view.tree); pageSamples.push(performance.now() - start) }
+    assert.equal(elements(view.tree).filter(node => node.type === 'li').length, 20)
+    view.one('button', p => p.children === '下一页').props.onClick(); view.render(); assert.equal(view.one('ol').props.start, 21)
+    view.render({ ...detail, rows: detail.rows.slice(0, 1) }); assert.equal(view.one('ol').props.start, 1)
+    view.render({ ...detail, current: false }); const hidden = renderToStaticMarkup(view.tree); assert(hidden.includes('尚未核实') && !hidden.includes('<li>'))
+    measurements.push({ points: size, rules: size, panelMedianMs: samples.sort((a, b) => a - b)[2], page20SsrMedianMs: pageSamples.sort((a, b) => a - b)[2] })
+    view.dispose(); panel.dispose()
+  }
+  console.log('PENDING SCALE MEASURE: ' + JSON.stringify(measurements) + '; synthetic Node component refresh / SSR, not browser latency or a capacity guarantee')
+})
 console.log(`ALARM PENDING TEST OK: ${passed} groups; production panel, source-scoped pending evaluations, neutral bilingual context, pagination and deferred error/lifecycle; component mocks only, no API/device/database/model/browser.`)

@@ -65,10 +65,13 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
   const contextState = alarmOpeningState(openingContext, groups, device), contextReady = contextState === 'ready'
   const titleId = useId()
   const registers = groups.flatMap(g => g.registers)
-  const localRules = rules.filter(rule => registers.some(r => r.id === rule.registerId) && (!point || rule.registerId === point.id))
+  // Rebuild from this render's definitions; preserve the old first-definition lookup.
+  // Do not cache observations: quality, source, time and batch checks still run below.
+  const pointContexts = new Map<number, { group: Group; reg: Register }>()
+  for (const group of groups) for (const reg of group.registers) if (!pointContexts.has(reg.id)) pointContexts.set(reg.id, { group, reg })
+  const localRules = rules.filter(rule => pointContexts.has(rule.registerId) && (!point || rule.registerId === point.id))
   const evaluated = localRules.map(rule => {
-    const group = groups.find(g => g.registers.some(r => r.id === rule.registerId))!
-    const reg = group.registers.find(r => r.id === rule.registerId)!
+    const { group, reg } = pointContexts.get(rule.registerId)!
     const observation = readPointAlarmObservation(reg, latest, device, group, now, threshold, !!groupErrors[group.id]), value = observation?.value ?? null
     const known = value !== null && (typeof value === 'bigint' || Number.isFinite(value))
     return { rule, reg, group, observation, known, value, active: known && alarmMatches(value, rule.operator, rule.threshold) }
