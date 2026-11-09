@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
+import ts from 'typescript'
+import * as history from '../apps/web/src/history-curve.ts'
 import { decodeHistorySeries, historySampleStats, historyLineStarts, historyQueryRange, nearestHistorySample, type HistoryPoint } from '../apps/web/src/history-curve.ts'
 
 const t = Date.parse('2026-09-23T00:00:00Z')
@@ -46,4 +51,49 @@ assert.equal(decodeHistorySeries([r], [p(0, 0, 1)], new Set()).length, 0)
 assert.equal(decodeHistorySeries([r], [{ ...p(0, 0, 1), ts: 'invalid' }], new Set([1])).length, 0)
 const gaps = decodeHistorySeries([r], [0, 1000, 2000, 3000, 60000].map(n => p(n, 0, n)), new Set([1]))
 assert.equal(gaps[0].gapMs, 3000)
+// Execute actual historical SVG series expressions, without importing App or bootstrapping services.
+for (const [samples, gapMs, segments, expected] of [
+  [[], 5000, undefined, []], [[[0, null], [1, NaN], [2, Infinity]], 5000, undefined, []],
+  [[[0, 0]], 5000, undefined, [[0, 0]]], [[[0, 0], [1, null], [2, -1]], 5000, undefined, [[0, 0], [2, -1]]],
+  [[[0, 0], [0, 0]], 5000, undefined, [[0, 0]]], [[[0, 0], [0, 1]], 5000, undefined, []],
+  [[[0, 0], [18000, 0]], 5400, [[0, 0], [18000, 0]], []],
+  [[[0, 0], [1000, 0]], 5400, [[0, 0], [1000, 1]], [[0, 0], [1000, 0]]],
+  [[[0, 0], [18000, 0]], 5400, undefined, [[0, 0], [18000, 0]]],
+  [[[18000, 0]], 5400, [[0, 0], [18000, 0], [36000, 0]], [[18000, 0]]]
+] as Array<[history.HistorySample[], number, Array<[number, number]> | undefined, Array<[number, number]>]>) {
+  const before = samples.map(([time, value]) => [time, value]); assert.deepEqual(history.isolatedHistoryPoints(samples, gapMs, segments), expected); assert.deepEqual(samples, before)
+}
+{
+  const tree = ts.createSourceFile('App.tsx', readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  function find(node: ts.Node, predicate: (node: ts.Node) => boolean): ts.Node | undefined { if (predicate(node)) return node; let found: ts.Node | undefined; ts.forEachChild(node, child => { found ??= find(child, predicate) }); return found }
+  const component = find(tree, node => ts.isFunctionDeclaration(node) && node.name?.text === 'ChartBody')!
+  const declaration = (name: string) => find(component, node => ts.isVariableDeclaration(node) && node.name.getText(tree) === name) as ts.VariableDeclaration | undefined
+  const drawn = find(component, node => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'map' && node.expression.expression.getText(tree).startsWith('visibleSeries.filter') && node.getText(tree).includes('data-history-series'))!
+  const evaluate = (node: ts.Node, env: Record<string, unknown>) => new Function(...Object.keys(env), ts.transpileModule('return (' + node.getText(tree) + ')', { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText)(...Object.values(env))
+  const decoded = decodeHistorySeries([r], [{ ...p(0, 0, 0), quality: 'good' }, { ...p(1000, 0, 0), quality: 'bad' }, { ...p(2000, 0, 0), quality: 'good' }], new Set([1]))[0]
+  assert.deepEqual(decoded.samples, [[t, 0], [t + 1000, null], [t + 2000, 0]])
+  const series = { ...decoded, ...historySampleStats(decoded.samples), color: 'red' }
+  const env: Record<string, unknown> = { React, visibleSeries: [series], hidden: new Set(), historyLineStarts, isolatedHistoryPoints: history.isolatedHistoryPoints, x: (time: number) => time - t, y: (value: number) => value, displayValue: (value: number) => value }
+  env.pathFor = evaluate(declaration('pathFor')!.initializer!, env)
+  const marker = declaration('markerPathFor'); if (marker) env.markerPathFor = evaluate(marker.initializer!, env)
+  const svg = renderToStaticMarkup(React.createElement('svg', null, evaluate(drawn, env)))
+  const paths = [...svg.matchAll(/data-history-markers="\d+" d="([^"]*)"/g)]
+  const markers = (svg.match(/<circle/g) ?? []).length + paths.reduce((sum, path) => sum + (path[1].match(/Z/g) ?? []).length, 0)
+  assert.equal(markers, 2, 'historical zero samples isolated by bad quality must have visible markers')
+  assert(!/data-history-series="1" d="[^"]*L/.test(svg), 'bad-quality gap stays disconnected')
+  const paint = (visibleSeries: unknown[], hidden = new Set<number>(), relative = false) => {
+    const input = { ...env, visibleSeries, hidden, displayValue: evaluate(declaration('displayValue')!.initializer!, { relative }) }
+    return renderToStaticMarkup(React.createElement('svg', null, evaluate(drawn, { ...input, pathFor: evaluate(declaration('pathFor')!.initializer!, input), markerPathFor: evaluate(marker!.initializer!, input) })))
+  }
+  const markerCount = (html: string) => [...html.matchAll(/data-history-markers="\d+" d="([^"]*)"/g)].reduce((sum, path) => sum + (path[1].match(/Z/g) ?? []).length, 0)
+  const separated = { ...series, samples: [[t, 0], [t + 1000, 0]], segments: [[t, 0], [t + 1000, 1]] }
+  const splitSvg = paint([separated]); assert.equal(markerCount(splitSvg), 2); assert(!/data-history-series="1" d="[^"]*L/.test(splitSvg))
+  const connected = { ...series, samples: [[t, 0], [t + 18000, 0]], gapMs: 5400, segments: [[t, 0], [t + 18000, 0]] }
+  const sameSvg = paint([connected]); assert.equal(markerCount(sameSvg), 0); assert(/data-history-series="1" d="[^"]*L/.test(sameSvg), 'sparse display samples in one source segment stay connected')
+  assert.equal(markerCount(paint([series], new Set([1]))), 0, 'hidden series does not leave visible markers')
+  const relativeSvg = paint([series], new Set(), true); assert.equal(markerCount(relativeSvg), 2); assert(relativeSvg.includes(',50.00a3,3'), 'markers use the same constant-series relative transform as the line')
+  const dense = { ...series, samples: Array.from({ length: 2400 }, (_, i) => [t + i, i % 2 ? null : 0]) }
+  const denseSvg = paint([dense]); assert.equal(markerCount(denseSvg), 1200); assert.equal((denseSvg.match(/<path/g) ?? []).length, 2, 'history markers remain one aggregate path per series')
+  console.log('HISTORY MARKER SVG OK: decoded quality-gap zeros, explicit/sparse source segments, hidden series, relative transform and 1200 isolated markers in two paths; expression/SSR only.')
+}
 console.log('HISTORY CURVE TEST OK: area separation, ordered timestamps, nearest reads, partial words, missing data and gaps')

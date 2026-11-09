@@ -32,6 +32,20 @@ export function historyLineStarts(samples: readonly HistorySample[], gapMs: numb
   return starts
 }
 
+/** Match the historical line's source segments, including downsampled and legacy responses. */
+export function isolatedHistoryPoints(samples: readonly HistorySample[], gapMs: number, segments?: ReadonlyArray<readonly [number, number]>): Array<[number, number]> {
+  const starts = historyLineStarts(samples, gapMs, segments), isolated: Array<[number, number]> = []
+  let first: [number, number] | null = null, hasExtent = false
+  const finish = () => { if (first && !hasExtent) isolated.push(first); first = null; hasExtent = false }
+  for (const [index, [time, value]] of samples.entries()) {
+    if (value === null || !Number.isFinite(value)) { finish(); continue }
+    if (first === null || starts.has(index)) { finish(); first = [time, value] }
+    else if (time !== first[0] || value !== first[1]) hasExtent = true
+  }
+  finish()
+  return isolated
+}
+
 /** Last means the final observed sample, including a failed/invalid reading. */
 export function historySampleStats(samples: HistorySample[]) {
   let min = Infinity, max = -Infinity

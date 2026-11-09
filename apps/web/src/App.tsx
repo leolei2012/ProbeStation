@@ -71,7 +71,7 @@ import { showOperationNotice } from './OperationNotifications'
 import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
 import { DeferredSettingsModal } from './DeferredSettingsModal'
-import { decodeHistorySeries, historySampleStats, historyLineStarts, historyQueryRange, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
+import { decodeHistorySeries, historySampleStats, historyLineStarts, historyQueryRange, isolatedHistoryPoints, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
 import { curveTrackFor, isolatedCurvePoints, sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, sampleAgeSeconds, staleAfterMs, type Sample } from './observation'
 import { sameResponseBatch } from '../../../packages/core/src/sample-batch.ts'
@@ -1678,6 +1678,7 @@ function ChartBody({ queryContextKey, pointLabels, valueMode, t, registers, sele
     }
     return path
   }
+  const markerPathFor = (s: typeof visibleSeries[number]) => isolatedHistoryPoints(s.samples, s.gapMs, s.segments).map(([time, value]) => `M${(x(time) - 3).toFixed(2)},${y(displayValue(value, s)).toFixed(2)}a3,3 0 1,0 6,0a3,3 0 1,0 -6,0Z`).join(' ')
   const focusRange = (center: number, width: number) => {
     const clampedWidth = Math.min(range.end - range.start, Math.max(1000, width))
     const left = Math.max(range.start, Math.min(range.end - clampedWidth, center - clampedWidth / 2))
@@ -1754,7 +1755,7 @@ function ChartBody({ queryContextKey, pointLabels, valueMode, t, registers, sele
             <line x1={x(anchor.time)} x2={x(anchor.time)} y1={T} y2={size.h - B} stroke={index ? '#a78bfa' : '#22d3ee'} strokeDasharray="6 4" />
             <text x={x(anchor.time) + 4} y={T + 12 + index * 15} fill={index ? '#a78bfa' : '#22d3ee'} fontSize={12}>{label}</text>
           </g>)}
-          {visibleSeries.filter(s => !hidden.has(s.id)).map(s => <g key={s.id}><path data-history-series={s.id} d={pathFor(s)} stroke={s.color} fill="none" strokeWidth={1.8} />{s.samples.filter(p => p[1] !== null).length <= 1 && s.samples.filter((p): p is [number, number] => p[1] !== null).map(p => <circle key={p[0]} cx={x(p[0])} cy={y(displayValue(p[1], s))} r={3} fill={s.color} />)}</g>)}
+          {visibleSeries.filter(s => !hidden.has(s.id)).map(s => <g key={s.id}><path data-history-series={s.id} d={pathFor(s)} stroke={s.color} fill="none" strokeWidth={1.8} /><path data-history-markers={s.id} d={markerPathFor(s)} fill={s.color} /></g>)}
           {hover !== null && !drag && <>
             <line x1={x(hover)} x2={x(hover)} y1={T} y2={size.h - B} stroke="var(--text-3)" strokeDasharray="4 4" />
             {readoutRows.filter(r => r.point).map(r => { const s = visibleSeries.find(s => s.id === r.id)!; return <circle key={r.id} cx={x(r.point![0])} cy={y(displayValue(r.point![1], s))} r={3.5} fill={r.color} stroke="var(--surface)" strokeWidth={1.5} /> })}
