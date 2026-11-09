@@ -9,7 +9,9 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
   const [draft, setDraft] = useState<Set<number>>(() => new Set(initial))
   const [search, setSearch] = useState('')
   const [source, setSource] = useState('')
-  const titleId = useId()
+  const titleId = useId(), countId = titleId + '-count', limitId = titleId + '-limit'
+  const description = countId + (max === undefined ? '' : ' ' + limitId), atLimit = max !== undefined && draft.size >= max
+  const english = t('cancel') === 'Cancel'
   const toggle = (id: number) => setDraft((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else if (max === undefined || next.size < max) next.add(id); return next })
   const allIds = groups.flatMap(g => g.registers).map(r => r.id)
   const sources = pickerSources(groups, deviceSlaveId), sourceKey = sources.join(',')
@@ -24,8 +26,8 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
   }, [])
   return (
     <div className="modal-mask">
-      <div className="modal reg-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(e) => e.stopPropagation()} onKeyDown={e => {
-        if (e.key === 'Escape') { e.stopPropagation(); onClose() }
+      <div className="modal reg-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description} onClick={(e) => e.stopPropagation()} onKeyDown={e => {
+        if (e.key === 'Escape' && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); onClose() }
         if (e.key === 'Tab') {
           const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)'))
           const first = items[0], last = items[items.length - 1]
@@ -37,7 +39,7 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
           <span id={titleId}>{t('selectRegisters')}</span>
           <button className="modal-close" aria-label={t('cancel')} onClick={onClose}>✕</button>
         </div>
-        <input className="reg-picker-search" aria-label={t('pickerSearch')} placeholder={t('pickerSearch')} value={search} onChange={e => setSearch(e.target.value)} autoFocus />
+        <input className="reg-picker-search" aria-describedby={description} aria-label={t('pickerSearch')} placeholder={t('pickerSearch')} value={search} onChange={e => setSearch(e.target.value)} autoFocus />
         <div className="reg-picker-filters">
           <label>{t('pickerSource')}<select aria-label={t('pickerSource')} value={activeSource} onChange={e => setSource(e.target.value)}>
             <option value="">{t('pickerAllSources')}</option>
@@ -46,18 +48,18 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
           {(search || activeSource) && <button className="btn" onClick={() => { setSearch(''); setSource('') }}>{t('pickerClearFilters')}</button>}
         </div>
         <div className="reg-modal-actions">
-          <span className="reg-picker-count" aria-live="polite">{draft.size} / {allIds.length}</span>
-          <button className="btn" onClick={addVisible} disabled={!filtered.length || (max !== undefined && draft.size >= max)}>{t('pickerSelectVisible')}</button>
-          <button className="btn" onClick={() => setDraft(new Set())}>{t('pickerClearSelection')}</button>
+          <span id={countId} className="reg-picker-count" role="status" aria-live="polite" aria-atomic={true}>{draft.size} / {allIds.length}{atLimit ? english ? ' · Limit reached' : ' · 已达上限' : ''}</span>
+          <button className="btn" aria-describedby={description} onClick={addVisible} disabled={!filtered.length || (max !== undefined && draft.size >= max)}>{t('pickerSelectVisible')}</button>
+          <button className="btn" aria-describedby={countId} onClick={() => setDraft(new Set())}>{t('pickerClearSelection')}</button>
         </div>
-        {max && <p className="chart-hint">{t('curveSelectLimit').replace('{n}', String(max))}</p>}
+        {max !== undefined && <p id={limitId} className="chart-hint">{t('curveSelectLimit').replace('{n}', String(max))}{atLimit ? english ? '; deselect points to choose others.' : '；取消已选点位可继续选择。' : ''}</p>}
         <div className="reg-list">
           {filtered.map(g => (
             <div key={g.id} className="reg-group">
               <div className="reg-group-name"><span>{g.name} · {sourceLabel(g)}</span><span>{g.registers.filter(r => draft.has(r.id)).length} / {g.registers.length}</span></div>
               {g.registers.map(r => (
                 <label key={r.id} className={'reg-item' + (draft.has(r.id) ? ' selected' : '') + (!draft.has(r.id) && max !== undefined && draft.size >= max ? ' unavailable' : '')}>
-                  <input type="checkbox" checked={draft.has(r.id)} disabled={!draft.has(r.id) && max !== undefined && draft.size >= max} onChange={() => toggle(r.id)} />
+                  <input type="checkbox" aria-describedby={description} checked={draft.has(r.id)} disabled={!draft.has(r.id) && max !== undefined && draft.size >= max} onChange={() => toggle(r.id)} />
                   <span className="reg-item-copy"><span className="reg-item-alias" title={`${r.alias ?? ('reg' + r.id)} · ${sourceLabel(g)} · #${r.id}`}>{r.alias || ('reg' + r.id)}</span><span className="reg-item-meta">{sourceLabel(g)} · {t('colAddr')} {r.startAddress} · FC{r.functionCode} · #{r.id}</span></span>
                   <span className="reg-item-type">{r.dataType}</span>
                 </label>
@@ -68,7 +70,7 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
         </div>
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" onClick={() => onApply(new Set(draft))}>{t('save')}</button>
+          <button className="btn primary" aria-describedby={countId} onClick={() => onApply(new Set(draft))}>{t('save')}</button>
         </div>
       </div>
     </div>

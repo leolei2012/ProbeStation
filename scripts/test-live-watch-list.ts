@@ -218,4 +218,40 @@ await check('actual HistoryView cleanup aborts an old read without updating a ne
     resolve({ points: [], series: [], total: 0 }); await new Promise(done => setTimeout(done, 10)); live.render(); assert.equal(writes, before); assert.equal(live.comparison().current, snapshot); assert.equal(liveSnapshotJson(snapshot.snapshot), frozen); assert.deepEqual(live.watch().selection.ids, [100]); assert.equal(live.notices.length, 0)
   } finally { cleanup(); resolve({ points: [] }); live.driver.dispose() }
 })
+await check('watch controls associate stable unique descriptions with counts invalidation and recovery', () => {
+  for (const english of [false, true]) {
+    const view = model(english)
+    try {
+      const choose = () => view.driver.one('button', p => String(p.children).includes(english ? 'Choose watch' : '选择观察'))
+      const ids = choose().props['aria-describedby']; assert.equal(typeof ids, 'string', 'watch opener must describe its scope/limit and current invalidation state')
+      const references = ids.split(/\s+/); assert.equal(references.length, 2); for (const id of references) assert(view.driver.one('p', p => p.id === id))
+      assert.equal(view.driver.one('input', p => p.type === 'checkbox').props['aria-describedby'], references[1]); assert.equal(view.driver.one('p', p => p.id === references[1]).props.role, 'status'); assert.equal(view.driver.one('p', p => p.id === references[1]).props['aria-atomic'], true)
+      choose().props.onClick(); view.render(); view.driver.one(RegisterSelectModal).props.onApply(new Set([100, 200])); view.render(); assert.equal(view.driver.one('input', p => p.type === 'checkbox').props.disabled, false)
+      view.change(Symbol('changed')); assert.equal(choose().props['aria-describedby'], ids); assert(view.html().includes(english ? 'old watch list is invalid' : '原观察清单已失效')); assert.equal(view.driver.one('input', p => p.type === 'checkbox').props.disabled, false, 'checked watch-only remains focusable to exit after invalidation')
+      view.change(null); assert.equal(choose().props.disabled, true); const clear = view.driver.one('button', p => String(p.children).includes(english ? 'Clear watch' : '清空观察')); assert.equal(clear.props.disabled, false); assert.equal(clear.props['aria-describedby'], references[1])
+      clear.props.onClick(); view.render(); assert.equal(view.only, false); assert.equal(view.selection, null)
+    } finally { view.driver.dispose() }
+  }
+  const props = { selection: choose(), scope, only: true, matches, groups, t, onSelect() {}, onOnly() {}, onClear() {} }, html = renderToStaticMarkup(React.createElement(React.Fragment, null, React.createElement(LiveWatchList, props), React.createElement(LiveWatchList, props))), ids = [...html.matchAll(/id="([^"]+-(?:hint|status))"/g)].map(match => match[1]); assert.equal(ids.length, 4); assert.equal(new Set(ids).size, 4)
+})
+await check('actual picker describes limit and keeps removals keyboard-reachable without closing IME composition', () => {
+  for (const english of [false, true]) {
+    let closes = 0, applies = 0, restored = 0, firstFocus = 0, lastFocus = 0, prevented = 0, stopped = 0
+    const opener = { focus() { restored++ } }, document = { activeElement: opener as unknown }, first = { focus() { firstFocus++ } }, last = { focus() { lastFocus++ } }
+    const translate = (key: string) => key === 'cancel' ? english ? 'Cancel' : '取消' : key === 'curveSelectLimit' ? english ? 'Select up to {n} points' : '最多选择 {n} 个点位' : t(key)
+    const picker = hookDriver('RegisterPicker.tsx', 'RegisterSelectModal', { addVisiblePickerPoints, filterPickerGroups, pickerSource, pickerSources, document }, { t: translate, groups, initial: new Set(), max: 1, onClose() { closes++ }, onApply() { applies++ } })
+    try {
+      const dialog = () => picker.one('div', p => p.role === 'dialog'), descriptions = dialog().props['aria-describedby']; assert.equal(typeof descriptions, 'string'); const refs = descriptions.split(/\s+/); assert.equal(refs.length, 2)
+      assert.equal(picker.one('input', p => p.className === 'reg-picker-search').props.autoFocus, true); assert.equal(picker.one('input', p => p.type === 'checkbox').props['aria-describedby'], descriptions)
+      const event = (key: string, composing = false, shiftKey = false) => ({ key, shiftKey, nativeEvent: { isComposing: composing }, preventDefault() { prevented++ }, stopPropagation() { stopped++ }, currentTarget: { querySelectorAll(selector: string) { assert(selector.includes(':not(:disabled)')); return [first, last] } } })
+      dialog().props.onKeyDown(event('Escape', true)); assert.equal(closes, 0, 'IME cancellation must not discard the selection draft'); assert.equal(prevented, 0)
+      picker.one('input', p => p.type === 'checkbox' && !p.checked).props.onChange(); picker.render(); const selected = picker.one('input', p => p.type === 'checkbox' && p.checked), extra = picker.one('input', p => p.type === 'checkbox' && !p.checked)
+      assert.equal(selected.props.disabled, false); assert.notEqual(selected.props.tabIndex, -1); assert.equal(selected.props.onKeyDown, undefined, 'native checkbox activation stays native'); assert.equal(extra.props.disabled, true); assert(picker.one('span', p => p.id === refs[0]).props['aria-atomic']); assert(renderToStaticMarkup(picker.tree).includes(english ? 'Limit reached' : '已达上限'))
+      assert.equal(picker.one('button', p => p.children === 'pickerSelectVisible').props['aria-describedby'], descriptions); selected.props.onChange(); picker.render(); assert.equal(picker.one('input', p => p.type === 'checkbox' && !p.checked).props.disabled, false); assert(!renderToStaticMarkup(picker.tree).includes(english ? 'Limit reached' : '已达上限')); assert.equal(dialog().props['aria-describedby'], descriptions)
+      document.activeElement = last; dialog().props.onKeyDown(event('Tab')); assert.equal(firstFocus, 1); document.activeElement = first; dialog().props.onKeyDown(event('Tab', false, true)); assert.equal(lastFocus, 1); assert.equal(prevented, 2)
+      document.activeElement = {}; dialog().props.onKeyDown(event('Tab')); assert.equal(prevented, 2)
+      dialog().props.onKeyDown(event('Escape')); assert.equal(closes, 1); assert.equal(stopped, 1); assert.equal(prevented, 3); assert.equal(applies, 0)
+    } finally { picker.dispose(); assert.equal(restored, 1); assert.equal(picker.lateWrites, 0) }
+  }
+})
 console.log(`LIVE WATCH TEST OK: ${passed} pure/actual App and component groups; no requests, storage, database, collection, hardware, models or browser`)
