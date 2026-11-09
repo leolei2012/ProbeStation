@@ -14,6 +14,7 @@ catch { throw new Error('缺少有效前端构建清单，请先运行 npm run b
 const renderer = 'src/AssistantMarkdown.tsx', settings = 'src/SettingsModal.tsx', diagnostics = 'src/PointDiagnostics.tsx', entry = 'index.html'
 const communication = 'src/CommunicationSummaryView.tsx'
 const picker = 'src/RegisterPicker.tsx'
+const snapshot = 'src/LiveSnapshotPanel.tsx'
 const editors = ['src/DeviceModal.tsx', 'src/GroupModal.tsx', 'src/AlarmPendingContext.tsx', 'src/PointSettingsEditor.tsx']
 assert.equal(manifest[entry]?.isEntry, true, 'missing frontend entry; run npm run build:web')
 assert.equal(manifest[renderer]?.isDynamicEntry, true, 'Markdown must remain a separate deferred entry')
@@ -21,6 +22,7 @@ assert.equal(manifest[settings]?.isDynamicEntry, true, 'Settings must remain a s
 assert.equal(manifest[diagnostics]?.isDynamicEntry, true, 'Point diagnostics must remain a separate deferred entry')
 assert.equal(manifest[communication]?.isDynamicEntry, true, 'Communication details must remain a separate deferred entry')
 assert.equal(manifest[picker]?.isDynamicEntry, true, 'Point picker must remain a separate deferred entry')
+assert.equal(manifest[snapshot]?.isDynamicEntry, true, 'Frozen snapshot preview must remain a separate deferred entry')
 function closure(start: string) {
   const visited = new Set<string>()
   const walk = (key: string) => {
@@ -32,6 +34,8 @@ function closure(start: string) {
   walk(start); return visited
 }
 const startup = closure(entry)
+assert.ok(!startup.has(snapshot), 'Frozen snapshot preview entered startup')
+assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(snapshot)), 'Frozen snapshot preview is not dynamically reachable')
 assert.ok(!startup.has(picker), 'Point picker entered startup')
 assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(picker)), 'Point picker is not dynamically reachable')
 for (const editor of editors) {
@@ -48,6 +52,7 @@ assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(diagno
 assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(renderer)), 'renderer is not reachable through a dynamic import')
 assert.ok([...startup].some(key => manifest[key].dynamicImports?.includes(settings)), 'settings is not reachable through a dynamic import')
 const html = readFileSync(resolve(dist, 'index.html'), 'utf8')
+assert.ok(!html.includes(manifest[snapshot].file), 'HTML eagerly references frozen snapshot preview')
 assert.ok(!html.includes(manifest[picker].file), 'HTML eagerly references point picker')
 for (const editor of editors) assert.ok(!html.includes(manifest[editor].file), 'HTML eagerly references configuration editor: ' + editor)
 assert.ok(html.includes('src="/' + manifest[entry].file + '"'))
@@ -71,6 +76,7 @@ const diagnosticsSize = sizes(new Set([...closure(diagnostics)].filter(key => !s
 const settingsSize = sizes(new Set([...closure(settings)].filter(key => !startup.has(key))))
 const communicationSize = sizes(new Set([...closure(communication)].filter(key => !startup.has(key))))
 const pickerSize = sizes(new Set([...closure(picker)].filter(key => !startup.has(key))))
+const snapshotSize = sizes(new Set([...closure(snapshot)].filter(key => !startup.has(key))))
 const editorSize = sizes(new Set(editors.flatMap(editor => [...closure(editor)].filter(key => !startup.has(key)))))
 const totalSize = sizes(new Set(Object.keys(manifest).filter(key => manifest[key].file.endsWith('.js'))))
 assert.ok(initialSize.bytes < 500000, 'Total statically required startup JS exceeds the 500 kB budget; splitting filenames alone is not sufficient')
@@ -88,8 +94,10 @@ function walkSource(key: string) {
   assert.ok(!['DeviceModal', 'GroupModal', 'SerialPortPicker', 'AlarmPendingContext', 'PointSettingsEditor', 'PointEnumEditor'].some(name => key.replaceAll('\\', '/') === 'apps/web/src/' + name + '.tsx'), 'Configuration editor implementation is statically reachable from startup: ' + key)
   assert.notEqual(key.replaceAll('\\', '/'), 'apps/web/src/CommunicationSummaryView.tsx', 'Communication details are statically reachable from startup')
   assert.notEqual(key.replaceAll('\\', '/'), 'apps/web/src/RegisterPicker.tsx', 'Point picker implementation is statically reachable from startup')
+  assert.notEqual(key.replaceAll('\\', '/'), 'apps/web/src/LiveSnapshotPanel.tsx', 'Frozen snapshot preview is statically reachable from startup')
   assert.ok(!/node_modules\/(react-markdown|remark-gfm)\//.test(key.replaceAll('\\', '/')), 'Markdown parser is statically reachable from startup')
   for (const dependency of inputs[key].imports) if (!dependency.external && dependency.kind !== 'dynamic-import') walkSource(dependency.path)
 }
 walkSource('apps/web/src/main.tsx')
+console.log(`DEFERRED SNAPSHOT: ${snapshotSize.bytes} bytes (${snapshotSize.gzip} gzip) beyond startup; first preview loads its code, not another observation.`)
 console.log(`WEB BUNDLE OK: startup JS ${initialSize.bytes} bytes (${initialSize.gzip} gzip); all JS ${totalSize.bytes} bytes (${totalSize.gzip} gzip); deferred picker ${pickerSize.bytes} bytes (${pickerSize.gzip} gzip); deferred editors ${editorSize.bytes} bytes (${editorSize.gzip} gzip); deferred communication ${communicationSize.bytes} bytes (${communicationSize.gzip} gzip); deferred settings ${settingsSize.bytes} bytes (${settingsSize.gzip} gzip); deferred Markdown ${deferredSize.bytes} bytes (${deferredSize.gzip} gzip); deferred diagnostics ${diagnosticsSize.bytes} bytes (${diagnosticsSize.gzip} gzip); source/manifest/HTML keep optional interfaces and parser out of startup; aggregate startup stays below 500 kB. Build sizes, not measured browser latency.`)
