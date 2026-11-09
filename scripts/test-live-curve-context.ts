@@ -266,6 +266,16 @@ check('delayed recovery keeps a later unknown marker effective for hover and lin
   const dictionary = evaluate((find(source, node => ts.isVariableDeclaration(node) && node.name.getText(source) === 'I18N') as ts.VariableDeclaration).initializer!, {})
   for (const language of ['zh', 'en']) { const html = renderToStaticMarkup(evaluate(notice, { React, timeReordered: true, t: (key: string) => dictionary[language][key] })); assert(html.includes('role="status"')); assert(/不等同设备故障|does not establish a device fault/.test(html)) }
 })
+check('visible bilingual hint explains equal-time hover without discarding observations', () => {
+  const messages = evaluate((find(source, node => ts.isVariableDeclaration(node) && node.name.getText(source) === 'I18N') as ts.VariableDeclaration).initializer!, {})
+  const hint = find(component, node => ts.isJsxElement(node) && node.openingElement.tagName.getText(source) === 'p' && node.getText(source).includes("t('liveCurveHint')"))!
+  assert(hint)
+  for (const language of ['zh', 'en']) {
+    const html = renderToStaticMarkup(evaluate(hint, { React, t: (key: string) => messages[language][key] }))
+    assert.match(html, /缓存内同时间观测均保留|Equal-time observations in this buffer are retained/)
+    assert.match(html, /最后接收|last received/); assert.match(html, /不代表唯一值|not a unique value/)
+  }
+})
 // Async Blob read verifies the real snapshot writer; no real download, timer or DOM.
 {
   const chosen = chosenFor(1), first = curve.sampleCurve({}, chosen, values(1, 1), 1, now, 5000, new Set())

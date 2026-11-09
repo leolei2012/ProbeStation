@@ -79,6 +79,17 @@ for (const [samples, gapMs, segments, expected] of [
   const declaration = (name: string) => find(component, node => ts.isVariableDeclaration(node) && node.name.getText(tree) === name) as ts.VariableDeclaration | undefined
   const drawn = find(component, node => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'map' && node.expression.expression.getText(tree).startsWith('visibleSeries.filter') && node.getText(tree).includes('data-history-series'))!
   const evaluate = (node: ts.Node, env: Record<string, unknown>) => new Function(...Object.keys(env), ts.transpileModule('return (' + node.getText(tree) + ')', { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText)(...Object.values(env))
+  const conflict = decodeHistorySeries([r], duplicateRows, new Set([r.id]))[0]
+  const conflictReadout = evaluate(declaration('readoutRows')!.initializer!, { visibleSeries: [{ ...conflict, color: 'red' }], hidden: new Set(), registers: [r], hover: t, nearestHistorySample, pointLabels: new Map([[r.id, 'synthetic duplicate']]), historyVerificationLabel: { unknown: '未知' }, reading: () => { throw Error('unknown duplicate must not become a numeric reading') } })
+  assert.equal(conflictReadout[0].value, '— [未知]'); assert.equal(conflictReadout[0].point, null)
+  const messages = evaluate((find(tree, node => ts.isVariableDeclaration(node) && node.name.getText(tree) === 'I18N') as ts.VariableDeclaration).initializer!, {})
+  const integrityHint = find(tree, node => ts.isJsxElement(node) && node.openingElement.tagName.getText(tree) === 'p' && node.getText(tree).includes("t('histIntegrityHint')"))!
+  for (const language of ['zh', 'en']) {
+    const html = renderToStaticMarkup(evaluate(integrityHint, { React, t: (key: string) => messages[language][key] }))
+    assert.match(html, /同时间重复字|duplicate words at the same time/); assert.match(html, /未知不等于零或设备故障|Unknown does not mean zero or a device fault/)
+  }
+  assert.deepEqual(duplicateRows, savedDuplicates)
+  console.log('HISTORY DUPLICATE HINT OK: actual unknown hover and bilingual visible explanation, original observations retained; synthetic/SSR only.')
   const decoded = decodeHistorySeries([r], [{ ...p(0, 0, 0), quality: 'good' }, { ...p(1000, 0, 0), quality: 'bad' }, { ...p(2000, 0, 0), quality: 'good' }], new Set([1]))[0]
   assert.deepEqual(decoded.samples, [[t, 0], [t + 1000, null], [t + 2000, 0]])
   const series = { ...decoded, ...historySampleStats(decoded.samples), color: 'red' }

@@ -7,6 +7,8 @@ import { HistoryExportModal } from '../apps/web/src/HistoryExportModal.tsx'
 import { createOfflineTestApp } from './offline-test-app.ts'
 import { Sink } from '../packages/sink/src/index.ts'
 import { encodeRegister } from '../packages/core/src/codec.ts'
+import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 
 const t = Date.parse('2026-11-06T00:00:00.123Z'), selection = [3, 1, 3]
 const snapshot = captureHistoryExport(2, { start: t + .5, end: t + 1000.75 }, selection, 480, 'viewport')
@@ -34,6 +36,15 @@ assert.match(markup, /role="dialog"/)
 assert.match(markup, /histExportViewport/)
 assert.match(markup, /08:00:00\.123/)
 assert.match(markup, /2 selected/)
+const appTree = ts.createSourceFile('App.tsx', readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+let dictionary: ts.VariableDeclaration | undefined
+function visit(node: ts.Node) { if (ts.isVariableDeclaration(node) && node.name.getText(appTree) === 'I18N') dictionary = node; ts.forEachChild(node, visit) }
+visit(appTree); assert(dictionary?.initializer)
+const messages = new Function(ts.transpileModule('return (' + dictionary.initializer.getText(appTree) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)()
+for (const language of ['zh', 'en']) {
+  const html = renderToStaticMarkup(createElement(HistoryExportModal, { request: snapshot, t: key => messages[language][key], onClose() {}, async onPick() {} }))
+  assert.match(html, /同时间重复字|duplicate words at the same time/); assert.match(html, /未知不等于零或设备故障|Unknown does not mean zero or a device fault/)
+}
 
 // Exercise generated download URLs against the real export implementation, using only new temporary databases.
 const edition = await createOfflineTestApp()
@@ -134,6 +145,8 @@ for (const format of ['csv', 'xlsx'] as const) {
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(await sink.exportXlsx(7, start, end, [101]) as any); const sheet = workbook.getWorksheet('data')!
   assert.deepEqual([2, 3, 4, 5].map(row => String(sheet.getCell('B' + row).value ?? '')), ['', '', '3', '4'])
   assert.deepEqual([2, 3, 4, 5].map(row => sheet.getCell('A' + row).value), csv.slice(1).map(row => row[0]))
+  const notes = workbook.getWorksheet('历史身份说明')!
+  assert.match(String(notes.getCell('A1').value), /同时间重复字/); assert.match(String(notes.getCell('A1').value), /未知不等于零或设备故障/)
   assert.deepEqual(data, before); assert.equal(data.length, 5, 'decoded export never rewrites/deduplicates the original query observations')
   assert.equal(data.filter(row => row.timestampMs === t).length, 2)
   console.log('HISTORY TIME EXPORT OK: raw query and first-seen timestamp order retained, same-time conflicts stay unknown in decoded CSV/XLSX, quality gap remains unknown; not a raw-record replay format.')

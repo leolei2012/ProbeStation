@@ -116,7 +116,7 @@ export class Sink {
       sheet.addRow(row)
     }
     const notes = wb.addWorksheet('历史身份说明')
-    notes.addRow(['批次/来源未验证的值仅供查看，不可作为自动 PASS/FAIL 依据。无法归属从站、混批或缺字等未知值留空。'])
+    notes.addRow(['批次/来源未验证的值仅供查看，不可作为自动 PASS/FAIL 依据。无法归属从站、混批、缺字或同时间重复字等未知值留空；未知不等于零或设备故障。此表按时间戳解码归组，非逐批原始记录。'])
     notes.addRow(['automatic_eligible 只表示目标从站来源明确、完整同批且质量有效，不表示测试通过；本程序未生成 PASS/FAIL。'])
     notes.addRow(['重名列附从站和点位ID；从站指当前配置目标，不能替代逐行批次/来源状态。原始别名以JSON文本保存。'])
     notes.addRow([])
