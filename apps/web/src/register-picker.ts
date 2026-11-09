@@ -10,9 +10,10 @@ export const pickerSourceKey = (group: PickerGroup, deviceSlaveId?: number) => S
 export function pickerSources(groups: readonly PickerGroup[], deviceSlaveId?: number): string[] {
   return [...new Set(groups.filter(g => g.registers.length).map(g => pickerSourceKey(g, deviceSlaveId)))].sort((a, b) => a === '?' ? 1 : b === '?' ? -1 : Number(a) - Number(b))
 }
-export function filterPickerGroups(groups: readonly PickerGroup[], search: string, source = '', deviceSlaveId?: number): PickerGroup[] {
+export function filterPickerGroups(groups: readonly PickerGroup[], search: string, source = '', deviceSlaveId?: number, selected?: ReadonlySet<number>): PickerGroup[] {
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
   return groups.filter(g => !source || pickerSourceKey(g, deviceSlaveId) === source).map(g => ({ ...g, registers: g.registers.filter(r => {
+    if (selected && !selected.has(r.id)) return false
     const text = `${g.name} ${r.alias ?? ''} ${r.startAddress} 0x${r.startAddress.toString(16)} ${r.dataType} #${r.id} slave:${pickerSourceKey(g, deviceSlaveId)}`.toLowerCase()
     return terms.every(term => {
       const id = term.match(/^(?:id:|#)(\d+)$/), source = term.match(/^slave:(\d+|\?)$/)

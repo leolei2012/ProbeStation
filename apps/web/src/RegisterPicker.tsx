@@ -9,6 +9,7 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
   const [draft, setDraft] = useState<Set<number>>(() => new Set(initial))
   const [search, setSearch] = useState('')
   const [source, setSource] = useState('')
+  const [selectedOnly, setSelectedOnly] = useState(false)
   const titleId = useId(), countId = titleId + '-count', limitId = titleId + '-limit'
   const description = countId + (max === undefined ? '' : ' ' + limitId), atLimit = max !== undefined && draft.size >= max
   const english = t('cancel') === 'Cancel'
@@ -16,7 +17,8 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
   const allIds = groups.flatMap(g => g.registers).map(r => r.id)
   const sources = pickerSources(groups, deviceSlaveId), sourceKey = sources.join(',')
   const activeSource = sources.includes(source) ? source : ''
-  const filtered = filterPickerGroups(groups, search, activeSource, deviceSlaveId)
+  const filtered = filterPickerGroups(groups, search, activeSource, deviceSlaveId, selectedOnly ? draft : undefined)
+  const matching = filtered.reduce((count, group) => count + group.registers.length, 0)
   const addVisible = () => setDraft(prev => addVisiblePickerPoints(prev, filtered, max))
   const sourceLabel = (group: PickerGroup) => { const value = pickerSource(group, deviceSlaveId); return value === null ? t('pickerSourceUnknown') : `${t('pickerSource')} ${value}` }
   useEffect(() => { if (source && !sources.includes(source)) setSource('') }, [sourceKey, source])
@@ -45,10 +47,11 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
             <option value="">{t('pickerAllSources')}</option>
             {sources.map(value => <option key={value} value={value}>{value === '?' ? t('pickerSourceUnknown') : `${t('pickerSource')} ${value}`}</option>)}
           </select></label>
-          {(search || activeSource) && <button className="btn" onClick={() => { setSearch(''); setSource('') }}>{t('pickerClearFilters')}</button>}
+          <button type="button" className="btn" aria-pressed={selectedOnly} aria-describedby={countId} title={english ? 'Show selected points; entering review clears search and source filters.' : '集中查看已选点位；进入时清除搜索和从站筛选。'} onClick={() => { if (!selectedOnly) { setSearch(''); setSource('') }; setSelectedOnly(!selectedOnly) }}>{english ? 'Review selected' : '查看全部已选'}</button>
+          {(search || activeSource || selectedOnly) && <button className="btn" onClick={() => { setSearch(''); setSource(''); setSelectedOnly(false) }}>{t('pickerClearFilters')}</button>}
         </div>
         <div className="reg-modal-actions">
-          <span id={countId} className="reg-picker-count" role="status" aria-live="polite" aria-atomic={true}>{draft.size} / {allIds.length}{atLimit ? english ? ' · Limit reached' : ' · 已达上限' : ''}</span>
+          <span id={countId} className="reg-picker-count" role="status" aria-live="polite" aria-atomic={true}>{draft.size} / {allIds.length}{english ? ` · ${matching} matching` : ` · ${matching} 匹配`}{atLimit ? english ? ' · Limit reached' : ' · 已达上限' : ''}</span>
           <button className="btn" aria-describedby={description} onClick={addVisible} disabled={!filtered.length || (max !== undefined && draft.size >= max)}>{t('pickerSelectVisible')}</button>
           <button className="btn" aria-describedby={countId} onClick={() => setDraft(new Set())}>{t('pickerClearSelection')}</button>
         </div>
