@@ -333,8 +333,12 @@ class PollingEngine {
     if (!obj) throw new Error('object ' + objectId + ' not found')
     const driver = this.drivers.get(this.driverKey(obj))
     if (!driver?.getFrames) return []
+    // The driver key can survive a same-ID endpoint/settings change until the next poll.
+    assertCurrent(() => this.driverBindings.get(driver) === this.connectionSignature(obj))
     const safeLimit = Math.max(0, Math.min(2000, Math.trunc(limit)))
     const frames = driver.getFrames(obj.transport === 'rtu' ? 2000 : safeLimit)
+    const current = this.ctx.config.getObject(objectId)
+    assertCurrent(() => !!current && this.drivers.get(this.driverKey(current)) === driver && this.driverBindings.get(driver) === this.connectionSignature(current))
     if (obj.transport !== 'rtu') return frames
     const slaveIds = new Set(this.ctx.config.listGroups(objectId).map((g: any) => g.slaveId ?? obj.slaveId ?? 1))
     if (slaveIds.size === 0) slaveIds.add(obj.slaveId ?? 1)

@@ -17,6 +17,7 @@ rtu.recordFrame('tx', Buffer.from([1, 3, 0, 0])); rtu.recordFrame('rx', Buffer.f
 apply({ on() {}, provide(_name: string, value: any) { engine = value }, config: { getObject: (id: number) => [device, serial].find(value => value.id === id), listGroups: () => [{ slaveId: 1 }] }, modbus: { createDriver() { effects++; throw new Error('no driver creation') } }, store: { write() { effects++ } }, emit() { effects++ } } as any, { pollIntervalMs: 0, connectRetryMs: 0, watchdogTimeoutMs: 30000, autoResetFailThreshold: 0, autoResetCooldownMs: 0 })
 const driver = (diag: ModbusDiagnostics) => ({ getFrames: (limit: number) => diag.getFrames(limit), connect() { effects++ }, clearDiagnostics() { effects++ }, readHoldingRegisters() { effects++ } })
 engine.drivers.set('tcp:1', driver(tcp)); engine.drivers.set('rtu:COM_MOCK', driver(rtu))
+for (const target of [device, serial]) engine.driverBindings.set(engine.drivers.get(engine.driverKey(target)), engine.connectionSignature(target))
 const before = JSON.stringify([tcp.snapshot(), rtu.snapshot()]), body = JSON.parse(JSON.stringify(engine.getDeviceFrames(1, 200))), serialBody = JSON.parse(JSON.stringify(engine.getDeviceFrames(2, 200)))
 const parsed = parseRawFrames(body, scope, 200), serialParsed = parseRawFrames(serialBody, communicationScope(serial), 200)
 assert.equal(parsed.frames.length, 2); assert(parsed.frames.every(frame => frame.sourceMetadataMatched)); assert.deepEqual(serialParsed.frames.map(frame => frame.slaveId), [1, 1]); assert.equal(serialParsed.frames[1].exceptionCode, 2); assert.equal(effects, 0); assert.equal(JSON.stringify([tcp.snapshot(), rtu.snapshot()]), before)
@@ -170,5 +171,6 @@ for (const transport of ['tcp', 'rtu'] as const) {
 }
 assert.equal(effects, 0)
 console.log(`RAW FRAMES SEMANTICS OK: ${semanticInputs} TCP/RTU capture inputs, actual row rendering, flag-only selection, zero/unknown/missing codes, invalid whole-snapshot retention/recovery and source/control isolation; no capture mutation or hardware`)
+await import('./test-raw-frames-composition.ts')
 console.log('RAW FRAMES FOCUS OK: actual view selection/map and checkbox/show-all callbacks, bilingual counts and distinct empty/no-match, legacy/error/pause, source/limit/late-control isolation; local snapshot only')
 console.log('RAW FRAMES READ OK: producer/poller memory getters and RTU filtering, slow-response acceptance, single-flight, timeout/recovery, pause/late success/error/finalizer isolation, source/limit ownership, legacy metadata, strict immutable captures and bilingual status SSR; no real data, files, network, hardware, model or DOM automation')

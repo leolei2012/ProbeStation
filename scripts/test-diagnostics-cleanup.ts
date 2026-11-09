@@ -26,6 +26,7 @@ try {
   const serial = new ModbusDiagnostics('rtu', 2000, { channelKey: 'rtu:COM_MOCK' }), tcp = new ModbusDiagnostics('tcp', 2000, { deviceId: c.id, channelKey: 'tcp:' + c.id })
   const makeDriver = (diag: ModbusDiagnostics) => ({ getDiagnostics: () => diag.snapshot(), getFrames: (n: number) => diag.getFrames(n), clearDiagnostics() { clears++; diag.clear() }, connect() { io++ }, readHoldingRegisters() { io++ }, writeRegister() { io++ } })
   const sd = makeDriver(serial), td = makeDriver(tcp); engine.drivers.set('rtu:COM_MOCK', sd); engine.drivers.set('tcp:' + c.id, td)
+  for (const [target, driver] of [[a, sd], [c, td]] as const) engine.driverBindings.set(driver, engine.connectionSignature(target))
   const fill = () => { serial.recordFrame('tx', Buffer.from([1, 3, 0, 0])); serial.recordFrame('rx', Buffer.from([2, 3, 0, 0])); serial.recordSuccess(1); serial.recordError(new Error('timeout'), 10) }
   const post = (id: number, token: string, override: Record<string, string> = {}) => app.inject({ method: 'POST', url: `/api/monitor_objects/${id}/diagnostics/cleanup`, headers: { ...headers, ...override }, payload: { token } })
   const preview = async (id = a.id) => { const response = await app.inject(`/api/monitor_objects/${id}/diagnostics/cleanup-preview`); assert.equal(response.statusCode, 200); assert.equal(response.headers['cache-control'], 'no-store'); return parseDiagnosticsCleanupPreview(response.json(), id) }
