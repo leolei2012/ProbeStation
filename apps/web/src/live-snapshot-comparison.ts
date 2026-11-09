@@ -26,10 +26,13 @@ function words(snapshot: LiveSnapshot, point: Point) {
 }
 /** Exact register-word differences only. No subtraction of rounded/64-bit display text, interpolation or PASS/FAIL. */
 export function compareLiveSnapshots(before: FrozenLiveObservation | null, after: FrozenLiveObservation | null, scope: symbol | null) {
-  const empty = (status: 'empty' | 'context' | 'selection' | 'time') => ({ status, rows: [] as SnapshotDifference[], counts: { changed: 0, unchanged: 0, unknown: 0 } })
-  if (!before || !after) return empty('empty')
+  const empty = (status: 'empty' | 'unverified' | 'context' | 'selection' | 'time') => ({ status, rows: [] as SnapshotDifference[], counts: { changed: 0, unchanged: 0, unknown: 0 } })
+  if (!after) return empty('empty')
+  if (!scope || after.scope === null || before?.scope === null) return empty('unverified')
+  if (after.scope !== scope || before && before.scope !== scope) return empty('context')
+  if (!before) return empty('empty')
   const a = before.snapshot, b = after.snapshot
-  if (!scope || before.scope !== scope || after.scope !== scope || a.device.id !== b.device.id || a.device.mode !== b.device.mode) return empty('context')
+  if (a.device.id !== b.device.id || a.device.mode !== b.device.mode) return empty('context')
   if (a === b) return empty('empty')
   const left = new Map(a.points.map(point => [point.id, point])), right = new Map(b.points.map(point => [point.id, point]))
   const filters = (value: LiveSnapshot) => JSON.stringify([value.scope.search.trim(), value.scope.source, value.scope.mode])

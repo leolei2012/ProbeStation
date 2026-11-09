@@ -7,7 +7,10 @@ import { captureLiveSnapshot, liveSnapshotJson } from '../apps/web/src/live-snap
 import { compareLiveSnapshots, liveSnapshotComparisonKey, type FrozenLiveObservation } from '../apps/web/src/live-snapshot-comparison.ts'
 import { LiveSnapshotComparison } from '../apps/web/src/LiveSnapshotComparison.tsx'
 import { encodeRegister, decodeRegister } from '../packages/core/src/codec.ts'
-import { sourceKey } from '../packages/core/src/sample-source.ts'
+import * as codec from '../packages/core/src/codec.ts'
+import { sourceKey, sourceSample } from '../packages/core/src/sample-source.ts'
+import { sameResponseBatch } from '../packages/core/src/sample-batch.ts'
+import { RealtimeFallbackRead } from '../apps/web/src/realtime-fallback.ts'
 import { displayNumber, physicalValue } from '../apps/web/src/physical-value.ts'
 import { evaluateLivePoints } from '../apps/web/src/live-point-filter.ts'
 import { hookDriver } from './fixtures/component-hook-driver.ts'
@@ -16,7 +19,7 @@ import type { Sample } from '../apps/web/src/observation.ts'
 
 const origin = 1800000000000, token = Symbol('source'), device = { ...syntheticDevice, isActive: 1 }
 function input(values: Array<number | bigint> = [10, 20], step = 0, type = 'uint16', batch: string | null = 'batch-' + step) {
-  const points = values.map((_, i) => ({ id: i + 1, objectId: 1, groupId: 10, alias: i === 0 ? '<first>' : 'point ' + i, startAddress: i * 4, functionCode: 3, dataType: type, factor: 0, offset: 5, unit: 'V', decimalPlaces: 0, enumJson: null }))
+  const points = values.map((_, i) => ({ id: i + 1, objectId: 1, groupId: 10, alias: i === 0 ? '<first>' : 'point ' + i, startAddress: i * 4, functionCode: 3, dataType: type, factor: 0, offset: 5, unit: 'V', decimalPlaces: 0, enumJson: null as string | null }))
   const groups = [{ id: 10, objectId: 1, name: 'synthetic', slaveId: 1, isActive: 1, functionCode: 3, startAddress: 0, quantity: values.length * 4, registers: points }]
   const latest: Record<string, Sample> = {}, views = new Map()
   for (const [i, point] of points.entries()) {
@@ -43,7 +46,7 @@ await check('exact raw words distinguish changed unchanged and unavailable witho
   assert.equal(compareLiveSnapshots(a, a, token).status, 'empty'); assert.equal(compareLiveSnapshots(null, b, token).status, 'empty')
 })
 await check('different scope source or definition never becomes a value-change assertion', () => {
-  const a = freeze(), b = freeze(input([11, 20], 1000)); assert.equal(compareLiveSnapshots(a, b, Symbol('source')).status, 'context'); assert.equal(compareLiveSnapshots(a, b, null).status, 'context')
+  const a = freeze(), b = freeze(input([11, 20], 1000)); assert.equal(compareLiveSnapshots(a, b, Symbol('source')).status, 'context'); assert.equal(compareLiveSnapshots(a, b, null).status, 'unverified')
   const source = input([11, 20], 1000); source.groups[0].slaveId = 2; assert(changed(a, freeze(source)).rows.every(row => row.state === 'unknown'))
   const definition = input([11, 20], 1000); definition.groups[0].registers[0].factor = 1; assert.equal(changed(a, freeze(definition)).rows[0].reason, 'definition')
   const selection = input([11], 1000); assert.equal(changed(a, freeze(selection)).status, 'selection'); const filters = input([11, 20], 1000); filters.filters.search = 'id:1'; assert.equal(changed(a, freeze(filters)).status, 'selection')
@@ -77,6 +80,10 @@ await check('actual App capture binds source generation and failed captures pres
   const run = (node: ts.Node, env: Record<string, unknown>) => new Function(...Object.keys(env), ts.transpileModule('return (' + node.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(...Object.values(env))
   let dependency: unknown, saved: unknown; const memo = (fn: () => unknown, deps: unknown[]) => { if (deps[0] !== dependency) { dependency = deps[0]; saved = fn() }; return saved }
   const scope = (key: string) => run(declaration('snapshotComparisonScope').initializer!, { useMemo: memo, snapshotComparisonKey: key }) as symbol
+  const context = (value: ReturnType<typeof input>) => run(declaration('snapshotComparisonKey').initializer!, { useMemo: (fn: () => unknown) => fn(), liveSnapshotComparisonKey, device: value.device, groups: value.groups }) as string
+  const original = input(), originalKey = context(original), originalScope = scope(originalKey)
+  const mutations: Array<(value: ReturnType<typeof input>) => void> = [value => { value.device = { ...value.device, ip: 'changed.invalid' } }, value => { value.groups[0].slaveId = 2 }, value => { value.groups[0].registers[0].dataType = 'uint32' }, value => { value.groups[0].registers[0].startAddress = 1 }, value => { value.groups[0].registers[0].factor = 1 }, value => { value.groups[0].registers[0].offset = 2 }, value => { value.groups[0].registers[0].enumJson = '{"1":"changed"}' }]
+  for (const mutate of mutations) { const next = input(); mutate(next); assert.equal(next.device.id, original.device.id); assert.equal(next.groups[0].registers[0].id, original.groups[0].registers[0].id); const key = context(next); assert.notEqual(key, originalKey); const nextScope = scope(key); assert.equal(compareLiveSnapshots(freeze(original, originalScope), freeze(next, nextScope), nextScope).status, 'context'); scope(originalKey) }
   const first = scope('A'); assert.equal(scope('A'), first); scope('B'); assert.notEqual(scope('A'), first, 'observed A→B→A never revives old scope')
   const callback = find(table, node => ts.isJsxAttribute(node) && node.name.getText(source) === 'onClick' && !!node.initializer?.getText(source).includes('captureLiveSnapshot')) as ts.JsxAttribute
   const expression = (callback.initializer as ts.JsxExpression).expression!, data = input(); let current: FrozenLiveObservation | null = null, errors = 0
@@ -107,5 +114,47 @@ await check('empty and all-unavailable views preserve unknowns and filter toggle
     model.update(freeze(input([11, 20], 1000))); assert.equal((model.html().match(/<tr>/g) ?? []).length, 2); model.driver.one('input', p => p.type === 'checkbox').props.onChange({ target: { checked: false } }); model.driver.render(); assert.equal((model.html().match(/<tr>/g) ?? []).length, 3)
     const filters = input([11, 20], 1000); filters.filters.source = '1'; model.update(freeze(filters)); assert(model.html().includes('筛选条件或所选点位不同')); assert.equal((model.html().match(/<tr>/g) ?? []).length, 0)
   } finally { model.driver.dispose() }
+})
+await check('same-address slaves and partial multiword updates remain isolated at actual capture', () => {
+  const multi = (step: number, a: number, b: number) => {
+    const data = input([a], step, 'uint32'), second = input([b], step, 'uint32')
+    const point = { ...second.groups[0].registers[0], id: 2, groupId: 20 }, group = { ...second.groups[0], id: 20, slaveId: 2, registers: [point] }; data.groups.push(group); data.visibleIds.add(2); data.views.set(2, second.views.get(1))
+    for (const sample of Object.values(second.latest)) { const address = Object.values(second.latest).indexOf(sample); data.latest[sourceKey(1, 'holding-register', address, 2)] = { ...sample, slaveId: 2, batchId: 'slave2-' + step } }
+    data.states = evaluateLivePoints(data.groups, data.views, data.latest, data.device, [], {}, data.observedAt, data.thresholdMs); return data
+  }
+  const a = freeze(multi(0, 65536, 123)), b = multi(1000, 65537, 123), result = changed(a, freeze(b)); assert.deepEqual(result.counts, { changed: 1, unchanged: 1, unknown: 0 }); assert.equal(result.rows[0].after.display.raw, '65537'); assert.equal(result.rows[1].after.display.raw, '123')
+  delete b.latest[sourceKey(1, 'holding-register', 1, 2)]; b.states = evaluateLivePoints(b.groups, b.views, b.latest, b.device, [], {}, b.observedAt, b.thresholdMs); const partial = changed(a, freeze(b)); assert.equal(partial.rows[0].state, 'changed'); assert.equal(partial.rows[1].state, 'unknown'); assert.equal(partial.counts.unchanged, 0)
+  for (const type of ['uint32-LE', 'uint64-LE']) assert.equal(changed(freeze(input([1], 0, type)), freeze(input([2], 1000, type))).rows[0].state, 'changed')
+})
+await check('unverified current scope never claims a confirmed configuration change or a usable baseline', () => {
+  const current = freeze(input(), null)
+  assert.equal(compareLiveSnapshots(null, current, null).status, 'unverified'); assert.equal(compareLiveSnapshots(current, freeze(input([11, 20], 1000)), token).status, 'unverified'); assert.equal(compareLiveSnapshots(null, freeze(), Symbol('changed')).status, 'context')
+  for (const english of [false, true]) { const model = ui(current, english, null); try { assert.equal(model.driver.one('button', props => String(props.children).includes(english ? 'snapshot as baseline' : '设为基线')).props.disabled, true); assert(model.html().includes(english ? 'Source/configuration unverified' : '来源/配置未核实')); assert(!model.html().includes(english ? 'Configuration or source changed' : '配置或来源已变化')); assert.equal((model.html().match(/<tr>/g) ?? []).length, 0) } finally { model.driver.dispose() } }
+})
+await check('actual page channel reconnect cannot validate cached or partial words and later frames cannot mutate freezes', () => {
+  const parse = (name: string) => ts.createSourceFile(name, fs.readFileSync(new URL(name, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const source = parse('../apps/web/src/App.tsx'), fixtureSource = parse('./test-device-connection-view.ts')
+  function find(node: ts.Node, match: (node: ts.Node) => boolean): ts.Node | undefined { if (match(node)) return node; return ts.forEachChild(node, child => find(child, match)) }
+  const compile = (text: string) => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
+  const evaluate = (node: ts.Node, env: Record<string, unknown>) => new Function(...Object.keys(env), compile('return (' + node.getText(source) + ')'))(...Object.values(env))
+  const effect = find(source, node => ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect' && !!node.arguments[0]?.getText(source).includes('const HEARTBEAT_MS')) as ts.CallExpression
+  // Reuse only the isolated socket/clock fixture, not that suite's tests or App mount.
+  const fixture = find(fixtureSource, node => ts.isFunctionDeclaration(node) && node.name?.text === 'fixture')!
+  const f = new Function('assert', 'evaluate', 'effect', 'connected', 'RealtimeFallbackRead', 'sourceKey', compile(fixture.getText(fixtureSource) + '\nreturn fixture()'))(assert, evaluate, effect, {}, RealtimeFallbackRead, sourceKey)
+  const buildViews = new Function('sourceSample', 'sameResponseBatch', 'displayNumber', 'physicalValue', ...Object.keys(codec), compile(['areaForFunctionCode', 'enumLabelOf', 'buildRegViews'].map(name => find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === name)!.getText(source)).join('\n') + '\nreturn buildRegViews'))(sourceSample, sameResponseBatch, displayNumber, physicalValue, ...Object.values(codec))
+  const data = input([65536], 0, 'uint32'), observe = () => { const views = buildViews(data.groups, f.state.latest, 1); return freeze({ ...data, views, latest: f.state.latest, states: evaluateLivePoints(data.groups, views, f.state.latest, data.device, [], f.state.errors, f.now, 5000), observedAt: f.now, capturedAt: f.now }) }
+  let model: ReturnType<typeof ui> | undefined
+  try {
+    const first = f.sockets[0]; first.open(); first.message({ type: 'latest', data: data.latest }); const a = observe(); model = ui(a); model.baseline()
+    first.close(); f.advance(500); assert.equal(changed(a, observe()).rows[0].reason, 'not-new')
+    f.reconnect(); const next = f.sockets[1]; next.open(); next.message({ type: 'device/status', objectId: 1, connected: true }); assert.equal(changed(a, observe()).rows[0].reason, 'not-new', 'socket and device status alone cannot create new sample evidence')
+    const fresh = input([65537], 1000, 'uint32'); first.message({ type: 'latest', data: fresh.latest }); assert.equal(changed(a, observe()).rows[0].reason, 'not-new', 'late old socket must be ignored')
+    f.advance(500); const points = Object.values(fresh.latest).map((sample, address) => ({ ...sample, address, objectId: 1, area: 'holding-register' }))
+    next.message({ type: 'poller/result', points: points.slice(0, 1) }); assert.equal(changed(a, observe()).rows[0].state, 'unknown', 'new high word plus cached low word cannot be compared')
+    next.message({ type: 'poller/result', points: points.slice(1) }); const b = observe(); assert.equal(changed(a, b).rows[0].state, 'changed'); model.update(b)
+    const jsonA = liveSnapshotJson(a.snapshot), jsonB = liveSnapshotJson(b.snapshot), html = model.html()
+    f.advance(1000); next.message({ type: 'latest', data: input([65538], 2000, 'uint32').latest }); assert.equal(liveSnapshotJson(a.snapshot), jsonA); assert.equal(liveSnapshotJson(b.snapshot), jsonB); assert.equal(model.html(), html); assert.equal(changed(a, b).rows[0].after.display.raw, '65537'); assert.equal(observe().snapshot.points[0].display.raw, '65538')
+    f.advance(6000); model.update(observe()); assert.equal(changed(a, observe()).rows[0].state, 'unknown'); assert(model.html().includes('样本缺失、异常、过期或批次未核实')); assert(!model.html().includes('<td>原始字未变化'))
+  } finally { model?.driver.dispose(); f.close() }
 })
 console.log('SNAPSHOT COMPARE TEST OK: ' + passed + ' pure/source/UI groups; synthetic snapshots only, no requests, writes, browser storage, downloaded files, database, hardware or models')
