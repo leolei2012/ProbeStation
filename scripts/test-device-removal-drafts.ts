@@ -9,6 +9,38 @@ const tick = () => new Promise<void>(resolve => setImmediate(resolve))
 const deferred = () => { let resolve!: () => void, reject!: (error: Error) => void; const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 let passed = 0
 async function check(name: string, fn: () => void | Promise<void>) { if (process.argv[2] && !name.startsWith(process.argv[2])) return; await fn(); passed++; console.log('DEVICE REMOVAL DRAFT OK: ' + name) }
+await check('unverified retained list cannot confirm or dispatch a fresh deletion', async () => {
+  for (const english of [false, true]) for (const phase of ['loading', 'failed']) {
+    const page = draftSurface({ english }), modal = draftEditor('point', page.registration()), original = page.render().props.device
+    let requests = 0, release = () => {}, reading: Promise<void> | undefined
+    try {
+      modal.change('UNSAVED RETAINED LIST'); page.setAnswer(true)
+      if (phase === 'loading') reading = page.refresh(() => new Promise(resolve => { release = () => resolve([original]) }))
+      else await page.refresh(async () => { throw Error('synthetic list failure') })
+      await page.deleteDevice(1, async () => { requests++; return { ok: true } })
+      assert.equal(requests, 0, 'a stale retained list must not dispatch a new DELETE')
+      assert.equal(page.prompts.length, 0); assert.equal(page.drafts.retained().length, 0); assert.equal(page.state().selectedId, 1)
+      assert.equal(modal.value(), 'UNSAVED RETAINED LIST'); assert.equal(modal.calls.save, 0)
+      assert.match(page.notices.at(-1)!.text, english ? /list.*unverified/i : /清单.*未核实/)
+      if (reading) { release(); await reading } else await page.refresh(async () => [original])
+      assert.equal(requests, 0, 'read recovery never automatically repeats deletion')
+      await page.deleteDevice(1, async () => { requests++; return { ok: true } }); assert.equal(requests, 1)
+    } finally { release(); await reading; modal.driver.dispose() }
+  }
+})
+await check('list read failure never cancels an admitted deletion or labels its result known', async () => {
+  const page = draftSurface(), modal = draftEditor('device', page.registration()), response = deferred(); let requests = 0
+  try {
+    modal.change('PENDING DELETE DRAFT'); page.setAnswer(true)
+    const deleting = page.deleteDevice(1, async () => { requests++; await response.promise; throw new TypeError('synthetic lost deletion response') })
+    assert.equal(requests, 1); await page.refresh(async () => { throw Error('synthetic list failure') })
+    response.resolve(); await deleting
+    assert.equal(requests, 1); assert.match(page.notices.at(-1)!.text, /删除结果待核实/)
+    assert.equal(page.drafts.retained().length, 1); modal.submit(false); assert.equal(modal.calls.save, 0)
+    await page.deleteDevice(1, async () => { requests++; return { ok: true } }); assert.equal(requests, 1)
+    assert.match(page.notices.at(-1)!.text, /先前删除结果仍须单独核实/)
+  } finally { response.resolve(); await tick(); modal.driver.dispose() }
+})
 await check('confirmed deletion retains dirty editors before selection clears, without saving or relying on list refresh', async () => {
   for (const kind of ['point', 'device'] as const) {
     const page = draftSurface(), modal = draftEditor(kind, page.registration()); let deleted = 0, refreshed = 0

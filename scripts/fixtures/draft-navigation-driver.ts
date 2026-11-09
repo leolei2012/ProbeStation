@@ -39,6 +39,7 @@ const refreshDevices = find(app, node => ts.isVariableDeclaration(node) && node.
 const refreshRead = find(refreshDevices, node => ts.isCallExpression(node) && node.arguments.length === 3 && node.arguments[1].getText(source).includes('setDevices(objs)')) as ts.CallExpression
 export const syntheticDevice = { id: 1, name: 'synthetic A', mode: 'master', ip: 'mock.invalid', port: 502, transport: 'tcp', serialPath: 'MOCK_PORT', baudRate: 9600, parity: 'even', stopBits: 1, dataBits: 8, flowControl: 'none', slaveId: 1, pollIntervalMs: 1000, timeoutMs: 3000 }
 const t = (key: string) => key === 'cancel' ? '取消' : key
+const rootMessages = evaluate((find(source, node => ts.isVariableDeclaration(node) && node.name.getText(source) === 'I18N') as ts.VariableDeclaration).initializer!, {})
 const document = { activeElement: { isConnected: true, focus() {} } }
 const base = { PointDraftCloseGuard, PointDraftDiscard, DetachedEditorNotice, ConfigurationSaveHint, bindBeforeUnload, draftDialogKey, document }
 const pointScope = { ...base, pointDraftFields, pointDraftChanged, createPointEnumDraft, updatePointEnumDraft, parsePointSettingsUpdate, isBinType, isHexType, registerWidth, PointEnumEditor }
@@ -105,7 +106,7 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
     },
     cancelRefresh() { read.cancel() },
     deleteDevice(id: number, send: (url: string) => Promise<unknown>, refresh: () => void = () => {}) {
-      return evaluate(variable('deleteDevice'), { ...setters, devices, selectedId, selectedIdRef: { get current() { return selectedId } }, draftNavigation: drafts, setRetainedDrafts, window, t, lang: options.english ? 'en' : 'zh', operation, configurationWriteBlocked, api: { del: send }, refreshDevices: refresh })(id) as Promise<void>
+      return evaluate(variable('deleteDevice'), { ...setters, devices, deviceLoading, deviceLoadError, selectedId, selectedIdRef: { get current() { return selectedId } }, draftNavigation: drafts, setRetainedDrafts, window, t: (key: string) => key === 'deviceDeleteReadBlocked' ? rootMessages[options.english ? 'en' : 'zh'][key] : t(key), lang: options.english ? 'en' : 'zh', operation, configurationWriteBlocked, api: { del: send }, refreshDevices: refresh })(id) as Promise<void>
     },
     retentionNotice() {
       const notice = find(app, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'RetainedDraftNotice')!

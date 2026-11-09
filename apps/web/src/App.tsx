@@ -146,6 +146,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     noDevices: '暂无设备，点上方新建',
     configUnread: '设备清单尚未核实，请查看上方读取提示。',
     deviceListLoading: '正在读取设备清单…', deviceListRefreshing: '正在刷新设备清单，暂显示上次读取内容。',
+    deviceDeleteReadBlocked: '设备清单读取中或未核实，本页未发起新的删除。请先重新读取并核对设备；先前删除结果仍须单独核实。',
     workspace: '工作区',
     switchWorkspace: '切换工作区', addWorkspace: '添加工作区', newWorkspace: '新工作区', createdAt: '创建于',
     wsPath: '工作区路径',
@@ -233,6 +234,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     noDevices: 'No devices, create one above',
     configUnread: 'Device list is unverified. See the read notice above.',
     deviceListLoading: 'Reading device list…', deviceListRefreshing: 'Refreshing device list; showing the previous snapshot.',
+    deviceDeleteReadBlocked: 'Device list is loading or unverified; no new deletion was sent by this page. Read the list again and verify the device; earlier deletion outcomes still need checking.',
     workspace: 'Workspace',
     switchWorkspace: 'Switch workspace', addWorkspace: 'Add workspace', newWorkspace: 'New workspace', createdAt: 'Created',
     wsPath: 'Workspace path',
@@ -709,6 +711,7 @@ export default function App() {
     refreshDevices(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') })
   }, [refreshDevices])
   const deleteDevice = async (id: number) => {
+    if (deviceLoading || deviceLoadError !== null) { operation.setNotice({ error: true, text: t('deviceDeleteReadBlocked') }); return }
     const device = devices.find((d) => d.id === id)
     const waiting = lang === 'en' ? 'Removal is pending or an editor/save/capture is unverified. No new deletion started; check records and results.' : '移除进行中，或编辑器/保存/留存待核实；本次未发新删除，请先核对记录与结果。'
     if (draftNavigation.removalPending(id)) { operation.setNotice({ error: true, text: waiting }); return }
@@ -799,7 +802,7 @@ export default function App() {
                   {sortingDevices ? <div className="device-order-actions">
                     <button aria-label={t('moveUp') + ': ' + d.name} title={t('moveUp')} disabled={index === 0} onClick={() => moveDevice(d.id, visibleDevices[index - 1].id)}>↑</button>
                     <button aria-label={t('moveDown') + ': ' + d.name} title={t('moveDown')} disabled={index === visibleDevices.length - 1} onClick={() => moveDevice(d.id, visibleDevices[index + 1].id)}>↓</button>
-                  </div> : <button className="device-del" aria-label={t('deleteDevice') + ': ' + d.name} disabled={operation.busy} onClick={() => deleteDevice(d.id)}>×</button>}
+                  </div> : <button className="device-del" aria-label={t('deleteDevice') + ': ' + d.name} disabled={operation.busy || deviceLoading || deviceLoadError !== null} title={deviceLoading || deviceLoadError !== null ? t('deviceDeleteReadBlocked') : undefined} onClick={() => deleteDevice(d.id)}>×</button>}
                 </div>
               ))}
               {devices.length === 0 && <div className="device-sub" role="status" style={{ padding: 8 }}>{t(deviceLoading ? 'deviceListLoading' : deviceLoadError ? 'configUnread' : 'noDevices')}</div>}

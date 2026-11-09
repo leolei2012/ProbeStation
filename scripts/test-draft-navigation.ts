@@ -120,4 +120,24 @@ await check('already missing device view ignores delayed registrations without p
     page.select(2); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 0)
   } finally { old.driver.dispose() }
 })
+await check('retained list failure preserves selection and dirty drafts; genuine empty retains read-only records', async () => {
+  for (const english of [false, true]) {
+    const page = draftSurface({ english }), original = page.render().props.device, editor = draftEditor('point', page.registration())
+    try {
+      editor.change('FAILED LIST UNSAVED DRAFT'); await page.refresh(async () => { throw Error('synthetic list failure') })
+      assert.equal(page.render().type, 'mock-device-view'); assert.equal(page.state().selectedId, 1)
+      assert.equal(editor.value(), 'FAILED LIST UNSAVED DRAFT'); assert.equal(page.drafts.retained().length, 0)
+      page.select(2); assert.equal(page.state().selectedId, 1); assert.equal(page.prompts.length, 1); assert.equal(editor.calls.save, 0)
+      await page.refresh(async () => []); assert.equal(page.render().type, 'mock-empty-view'); assert.equal(page.render().props.unverified, false)
+      const retained = page.drafts.retained()[0]; assert(retained.snapshot?.text.includes('FAILED LIST UNSAVED DRAFT'))
+      await page.refresh(async () => { throw Error('synthetic empty-list refresh failure') })
+      assert.equal(page.render().props.unverified, true); assert.equal(page.render().props.loading, false); assert.equal(page.drafts.retained()[0], retained)
+      await page.refresh(async () => [original]); assert.equal(page.render().type, 'mock-device-view')
+      editor.submit(false); assert.equal(editor.calls.save, 0, 'reappearance does not silently reactivate the old draft')
+      assert.equal(page.drafts.retained()[0], retained)
+    } finally { editor.driver.dispose() }
+    const browse = draftSurface({ english }); await browse.refresh(async () => { throw Error('synthetic list failure') }); browse.select(2)
+    assert.equal(browse.state().selectedId, 2, 'old list remains usable for viewing without inventing a new verification')
+  }
+})
 console.log('DRAFT NAVIGATION TEST OK: ' + passed + ' scoped registry/actual callback/editor groups; mock-only, no browser or data writes; detached records tested separately')

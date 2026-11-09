@@ -130,6 +130,13 @@ assert(!nodes.find(node => node.name.getText(source) === 'api')!.getText(source)
   const sidebarEmpty = find(source, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'devices.length === 0')!
   const sidebarRefreshing = find(source, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'devices.length > 0 && deviceLoading')!
   const messages = evaluate(nodes.find(node => node.name.getText(source) === 'I18N')!.initializer!, {})
+  const deleteButton = find(source, node => ts.isJsxElement(node) && node.openingElement.getText(source).includes('className="device-del"'))!
+  for (const english of [false, true]) for (const [busy, failure] of [[true, null], [false, 'failed'], [false, null]] as const) {
+    const button = evaluate(deleteButton, { React: { createElement }, operation: { busy: false }, deviceLoading: busy, deviceLoadError: failure, d: { id: 2, name: 'synthetic retained device' }, t: (key: string) => messages[english ? 'en' : 'zh'][key], deleteDevice() { assert.fail('render must not delete') } })
+    assert.equal(button.props.disabled, busy || failure !== null)
+    if (button.props.disabled) assert.match(button.props.title, english ? /list.*unverified/i : /清单.*未核实/)
+    else assert.equal(button.props.title, undefined)
+  }
   let snapshot: any[] = [], error: reads.ConfigReadFailure | null = null, pending = true, updates = 0
   const owner = { current: new reads.LatestConfigRead() }, queue: Array<{ resolve(value: unknown): void; reject(error: unknown): void; signal: AbortSignal }> = []
   const refresh = compile('refreshDevices', { deviceRead: owner, draftNavigation: new DraftNavigation(), setRetainedDrafts() {}, readConfigRequest: reads.readConfigRequest, configReadFailure: reads.configReadFailure,
