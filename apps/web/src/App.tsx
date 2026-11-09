@@ -145,6 +145,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     devices: '设备',
     noDevices: '暂无设备，点上方新建',
     configUnread: '设备清单尚未核实，请查看上方读取提示。',
+    deviceListLoading: '正在读取设备清单…', deviceListRefreshing: '正在刷新设备清单，暂显示上次读取内容。',
     workspace: '工作区',
     switchWorkspace: '切换工作区', addWorkspace: '添加工作区', newWorkspace: '新工作区', createdAt: '创建于',
     wsPath: '工作区路径',
@@ -231,6 +232,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     devices: 'Devices',
     noDevices: 'No devices, create one above',
     configUnread: 'Device list is unverified. See the read notice above.',
+    deviceListLoading: 'Reading device list…', deviceListRefreshing: 'Refreshing device list; showing the previous snapshot.',
     workspace: 'Workspace',
     switchWorkspace: 'Switch workspace', addWorkspace: 'Add workspace', newWorkspace: 'New workspace', createdAt: 'Created',
     wsPath: 'Workspace path',
@@ -523,6 +525,7 @@ export default function App() {
   }
 
   const [deviceLoadError, setDeviceLoadError] = useState<ConfigReadFailure | null>(null)
+  const [deviceLoading, setDeviceLoading] = useState(true)
   const [groupLoadError, setGroupLoadError] = useState<ConfigReadFailure | null>(null)
   const deviceRead = useRef<LatestConfigRead>()
   const groupRead = useRef<LatestConfigRead>()
@@ -538,6 +541,7 @@ export default function App() {
   useEffect(() => { saveSidebarCollapsed(collapsed) }, [collapsed])
 
   const refreshDevices = useCallback(() => {
+    setDeviceLoading(true)
     void deviceRead.current!.run(async signal => {
       const objs: Device[] = await readConfigRequest('/api/monitor_objects', signal, (url, requestSignal) => request(url, { signal: requestSignal }))
       if (!Array.isArray(objs)) throw new Error('Invalid devices response')
@@ -547,7 +551,7 @@ export default function App() {
         map[object.id] = object.connected === true
       }
       return { objs, map }
-    }, ({ objs, map }) => { draftNavigation.retainMissing(objs.map(object => object.id)); setRetainedDrafts(draftNavigation.retained()); setDevices(objs); setDeviceConnected(map); setDeviceLoadError(null) }, error => setDeviceLoadError(configReadFailure(error)))
+    }, ({ objs, map }) => { draftNavigation.retainMissing(objs.map(object => object.id)); setRetainedDrafts(draftNavigation.retained()); setDevices(objs); setDeviceConnected(map); setDeviceLoadError(null); setDeviceLoading(false) }, error => { setDeviceLoadError(configReadFailure(error)); setDeviceLoading(false) })
   }, [])
   const refreshRegisters = useCallback((id: number) => {
     void groupRead.current!.run(signal => readDeviceGroups<Register>(id, signal, (url, requestSignal) => readConfigRequest(url, requestSignal, (path, innerSignal) => request(path, { signal: innerSignal }))),
@@ -798,7 +802,8 @@ export default function App() {
                   </div> : <button className="device-del" aria-label={t('deleteDevice') + ': ' + d.name} disabled={operation.busy} onClick={() => deleteDevice(d.id)}>×</button>}
                 </div>
               ))}
-              {devices.length === 0 && <div className="device-sub" style={{ padding: 8 }}>{t(deviceLoadError ? 'configUnread' : 'noDevices')}</div>}
+              {devices.length === 0 && <div className="device-sub" role="status" style={{ padding: 8 }}>{t(deviceLoading ? 'deviceListLoading' : deviceLoadError ? 'configUnread' : 'noDevices')}</div>}
+              {devices.length > 0 && deviceLoading && <div className="device-sub" role="status" style={{ padding: 8 }}>{t('deviceListRefreshing')}</div>}
               {devices.length > 0 && visibleDevices.length === 0 && <div className="device-sub" style={{ padding: 12 }}>{t('noSearchResults')}</div>}
             </div>
           </>
@@ -823,7 +828,7 @@ export default function App() {
           ? <DatabaseView t={t} devices={devices} />
           : (selected
               ? <DeviceView drafts={draftNavigation} onLeaveDrafts={range => confirmDraftLeave(selected.id, range)} onNavigate={navigateData} configurationReady={groupSnapshot?.objectId === selectedId} target={dataTarget?.deviceId === selected.id ? dataTarget : null} key={selected.id} t={t} device={selected} connected={realtime.status === 'connected' ? deviceConnected[selected.id] : undefined} groups={groups} latest={latest} groupErrors={groupErrors} realtime={realtime} fallbackOk={fallbackStatus[selected.id]} busy={operation.busy} onToggle={toggleDevice} onEdit={editDevice} onDelete={deleteDevice} onRefresh={refreshRegisters} />
-              : <EmptyState t={t} onAdd={() => setShowAdd(true)} unverified={deviceLoadError !== null} />)}
+              : <EmptyState t={t} onAdd={() => setShowAdd(true)} unverified={deviceLoadError !== null} loading={deviceLoading} />)}
       </main>
 
       <AssistantPanel onNavigate={navigateData} configRevision={aiConfigRevision} onOpenSettings={() => { setSettingsSection('ai'); setShowSettings(true) }} key={selected?.id ?? 'all'} device={selected} onChanged={() => { refreshDevices(); if (selected) refreshRegisters(selected.id) }} />
@@ -833,8 +838,8 @@ export default function App() {
   )
 }
 
-function EmptyState({ t, onAdd, unverified = false }: { t: T; onAdd: () => void; unverified?: boolean }) {
-  return <div className="empty-state"><div className="big">🛰️</div><div>{t(unverified ? 'configUnread' : 'emptyHint')}</div>{!unverified && <button className="btn primary" onClick={onAdd}>＋ {t('newDevice')}</button>}</div>
+function EmptyState({ t, onAdd, unverified = false, loading = false }: { t: T; onAdd: () => void; unverified?: boolean; loading?: boolean }) {
+  return <div className="empty-state"><div className="big">🛰️</div><div role={loading ? 'status' : undefined}>{t(loading ? 'deviceListLoading' : unverified ? 'configUnread' : 'emptyHint')}</div>{!unverified && !loading && <button className="btn primary" onClick={onAdd}>＋ {t('newDevice')}</button>}</div>
 }
 
 function GlobalTabBar({ t, view, onChange }: { t: T; view: 'monitor' | 'database'; onChange: (v: 'monitor' | 'database') => void }) {

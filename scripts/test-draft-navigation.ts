@@ -110,9 +110,12 @@ await check('already missing device view ignores delayed registrations without p
   const page = draftSurface(), old = draftEditor('point', page.registration())
   try {
     old.change(); page.remove(); assert.equal(page.render().type, 'mock-empty-view')
-    assert.equal(page.render().props.unverified, false)
-    await page.refresh(async () => { throw Error('synthetic read failed') }); assert.equal(page.render().props.unverified, true)
-    await page.refresh(async () => []); assert.equal(page.render().props.unverified, false)
+    assert.equal(page.render().props.unverified, false); assert.equal(page.render().props.loading, false)
+    let finish!: () => void
+    const refresh = page.refresh(() => new Promise((_resolve, reject) => { finish = () => reject(Error('synthetic read failed')) }))
+    assert.equal(page.render().props.loading, true); finish(); await refresh
+    assert.equal(page.render().props.unverified, true); assert.equal(page.render().props.loading, false)
+    await page.refresh(async () => []); assert.equal(page.render().props.unverified, false); assert.equal(page.render().props.loading, false)
     // Model a cleanup that has not run yet; there is no longer a DeviceView to unload.
     page.select(2); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 0)
   } finally { old.driver.dispose() }

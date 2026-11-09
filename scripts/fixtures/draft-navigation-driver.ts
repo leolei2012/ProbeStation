@@ -66,9 +66,10 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
   const drafts = evaluate(variable('draftNavigation'), { useMemo: (fn: () => unknown) => fn(), DraftNavigation }) as DraftNavigation
   const read = new LatestConfigRead()
   let deviceLoadError: ConfigReadFailure | null = null
+  let deviceLoading = false // This fixture starts with an already-loaded synthetic device list.
   let records = drafts.retained()
   const setRetainedDrafts = (next: typeof records) => { records = next }
-  const acceptDevices = { draftNavigation: drafts, setRetainedDrafts, setDevices(next: typeof devices) { devices = next }, setDeviceConnected() {}, setDeviceLoadError(value: ConfigReadFailure | null) { deviceLoadError = value } }
+  const acceptDevices = { draftNavigation: drafts, setRetainedDrafts, setDevices(next: typeof devices) { devices = next }, setDeviceConnected() {}, setDeviceLoadError(value: ConfigReadFailure | null) { deviceLoadError = value }, setDeviceLoading(value: boolean) { deviceLoading = value } }
   const setters = { setSelectedId(id: number | null | ((current: number | null) => number | null)) { changes.push('device'); selectedId = typeof id === 'function' ? id(selectedId) : id }, setView(next: string) { changes.push('view'); view = next }, setDataTarget(next: unknown) { changes.push('target'); target = next } }
   const window = { ...unloadTarget(), innerWidth: options.mobile ? 640 : 1200, confirm(text: string) { prompts.push(text); if (answer instanceof Error) throw answer; return answer } }
   const operationNode = find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === 'useOperation')!
@@ -80,7 +81,7 @@ export function draftSurface(options: { english?: boolean; slave?: boolean; mobi
   const render = () => {
     const selected = evaluate(variable('selected'), { devices, selectedId })
     const noAction = () => { throw Error('No write/refresh callback may run') }
-    return evaluate(rootBranch, { ...setters, view, selected, selectedId, deviceLoadError, dataTarget: target, devices, DeviceView: 'mock-device-view', DatabaseView: 'mock-database-view', EmptyState: 'mock-empty-view', t, navigateData: emit, draftNavigation: drafts, confirmDraftLeave, groupSnapshot: { objectId: selectedId }, realtime: { status: 'connected' }, deviceConnected: {}, groups: [], latest: {}, groupErrors: {}, fallbackStatus: {}, operation: { busy: false }, toggleDevice: noAction, editDevice: noAction, deleteDevice: noAction, refreshRegisters: noAction, setShowAdd: noAction, React }) as React.ReactElement<any>
+    return evaluate(rootBranch, { ...setters, view, selected, selectedId, deviceLoadError, deviceLoading, dataTarget: target, devices, DeviceView: 'mock-device-view', DatabaseView: 'mock-database-view', EmptyState: 'mock-empty-view', t, navigateData: emit, draftNavigation: drafts, confirmDraftLeave, groupSnapshot: { objectId: selectedId }, realtime: { status: 'connected' }, deviceConnected: {}, groups: [], latest: {}, groupErrors: {}, fallbackStatus: {}, operation: { busy: false }, toggleDevice: noAction, editDevice: noAction, deleteDevice: noAction, refreshRegisters: noAction, setShowAdd: noAction, React }) as React.ReactElement<any>
   }
   return { render, drafts, prompts, notices, changes, setAnswer(value: boolean | Error) { answer = value }, state: () => ({ selectedId, view, target, token: sequence.current, tab, collapsed, cancelledHistory }),
     window,

@@ -23,10 +23,11 @@ const classify = (error: unknown) => (reads as any).configReadFailure(error)
 // Execute the actual production refresh callback, not a hand-written equivalent.
 const deviceRead = { current: new reads.LatestConfigRead() }, signals: AbortSignal[] = []
 const old = deferred<any>(), accepted: any[] = [], errors: unknown[] = [], connected: any[] = []
+let loading = true
 let get = (_url: string, options: RequestInit) => { signals.push(options.signal!); return old.promise }
-const refreshDevices = compile('refreshDevices', { deviceRead, draftNavigation: new DraftNavigation(), setRetainedDrafts: (records: unknown[]) => { assert.deepEqual(records, []) }, request: (url: string, options: RequestInit) => { assert.equal(url, '/api/monitor_objects'); assert.equal(options.method, undefined); return get(url, options) }, readConfigRequest: timeoutRead, configReadFailure: classify, setDevices: (value: any) => accepted.push(value), setDeviceConnected: (value: any) => connected.push(value), setDeviceLoadError: (value: unknown) => errors.push(value) })
+const refreshDevices = compile('refreshDevices', { deviceRead, draftNavigation: new DraftNavigation(), setRetainedDrafts: (records: unknown[]) => { assert.deepEqual(records, []) }, request: (url: string, options: RequestInit) => { assert.equal(url, '/api/monitor_objects'); assert.equal(options.method, undefined); return get(url, options) }, readConfigRequest: timeoutRead, configReadFailure: classify, setDevices: (value: any) => accepted.push(value), setDeviceConnected: (value: any) => connected.push(value), setDeviceLoading: (value: boolean) => { loading = value }, setDeviceLoadError: (value: unknown) => errors.push(value) })
 try {
-  refreshDevices(); await tick()
+  refreshDevices(); assert.equal(loading, true); await tick(); assert.equal(loading, false)
   assert.equal(errors.at(-1), 'timeout', 'a hung actual device-list callback must reach a visible retryable error')
   assert.equal(signals[0].aborted, true); assert.equal(accepted.length, 0)
   get = async () => [{ id: 2, connected: true }]; refreshDevices(); await tick()
@@ -104,6 +105,11 @@ for (const english of [false, true]) {
 }
 const emptyNode = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'EmptyState')!
 const EmptyState = new Function('React', ts.transpileModule('return (' + emptyNode.getText(source) + ')', { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)({ createElement })
+{
+  const pending = renderToStaticMarkup(createElement(EmptyState, { t: (key: string) => key, onAdd() {}, loading: true }))
+  assert.match(pending, /deviceListLoading/, 'an unresolved first list read must not claim an empty configuration')
+  assert.doesNotMatch(pending, /emptyHint|<button/)
+}
 for (const unverified of [true, false]) {
   const markup = renderToStaticMarkup(createElement(EmptyState, { t: (key: string) => key, onAdd() {}, unverified }))
   if (unverified) { assert(markup.includes('configUnread')); assert(!markup.includes('<button')); assert(!markup.includes('emptyHint')) }
@@ -113,7 +119,47 @@ const appText = source.getFullText(); assert.match(appText, /<ConfigLoadNotice\s
 let emptyGuard = ''
 const findEmptyGuard = (node: ts.Node) => { if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'EmptyState') { const attribute = node.attributes.properties.find(value => ts.isJsxAttribute(value) && value.name.getText(source) === 'unverified'); if (attribute && ts.isJsxAttribute(attribute)) emptyGuard = attribute.initializer?.getText(source) ?? '' }; ts.forEachChild(node, findEmptyGuard) }; findEmptyGuard(source)
 assert.equal(emptyGuard, '{deviceLoadError !== null}')
-assert.match(appText, /t\(deviceLoadError \? 'configUnread' : 'noDevices'\)/)
+assert.match(appText, /t\(deviceLoading \? 'deviceListLoading' : deviceLoadError \? 'configUnread' : 'noDevices'\)/)
 assert.match(appText, /onRetry=\{\(\) => \{ refreshDevices\(\); if \(selectedId != null\) refreshRegisters\(selectedId\) \}\}/)
 assert(!nodes.find(node => node.name.getText(source) === 'api')!.getText(source).includes('readConfigRequest'), 'mutation helpers keep their original uncancelled path')
+{
+  function find(node: ts.Node, predicate: (node: ts.Node) => boolean): ts.Node | undefined { if (predicate(node)) return node; let found: ts.Node | undefined; ts.forEachChild(node, child => { found ??= find(child, predicate) }); return found }
+  const evaluate = (node: ts.Node, env: Record<string, unknown>) => new Function(...Object.keys(env), ts.transpileModule('return (' + node.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, jsx: ts.JsxEmit.React } }).outputText)(...Object.values(env))
+  const initialLoading = nodes.find(node => ts.isArrayBindingPattern(node.name) && node.name.elements[0]?.getText(source) === 'deviceLoading')!
+  assert.equal((initialLoading.initializer as ts.CallExpression).arguments[0].kind, ts.SyntaxKind.TrueKeyword, 'first render must be pending before the mount effect starts the GET')
+  const sidebarEmpty = find(source, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'devices.length === 0')!
+  const sidebarRefreshing = find(source, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'devices.length > 0 && deviceLoading')!
+  const messages = evaluate(nodes.find(node => node.name.getText(source) === 'I18N')!.initializer!, {})
+  let snapshot: any[] = [], error: reads.ConfigReadFailure | null = null, pending = true, updates = 0
+  const owner = { current: new reads.LatestConfigRead() }, queue: Array<{ resolve(value: unknown): void; reject(error: unknown): void; signal: AbortSignal }> = []
+  const refresh = compile('refreshDevices', { deviceRead: owner, draftNavigation: new DraftNavigation(), setRetainedDrafts() {}, readConfigRequest: reads.readConfigRequest, configReadFailure: reads.configReadFailure,
+    request: (url: string, options: RequestInit) => { assert.equal(url, '/api/monitor_objects'); assert.equal(options.method, undefined); return new Promise((resolve, reject) => queue.push({ resolve, reject, signal: options.signal! })) },
+    setDevices(value: any[]) { snapshot = value; updates++ }, setDeviceConnected() {}, setDeviceLoadError(value: reads.ConfigReadFailure | null) { error = value; updates++ }, setDeviceLoading(value: boolean) { pending = value; updates++ } })
+  const sidebar = (english: boolean) => {
+    const env = { React: { createElement }, devices: snapshot, deviceLoading: pending, deviceLoadError: error, t: (key: string) => messages[english ? 'en' : 'zh'][key] }
+    return renderToStaticMarkup(createElement('div', null, evaluate(sidebarEmpty, env), evaluate(sidebarRefreshing, env)))
+  }
+  const initialView = () => { for (const english of [false, true]) {
+    assert.match(sidebar(english), english ? /Reading device list/ : /正在读取设备清单/); assert.doesNotMatch(sidebar(english), /No devices|暂无设备/)
+    const html = renderToStaticMarkup(createElement(EmptyState, { t: (key: string) => messages[english ? 'en' : 'zh'][key], loading: pending, unverified: error !== null, onAdd() { assert.fail('rendering must not create a device') } }))
+    assert.match(html, /role="status"/); assert.doesNotMatch(html, /<button/)
+  } }
+  try {
+    initialView(); refresh(); initialView(); await tick(0)
+    queue[0].reject(new Error('HTTP 503 PRIVATE service')); await tick(0)
+    assert.equal(error, 'unavailable'); assert.equal(pending, false); assert.deepEqual(snapshot, [])
+    for (const english of [false, true]) { assert.match(sidebar(english), english ? /unverified/ : /尚未核实/); assert.doesNotMatch(sidebar(english), /No devices|暂无设备/); assert.match(render(error, null, english), /503/) }
+    refresh(); await tick(0); refresh(); await tick(0); assert.equal(queue[1].signal.aborted, true)
+    queue[1].resolve([]); await tick(0); assert.equal(pending, true, 'obsolete success cannot clear the current loading state'); initialView()
+    queue[2].resolve([{ id: 2, connected: false }]); await tick(0); assert.equal(pending, false); assert.equal(error, null); assert.equal(snapshot[0].id, 2)
+    const previous = snapshot; refresh(); assert.equal(snapshot, previous)
+    for (const english of [false, true]) assert.match(sidebar(english), english ? /Refreshing.*previous snapshot/ : /刷新.*上次/)
+    await tick(0); queue[3].resolve({ invalid: true }); await tick(0); assert.equal(pending, false); assert.equal(error, 'failed'); assert.equal(snapshot, previous, 'invalid replies retain the complete prior list, never empty it')
+    refresh(); await tick(0); queue[4].resolve([]); await tick(0); assert.equal(pending, false); assert.equal(error, null)
+    for (const english of [false, true]) assert.match(sidebar(english), english ? /No devices/ : /暂无设备/)
+    refresh(); await tick(0); owner.current.cancel(); const writesAtClose = updates; queue[5].resolve([{ id: 99 }]); await tick(0); assert.equal(updates, writesAtClose, 'unmounted/cancelled read has no late loading or list updates')
+    assert.equal(queue.length, 6, 'only explicit reads are issued; no automatic retry or write')
+  } finally { owner.current.cancel() }
+  console.log('DEVICE LIST STATE OK: actual initial loading/sidebar/main, 503 versus empty, retained refreshing snapshot, invalid response, overlap ownership, recovery and cancelled late reply; bilingual callbacks/SSR only.')
+}
 console.log('CONFIG READ TIMEOUT OK: actual App list/group callbacks, timeout→retry/empty/failure, late result isolation, body waits, cancellation, whole-graph/no-follow-up and per-GET budgets; actual HTTP 503 adapter, old snapshot retention/read-only recovery, status boundaries and bilingual notice/empty-state SSR; mocks only, no DOM/network/database/hardware')
