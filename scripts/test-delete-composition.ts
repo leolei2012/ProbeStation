@@ -90,19 +90,30 @@ function apiFor(f: ReturnType<typeof fixture>, kind: Kind) { const app = Fastify
 const appSource = ts.createSourceFile('App.tsx', readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const groupNode = find(appSource, node => ts.isVariableDeclaration(node) && node.name.getText(appSource) === 'deleteGroup') as ts.VariableDeclaration, operationNode = find(appSource, node => ts.isFunctionDeclaration(node) && node.name?.text === 'useOperation')!;
 const evaluate = (node: ts.Node, scope: Record<string, unknown>) => new Function(...Object.keys(scope), ts.transpileModule('return (' + node.getText(appSource) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(...Object.values(scope));
-function groupUi(english: boolean, send: (url: string) => Promise<unknown>, refresh: () => void, groups: unknown[], answer = true) { const notices: {
+function groupUi(english: boolean, send: (url: string) => Promise<unknown>, refresh: () => void, groups: unknown[], answer = true, configurationReady = true) { const notices: {
     error: boolean;
     text: string;
 }[] = []; let prompts = 0; const t = (key: string) => key === 'cancel' ? (english ? 'Cancel' : '取消') : key === 'operationOk' ? 'OK' : key === 'operationFailed' ? (english ? 'Operation failed' : '操作失败') : key === 'confirmDeleteGroup' ? 'Delete {name}' : key; const operation = evaluate(operationNode, { useState: (value: unknown) => [value, () => { }], useRef: (value: unknown) => ({ current: value }), showOperationNotice: (value: {
         error: boolean;
         text: string;
-    }) => notices.push(value), ActivationUncertainError })(t); const remove = evaluate(groupNode.initializer!, { groups, window: { confirm() { prompts++; return answer; } }, operation, t, api: { del: send }, onRefresh: refresh }); return { remove, notices, prompts: () => prompts }; }
+    }) => notices.push(value), ActivationUncertainError })(t); const remove = evaluate(groupNode.initializer!, { groups, configurationReady, window: { confirm() { prompts++; return answer; } }, operation, t, api: { del: send }, onRefresh: refresh }); return { remove, notices, prompts: () => prompts }; }
 const onUnhandled = (error: unknown) => { unhandled.push(error); }, listen = net.Server.prototype.listen, connect = net.Socket.prototype.connect, fetch = globalThis.fetch, block = (name: string) => () => { denied.push(name); throw Error('unexpected real I/O: ' + name); };
 net.Server.prototype.listen = block('listen') as typeof listen;
 net.Socket.prototype.connect = block('connect') as typeof connect;
 globalThis.fetch = block('fetch') as typeof fetch;
 process.on('unhandledRejection', onUnhandled);
 try {
+    await check('unverified-group-delete-keeps-the-changed-memory-target', async () => {
+        for (const english of [false, true]) {
+            const f = fixture(), route = apiFor(f, 'group'); let requests = 0;
+            try {
+                f.cfg.updateObject(f.d.id, { ip: 'changed-target.mock.invalid' }); const before = snapshot(f.db);
+                const ui = groupUi(english, async url => { requests++; return route.app.inject({ method: 'DELETE', url }); }, () => {}, [f.g], true, false);
+                await ui.remove(f.g.id); assert.equal(requests, 0, 'an unverified old group target must not receive DELETE'); assert.equal(ui.prompts(), 0); assert.equal(snapshot(f.db), before);
+                assert(ui.notices.at(-1)?.error);
+            } finally { await route.app.close(); await f.close(); }
+        }
+    });
     for (const kind of kinds)
         for (const mode of ['legacy-reference', 'atomic-success', 'atomic-failure', 'notify-failure'])
             await check(kind + '/' + mode, async () => {

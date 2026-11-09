@@ -24,14 +24,53 @@ function groupEditor(page: ReturnType<typeof draftSurface>, editing = false, opt
   return { driver, props, snapshot, counts: () => ({ writes, closes, saves, reads }), value: () => driver.one('input', p => !p.type).props.value, change(value: string) { driver.one('input', p => !p.type).props.onChange({ target: { value } }); driver.render() }, submit() { driver.one('form').props.onSubmit({ preventDefault() {} }); driver.render() }, close() { driver.one('button', p => p.type === 'button' && p.children === props.t('cancel')).props.onClick(); driver.render() }, async ready() { await tick(); driver.render() } }
 }
 
+await check('unverified creation keeps the open draft without POST or automatic replay', async () => {
+  for (const english of [false, true]) {
+    const page = draftSurface({ english }), editor = groupEditor(page, false, { english })
+    try {
+      editor.change('KEEP UNVERIFIED CREATE'); editor.driver.render({ ...editor.props, creationReady: false }); editor.submit(); await editor.ready()
+      assert.equal(editor.counts().writes, 0, 'an unverified old target must not receive a group creation')
+      assert.equal(editor.counts().saves, 0); assert.equal(editor.counts().closes, 0); assert.equal(editor.value(), 'KEEP UNVERIFIED CREATE')
+      assert.match(renderToStaticMarkup(editor.driver.tree), english ? /unverified/ : /未核实/)
+      editor.driver.render({ ...editor.props, creationReady: true }); await editor.ready(); assert.equal(editor.counts().writes, 0)
+      editor.submit(); await editor.ready(); assert.equal(editor.counts().writes, 1)
+    } finally { editor.driver.dispose() }
+  }
+})
 await check('actual App forwards group ownership and cancelled routes preserve edited inputs', async () => {
-  const source = fs.readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'); assert(source.includes('<GroupModal draftScope={draftScope}'))
+  const source = fs.readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'); assert(source.includes('<GroupModal draftScope={draftScope} creationReady={configurationReady}'))
   for (const editing of [false, true]) for (const route of ['device', 'database', 'history', 'reference'] as const) {
     const page = draftSurface(), editor = groupEditor(page, editing)
     try { await editor.ready(); assert.equal(page.window.count(), 0); editor.change('GROUP RAW DRAFT'); assert(page.window.fire().prevented); const before = page.state(); if (route === 'device') page.select(2); else if (route === 'database') page.global('database'); else if (route === 'history') page.localTab(2); else page.reference(2)
       assert.deepEqual(page.state(), before); assert.equal(page.prompts.length, 1); assert.equal(editor.value(), 'GROUP RAW DRAFT'); assert.equal(editor.counts().writes, 0)
       page.setAnswer(true); page.select(2); assert.equal(page.state().selectedId, 2)
     } finally { editor.driver.dispose(); assert.equal(page.window.count(), 0) }
+  }
+})
+await check('creation draft never transfers to an observed changed device or revives after ABA', async () => {
+  for (const english of [false, true]) {
+    const page = draftSurface({ english }), editor = groupEditor(page, false, { english })
+    try {
+      editor.change('COPY BEFORE REOPEN'); editor.driver.render({ ...editor.props, device: { ...editor.props.device, ip: 'new-target.mock.invalid' }, creationReady: true })
+      editor.submit(); await editor.ready(); assert.equal(editor.counts().writes, 0); assert.equal(editor.value(), 'COPY BEFORE REOPEN')
+      assert.match(renderToStaticMarkup(editor.driver.tree), english ? /Target device definitions/ : /目标设备定义/)
+      editor.driver.render({ ...editor.props, creationReady: true }); editor.submit(); await editor.ready()
+      assert.equal(editor.counts().writes, 0); assert.equal(editor.counts().closes, 0); assert.equal(editor.value(), 'COPY BEFORE REOPEN')
+    } finally { editor.driver.dispose() }
+  }
+})
+await check('creation-only gate preserves conditional editing and does not cancel an admitted create', async () => {
+  const editPage = draftSurface(), editing = groupEditor(editPage, true)
+  try { await editing.ready(); editing.change('CONDITIONAL EDIT KEPT'); editing.driver.render({ ...editing.props, creationReady: false }); editing.submit(); await editing.ready(); assert.equal(editing.counts().writes, 1) } finally { editing.driver.dispose() }
+  for (const english of [false, true]) {
+    const page = draftSurface({ english }), wait = deferred<unknown>(), creating = groupEditor(page, false, { wait, english })
+    try {
+      creating.change('ADMITTED CREATE'); creating.submit(); assert.equal(creating.counts().writes, 1)
+      creating.driver.render({ ...creating.props, creationReady: false }); creating.submit(); assert.equal(creating.counts().writes, 1)
+      const pendingView = renderToStaticMarkup(creating.driver.tree); assert.match(pendingView, english ? /Further creation submissions disabled/ : /后续新建提交已停用/); assert.doesNotMatch(pendingView, /未发新建请求|no new creation sent/)
+      wait.resolve({ id: 99 }); await creating.ready(); assert.equal(creating.counts().saves, 1); assert.equal(creating.value(), 'ADMITTED CREATE')
+      assert.equal(creating.counts().writes, 1)
+    } finally { wait.resolve({ id: 99 }); await tick(); creating.driver.dispose() }
   }
 })
 await check('one confirmation covers group plus point while reverted and clean groups do not interfere', async () => {

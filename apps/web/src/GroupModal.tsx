@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react'
-import { captureDeviceEditBaseline, type DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
+import { captureDeviceEditBaseline, deviceEditMatches, type DeviceEditBaseline } from '../../../packages/core/src/device-settings-edit'
 import { captureGroupOpening, parseGroupEditChanges, planGroupResize, type GroupEditSnapshot } from '../../../packages/core/src/group-settings-edit'
 import { readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings } from './group-settings-save'
 import { configurationWriteBlocked } from './configuration-write-outcome'
@@ -8,12 +8,15 @@ import { bindBeforeUnload } from './before-unload'
 import { DetachedEditorNotice } from './RetainedDraftNotice'
 
 export interface GroupEditorInput { id: number; name: string; slaveId: number; functionCode: number; startAddress: number; quantity: number; isActive: number; mode?: string; registers: readonly unknown[] }
-export function GroupModal({ t, device, initial, onClose, onSaved, get, put, create, draftScope }: {
+export function GroupModal({ t, device, initial, onClose, onSaved, get, put, create, draftScope, creationReady = true }: {
   t: (key: string) => string; device: DeviceEditBaseline; initial: GroupEditorInput | null; onClose: () => void; onSaved: (warnings: readonly string[]) => void
   get: (url: string, signal: AbortSignal) => Promise<unknown>; put: (url: string, body: unknown) => Promise<unknown>; create: (url: string, body: unknown) => Promise<unknown>
-  draftScope?: DraftRegistration
+  draftScope?: DraftRegistration; creationReady?: boolean
 }) {
   const [opening] = useState(() => { try { return { device: captureDeviceEditBaseline(device), graph: initial ? captureGroupOpening(initial, device) : null, error: '' } } catch { return { device: null, graph: null, error: '分组或点位配置不完整，请关闭并刷新后重新编辑。' } } })
+  const creationRevoked = useRef(false)
+  if (!initial && opening.device) { try { if (!deviceEditMatches(captureDeviceEditBaseline(device), opening.device)) creationRevoked.current = true } catch { creationRevoked.current = true } }
+  const creationBlocked = !initial && (!creationReady || creationRevoked.current)
   const [name, setName] = useState(initial?.name ?? ''), [slaveId, setSlaveId] = useState(String(initial?.slaveId ?? device.slaveId ?? 1))
   const [functionCode, setFunctionCode] = useState(String(initial?.functionCode ?? 3)), [startAddress, setStartAddress] = useState(String(initial?.startAddress ?? 0))
   const [quantity, setQuantity] = useState(String(initial?.quantity ?? 1)), [active, setActive] = useState(initial ? initial.isActive === 1 : true)
@@ -49,7 +52,7 @@ export function GroupModal({ t, device, initial, onClose, onSaved, get, put, cre
   const changed = (update: () => void) => { update(); setConfirmed(false); setError('') }
   const save = async () => {
     if (draftScope?.removalPending?.()) { detached.current = true; notifyDetached(true); return }
-    if (detached.current || lock.current || !opening.device || initial && (!snapshot || !plan || reading || destructive && !confirmed)) return
+    if (detached.current || lock.current || creationBlocked || !opening.device || initial && (!snapshot || !plan || reading || destructive && !confirmed)) return
     lock.current = true; setBusy(true); setError('')
     try {
       const warnings = snapshot ? (await saveGuardedGroupSettings(snapshot, body, confirmed, put)).warnings : groupCreateWarnings(await create('/api/monitor_objects/' + opening.device.id + '/groups', body))
@@ -72,6 +75,7 @@ export function GroupModal({ t, device, initial, onClose, onSaved, get, put, cre
     <h3 id={title}>{t(initial ? 'editGroup' : 'newGroup')}</h3>
     <p className="enum-hint">{text('草稿仅在当前页内存中，刷新或关页会丢失；离开前请保存或手工记录。', 'Drafts stay in this page memory only; refresh or close loses them. Save or copy them before leaving.')}</p>
     {detached.current && <DetachedEditorNotice english={english} />}
+    {creationBlocked && <p className="write-msg error" role="status">{creationRevoked.current ? text('目标设备定义变化或无法核对；新建草稿保留，请记录输入后关闭重开。', 'Target device definitions changed or cannot be checked. Creation draft kept; copy it before closing and reopening.') : text('设备或点表读取中或未核实；后续新建提交已停用，草稿保留，请重读核对。', 'Device or point definitions loading or unverified. Further creation submissions disabled; draft kept. Re-read and check.')}</p>}
     {initial && <p className="enum-hint">{text('保存前核对组、点位、告警及设备来源；变化会拒绝保存并保留草稿。数量沿用按定义条数同步的规则；修改地址或功能码不重建已有点位。', 'Saving checks group, points, rules and device source; conflicts keep drafts. Quantity follows definition-count rules. Changing address/function does not rebuild existing points.')}</p>}
     {reading && <p role="status">{text('正在读取点位与告警快照，尚不能保存…', 'Reading points and alarm snapshot; saving is disabled…')}</p>}
     {readError && <div className="write-msg error" role="alert">{readError}{opening.graph && <button type="button" className="btn" disabled={busy || reading || detached.current} onClick={() => { if (!detached.current) setAttempt(v => v + 1) }}>{text('重读快照', 'Retry snapshot')}</button>}</div>}
@@ -88,6 +92,6 @@ export function GroupModal({ t, device, initial, onClose, onSaved, get, put, cre
       </section>}
     </fieldset>
     {error && <div className="write-msg error" role="alert">{error}</div>}
-    <div className="modal-actions"><button className="btn" type="button" disabled={busy} onClick={requestClose}>{t('cancel')}</button><button className="btn primary" type="submit" disabled={busy || detached.current || !opening.device || !!initial && (reading || !snapshot || !plan || destructive && !confirmed)}>{t(busy ? 'working' : 'save')}</button></div>
+    <div className="modal-actions"><button className="btn" type="button" disabled={busy} onClick={requestClose}>{t('cancel')}</button><button className="btn primary" type="submit" disabled={busy || detached.current || creationBlocked || !opening.device || !!initial && (reading || !snapshot || !plan || destructive && !confirmed)}>{t(busy ? 'working' : 'save')}</button></div>
   </form></div>
 }

@@ -1022,6 +1022,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const toggleCollapse = (id: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const deleteGroup = async (id: number) => {
+    if (!configurationReady) { operation.setNotice({ error: true, text: t('cancel') === 'Cancel' ? 'Configuration unverified; no new deletion sent. Re-read and check.' : '配置未核实，本次未发新删除；请重读核对。' }); return }
     const g = groups.find((gg) => gg.id === id)
     if (!window.confirm(t('confirmDeleteGroup').replace('{name}', g?.name ?? String(id)))) return
     let phase = 1
@@ -1124,7 +1125,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
             <div style={{ flex: 1 }} />
             <button className="btn" disabled={operation.busy} onClick={() => toggleGroupPause(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>
             {configuring && <button className="btn" onClick={() => { try { setModal({ mode: 'edit', group: fullGroupForEditing(groups, g.id) }) } catch (e) { operation.setNotice({ error: true, text: e instanceof Error ? e.message : t('operationFailed') }) } }}>{t('edit')}</button>}
-            {configuring && <button className="btn danger" disabled={operation.busy} onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>}
+            {configuring && <button className="btn danger" disabled={operation.busy || !configurationReady} onClick={() => deleteGroup(g.id)}>{t('deleteGroup')}</button>}
           </div>
           <GroupFold collapsed={!hasPointFilters && collapsed.has(g.id)}>{() => (<div className="register-table-scroll" key={pointFilterKey}><table className="reg realtime-table" style={{ minWidth: tableWidth }}>
             <colgroup>{shownColumns.address && <col className="rt-address" />}<col className="rt-description" />{shownColumns.type && <col className="rt-type" />}{showValue && <col className="rt-value" />}{shownColumns.action && <col className="rt-action" />}</colgroup>
@@ -1164,7 +1165,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
         </div>
       )})}
       {shown.length === 0 && <div className="hist-empty">{t(groups.length === 0 ? 'noRegisters' : 'noMatchingPoints')}</div>}
-      {modal && <GroupModal draftScope={draftScope} t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={warnings => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') }) }} get={(url, signal) => request(url, { signal })} put={api.put} create={api.post} />}
+      {modal && <GroupModal draftScope={draftScope} creationReady={configurationReady} t={t} device={device} initial={modal.mode === 'edit' ? modal.group : null} onClose={() => setModal(null)} onSaved={warnings => { setModal(null); onRefresh(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') }) }} get={(url, signal) => request(url, { signal })} put={api.put} create={api.post} />}
       {alarmReg && <AlarmPanel t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} point={alarmReg} onClose={() => setAlarmReg(null)} />}
       {settingsReg && <PointSettingsEditor draftScope={draftScope} guarded name={settingsReg.alias || '#' + settingsReg.id} address={settingsReg.startAddress} settings={settingsReg} typeGroups={TYPE_GROUPS} available={(() => { const group = groups.find(g => g.id === settingsReg.groupId); return group ? group.startAddress + group.quantity - settingsReg.startAddress : 0 })()} t={t} onClose={() => setSettingsReg(null)} onSave={async fields => {
         const warnings = await saveGuardedPointSettings(settingsReg.editBaseline, fields, api.put)

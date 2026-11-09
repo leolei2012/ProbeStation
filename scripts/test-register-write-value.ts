@@ -54,6 +54,11 @@ try {
   const coil = await send({ value: 1 }); assert.equal(coil.statusCode, 200); assert.equal(writes.at(-1)?.at(-1), 'coil'); assert.deepEqual(coil.json().words, [1])
   const beforeFailure = [writes.length, logs.length]; failWrite = true
   assert.equal((await send({ value: 0 })).statusCode, 500); assert.equal(writes.length, beforeFailure[0] + 1); assert.equal(logs.length, beforeFailure[1], 'target failure does not log a successful write or auto-retry')
+  failWrite = false; cfg.updateRegister(point.id, { functionCode: 3, dataType: 'uint16' })
+  const oldSlave = cfg.getGroup(group.id)!.slaveId; cfg.updateGroup(group.id, { slaveId: 9 })
+  const oldClientRequest = await send({ value: 42, method: 'single' })
+  assert.equal(oldClientRequest.statusCode, 200); assert.equal(oldSlave, 7); assert.equal(writes.at(-1)?.[4], 9)
+  console.log('REGISTER WRITE SOURCE GAP: an ID/value-only request is admitted against changed slave 7->9; spy target only. Known unprotected path, not a safety pass.')
 } finally { await app.close(); (cfg as any).db.close() }
 
 for (const type of ['int16', 'float32', 'uint64', 'hex32', 'bin64']) {
