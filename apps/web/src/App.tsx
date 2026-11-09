@@ -1828,12 +1828,12 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
         <button className="btn" onClick={() => void load()} disabled={busy || paused}>{busy ? '…' : '刷新'}</button>
         <DiagnosticsCleanupButton device={device} disabled={paused} english={t('cancel') === 'Cancel'} onCleared={result => { setClearedToken(result.token); if (mounted.current && readerRef.current === reader) { reader.invalidate(); void load() } }} />
       </div>
-      <RawFramesStatus state={state} paused={paused} english={t('cancel') === 'Cancel'} exceptionFocus={{ active: onlyExceptions, shown: visibleFrames.length, change: active => setExceptionReader(active ? reader : null) }} />
+      <RawFramesStatus state={state} paused={paused} english={t('cancel') === 'Cancel'} sharedSerial={device.transport === 'rtu'} exceptionFocus={{ active: onlyExceptions, shown: visibleFrames.length, change: active => setExceptionReader(active ? reader : null) }} />
       <div style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, maxHeight: '60vh', overflow: 'auto', background: 'var(--surface)', color: 'var(--text-1, #eee)', borderRadius: 6, padding: 8 }}>
         {visibleFrames.length === 0 ? null : (
           visibleFrames.map((f) => (
             <div key={f.id} style={{ display: 'flex', gap: 10, padding: '1px 0', borderBottom: '1px solid var(--border-1, #222)' }}>
-              <span style={{ color: 'var(--text-3, #888)', minWidth: 72 }}>{formatLocalTs(f.timestamp).slice(11)}</span>
+              <span title={f.timestamp} style={{ color: 'var(--text-3, #888)', whiteSpace: 'nowrap', flexShrink: 0 }}>{f.timestamp}</span>
               <span style={{ color: f.direction === 'tx' ? 'var(--accent)' : 'var(--success)', minWidth: 28, fontWeight: 600 }}>{dir(f.direction)}</span>
               <span style={{ minWidth: 40, color: 'var(--text-2, #bbb)' }}>{f.slaveId != null ? 'slave ' + f.slaveId : ''}</span>
               <span style={{ minWidth: 44, color: 'var(--text-2, #bbb)' }}>FC{f.functionCode ?? '?'}{f.isException ? ' (err ' + (f.exceptionCode ?? '?') + ')' : ''}</span>

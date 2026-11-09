@@ -9,12 +9,12 @@ import { communicationScope } from '../apps/web/src/communication-summary.ts'
 import { clampFrameLimit, parseRawFrames, RawFramesRead } from '../apps/web/src/raw-frames-read.ts'
 import { RawFramesStatus } from '../apps/web/src/RawFramesStatus.tsx'
 
-const device = { id: 1, transport: 'tcp' }, serial = { id: 2, transport: 'rtu', serialPath: 'COM_MOCK' }, scope = communicationScope(device)
+const device = { id: 1, transport: 'tcp' }, serial = { id: 2, transport: 'rtu', serialPath: 'COM_MOCK' }, sharedSerial = { ...serial, id: 3 }, scope = communicationScope(device)
 let engine: any, effects = 0
 const tcp = new ModbusDiagnostics('tcp', 2000, { deviceId: 1, channelKey: 'tcp:1' }), rtu = new ModbusDiagnostics('rtu', 2000, { channelKey: 'rtu:COM_MOCK' })
 tcp.recordFrame('tx', Buffer.from([0, 1, 0, 0, 0, 6, 1, 3, 0, 0, 0, 1])); tcp.recordFrame('rx', Buffer.from([0, 1, 0, 0, 0, 5, 1, 3, 2, 0, 0]))
 rtu.recordFrame('tx', Buffer.from([1, 3, 0, 0])); rtu.recordFrame('rx', Buffer.from([2, 3, 0, 1])); rtu.recordFrame('rx', Buffer.from([1, 0x83, 2]))
-apply({ on() {}, provide(_name: string, value: any) { engine = value }, config: { getObject: (id: number) => [device, serial].find(value => value.id === id), listGroups: () => [{ slaveId: 1 }] }, modbus: { createDriver() { effects++; throw new Error('no driver creation') } }, store: { write() { effects++ } }, emit() { effects++ } } as any, { pollIntervalMs: 0, connectRetryMs: 0, watchdogTimeoutMs: 30000, autoResetFailThreshold: 0, autoResetCooldownMs: 0 })
+apply({ on() {}, provide(_name: string, value: any) { engine = value }, config: { getObject: (id: number) => [device, serial, sharedSerial].find(value => value.id === id), listGroups: () => [{ slaveId: 1 }] }, modbus: { createDriver() { effects++; throw new Error('no driver creation') } }, store: { write() { effects++ } }, emit() { effects++ } } as any, { pollIntervalMs: 0, connectRetryMs: 0, watchdogTimeoutMs: 30000, autoResetFailThreshold: 0, autoResetCooldownMs: 0 })
 const driver = (diag: ModbusDiagnostics) => ({ getFrames: (limit: number) => diag.getFrames(limit), connect() { effects++ }, clearDiagnostics() { effects++ }, readHoldingRegisters() { effects++ } })
 engine.drivers.set('tcp:1', driver(tcp)); engine.drivers.set('rtu:COM_MOCK', driver(rtu))
 for (const target of [device, serial]) engine.driverBindings.set(engine.drivers.get(engine.driverKey(target)), engine.connectionSignature(target))
@@ -44,7 +44,7 @@ const late = deferred(), old = reader.refresh(async () => late.promise); await P
 late.resolve([]); await old; assert.equal(reader.snapshot(), paused, 'pause freezes the display even when the provider ignores abort')
 const stale = deferred(), staleTask = reader.refresh(async () => stale.promise); await Promise.resolve(); reader.cancel(); const fresh = deferred(), freshTask = reader.refresh(async () => fresh.promise); await Promise.resolve(); stale.reject(new Error('obsolete error')); await staleTask
 assert.equal(reader.snapshot().phase, 'loading'); let duplicate = 0; await reader.refresh(async () => { duplicate++; return raw }); assert.equal(duplicate, 0, 'obsolete finalizer cannot unlock the newer read'); fresh.resolve([]); await freshTask; assert.equal(reader.snapshot().phase, 'ready')
-const other = new RawFramesRead({ ...device, id: 3 }, 20); await other.refresh(async () => [{ ...raw[0], deviceId: 3, channelKey: 'tcp:3' }]); assert.equal(other.snapshot().value!.frames.length, 1); assert.equal(reader.snapshot().value!.frames.length, 0)
+const other = new RawFramesRead({ ...device, id: 4 }, 20); await other.refresh(async () => [{ ...raw[0], deviceId: 4, channelKey: 'tcp:4' }]); assert.equal(other.snapshot().value!.frames.length, 1); assert.equal(reader.snapshot().value!.frames.length, 0)
 let invalidCalls = 0
 for (const invalid of [new RawFramesRead(null, 200), new RawFramesRead({ id: 1, transport: 'future' }, 200), new RawFramesRead(device, 0)]) await invalid.refresh(async () => { invalidCalls++; return raw })
 assert.equal(invalidCalls, 0, 'invalid context must not issue a request, including one whose error would be handled')
@@ -117,7 +117,8 @@ exceptionReader = reader
 assert.deepEqual(focus(reader, bounded).visibleFrames.map((frame: any) => frame.id), bounded.filter(frame => frame.isException).map(frame => frame.id), 'maximum-size snapshot preserves all matching records in source order')
 assert.equal(focus(reader, bounded).visibleFrames.length, 500)
 // Capture markers describe observed byte chunks, not validated protocol responses.
-const renderRow = evaluate(map.arguments[0], { React: { createElement }, formatLocalTs: (value: string) => value, dir: (value: string) => value.toUpperCase() })
+const localFormatter = appSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'formatLocalTs')!
+const renderRow = evaluate(map.arguments[0], { React: { createElement }, formatLocalTs: evaluate(localFormatter, {}), dir: evaluate(variable('dir').initializer!, {}) })
 let semanticInputs = 0
 for (const transport of ['tcp', 'rtu'] as const) {
   const target = transport === 'tcp' ? device : serial, targetScope = communicationScope(target)
@@ -170,6 +171,31 @@ for (const transport of ['tcp', 'rtu'] as const) {
   semanticInputs += prefix.length + codes.length + 2
 }
 assert.equal(effects, 0)
+const shared = parseRawFrames(engine.getDeviceFrames(3, 200), communicationScope(sharedSerial), 200)
+assert.deepEqual(shared.frames, serialParsed.frames, 'same channel/slave filter can return the same captures for different configured devices')
+assert(shared.frames.every(frame => frame.sourceMetadataMatched), 'matching RTU metadata proves channel matching, not exclusive device ownership')
+console.log('RAW SHARED FILTER BOUNDARY: identical same-channel/slave captures match two configured device IDs; exclusive ownership is not established')
+const times = ['2026-11-08T13:00:00.001Z', '2026-11-09T13:00:00.001Z', '2026-11-09T13:00:00.999Z', '2026-11-09T13:00:00.123+08:00', '2026-11-09T13:00:00.123']
+for (const [index, timestamp] of times.entries()) {
+  const snapshot = parseRawFrames([{ ...raw[0], id: index + 100, timestamp, direction: index % 2 ? 'rx' : 'tx' }], scope, 200), original = JSON.stringify(snapshot)
+  const row = renderRow(snapshot.frames[0]), shown = row.props.children[0].props
+  assert.equal(shown.children, timestamp, 'capture rows must preserve the original date, precision and explicit or absent zone instead of showing seconds alone')
+  assert.equal(shown.title, timestamp); assert.equal(row.props.children[1].props.children, index % 2 ? 'RX' : 'TX'); assert.equal(JSON.stringify(snapshot), original)
+}
+const sharedAttribute = status.attributes.properties.find(node => ts.isJsxAttribute(node) && node.name.getText(appSource) === 'sharedSerial') as ts.JsxAttribute
+assert(sharedAttribute?.initializer && ts.isJsxExpression(sharedAttribute.initializer), 'actual RTU display must provide channel scope even when its capture list is empty')
+const sharedExpression = (sharedAttribute.initializer as ts.JsxExpression).expression!
+assert.equal(evaluate(sharedExpression, { device: serial }), true); assert.equal(evaluate(sharedExpression, { device }), false)
+for (const english of [false, true]) {
+  for (const value of [shared, parseRawFrames([], communicationScope(serial), 200)]) {
+    const html = renderToStaticMarkup(createElement(RawFramesStatus, { state: { phase: 'ready', value }, paused: false, english, sharedSerial: true }))
+    assert(html.includes(english ? 'Shared RTU channel' : '共享RTU通道')); assert(html.includes(english ? 'not exclusive' : '不能认定属于当前设备')); assert(html.includes(english ? 'backend sent' : '后台发送')); assert(html.includes(english ? 'not a verified response' : '不保证有效响应'))
+  }
+  const tcp = renderToStaticMarkup(createElement(RawFramesStatus, { state: { phase: 'ready', value: parsed }, paused: false, english, sharedSerial: false }))
+  assert(!tcp.includes(english ? 'Shared RTU channel' : '共享RTU通道'))
+}
+assert.equal(effects, 0)
+console.log('RAW CAPTURE DETAILS OK: original timestamps across days/milliseconds/offsets/unknown zone, actual TX/RX rows, shared same-slave RTU non-exclusive attribution and empty-channel hints; original records and getters unchanged')
 console.log(`RAW FRAMES SEMANTICS OK: ${semanticInputs} TCP/RTU capture inputs, actual row rendering, flag-only selection, zero/unknown/missing codes, invalid whole-snapshot retention/recovery and source/control isolation; no capture mutation or hardware`)
 await import('./test-raw-frames-composition.ts')
 console.log('RAW FRAMES FOCUS OK: actual view selection/map and checkbox/show-all callbacks, bilingual counts and distinct empty/no-match, legacy/error/pause, source/limit/late-control isolation; local snapshot only')

@@ -1,9 +1,11 @@
 import React from 'react'
 import type { RawFramesState } from './raw-frames-read'
-export function RawFramesStatus({ state, paused, english = false, exceptionFocus }: { state: RawFramesState; paused: boolean; english?: boolean; exceptionFocus?: { active: boolean; shown: number; change: (active: boolean) => void } }) {
+export function RawFramesStatus({ state, paused, english = false, exceptionFocus, sharedSerial = false }: { state: RawFramesState; paused: boolean; english?: boolean; sharedSerial?: boolean; exceptionFocus?: { active: boolean; shown: number; change: (active: boolean) => void } }) {
   const text = (zh: string, en: string) => english ? en : zh, value = state.value
   return <div className="raw-frames-status">
     <p className="chart-hint diagnostic-source-note">{text('后台报告未绑定本页配置版本；通知可能延迟或遗漏，需核对来源。', 'Reports are not bound to this page’s config version; delayed/missed updates require source checks.')}</p>
+    {sharedSerial && <p className="chart-hint">{text('共享RTU通道：按后台当前配置的从站字节筛选有限捕获，不能认定属于当前设备。', 'Shared RTU channel: captures filtered by configured slave bytes are not exclusive to this device.')}</p>}
+    <p className="chart-hint">{text('原始捕获时间，非设备时钟；未标时区则不推断。TX=后台发送，RX=后台接收，不保证有效响应。', 'Original capture time, not device clock; missing zone stays unknown. TX=backend sent; RX=backend received, not a verified response.')}</p>
     {state.phase === 'loading' && <p role="status">{text('正在读取后台捕获记录；慢请求期间不会叠加新读取。', 'Reading backend captures; slow reads do not overlap.')}</p>}
     {state.phase === 'error' && <p role="alert">{text(state.error === 'timeout' ? '读取超过10秒，将允许下一轮恢复。' : state.error === 'invalid' ? '捕获记录或来源无法核实。' : '捕获记录读取失败。', state.error === 'timeout' ? 'Read exceeded 10 seconds; subsequent refreshes can recover.' : state.error === 'invalid' ? 'Capture records or source could not be verified.' : 'Capture read failed.')}{text(' 当前后台状态未核实。', ' Current backend state is unverified.')}{value && text(' 保留上次显示，旧记录不代表仍在通信。', ' Previous captures remain visible and do not establish ongoing communication.')}</p>}
     {paused && <p role="status">{text('仅暂停页面读取，设备采集继续；在途旧响应不会改动当前显示。', 'Only page reads are paused; acquisition continues. Late responses cannot change this display.')}</p>}
