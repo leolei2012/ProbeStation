@@ -176,4 +176,40 @@ check('maximum selected series keep marker nodes bounded and construction measur
   assert.deepEqual(curve.isolatedCurvePoints(Array.from({ length: 2400 }, () => [now, 0] as const), 5000), [[now, 0]], 'coincident runs do not create 2400 overlapping markers')
   console.log('LIVE CURVE MARKER COST:', JSON.stringify({ points: 19200, markerShapes: 9600, seriesPaths: 16, markerBytes: encoded.reduce((n, path) => n + Buffer.byteLength(path), 0), constructionMs: elapsed, scope: 'synthetic Node path construction, not browser paint or peak memory' }))
 })
+check('tiny nonzero ticks and illegal tick values are never labelled zero', () => {
+  const functions = Object.fromEntries(['niceStep', 'yTicks', 'tickNum'].map(name => [name, find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === name)!]))
+  const niceStep = evaluate(functions.niceStep, {}), yTicks = evaluate(functions.yTicks, { niceStep }), tickNum = evaluate(functions.tickNum, {})
+  assert.notEqual(tickNum(1e-12), '0', 'a small finite nonzero tick must retain its magnitude')
+  assert.notEqual(tickNum(-1e-12), '0'); assert.equal(tickNum(0), '0')
+  for (const value of [NaN, Infinity, -Infinity]) assert.equal(tickNum(value), '—')
+  for (const [min, max] of [[0, 2e-12], [Number.MIN_VALUE, Number.MIN_VALUE * 2], [-Number.MAX_VALUE, Number.MAX_VALUE]]) {
+    const ticks = yTicks(min, max, 5) as number[]; assert(ticks.length > 0 && ticks.length <= 100); assert(ticks.every(Number.isFinite)); assert(ticks.some(value => value !== 0))
+  }
+  assert.deepEqual(yTicks(NaN, 1, 5), []); assert.deepEqual(yTicks(0, 1, 1000000), [])
+  assert.notEqual(Number(displayNumber(1e-12)), 0); assert.equal(curveValue(NaN, { dataType: 'uint16', factor: 0 }, 'physical'), null); assert.equal(curveValue(Infinity, { dataType: 'uint16', factor: 0 }, 'physical'), null)
+})
+check('overflowing live/history scales fail visibly without emitting invalid SVG geometry', () => {
+  const math = (body: ts.Block, first: string, last: string, env: Record<string, unknown>, result: string) => {
+    const declares = (statement: ts.Statement, name: string) => ts.isVariableStatement(statement) && statement.declarationList.declarations.some(d => d.name.getText(source) === name)
+    const start = body.statements.findIndex(s => declares(s, first)), guard = body.statements.findIndex(s => declares(s, 'scaleValid')), fallback = body.statements.findIndex(s => declares(s, last))
+    assert(start >= 0 && fallback >= 0)
+    const code = body.statements.slice(start, (guard >= 0 ? guard : fallback) + 1).map(s => s.getText(source)).join('\n') + '\nreturn {' + result + ', renderable: typeof scaleValid === "undefined" ? true : scaleValid};'
+    return new Function(...Object.keys(env), ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(...Object.values(env))
+  }
+  const points: Array<[number, number | null]> = [[now, -Number.MAX_VALUE], [now + 1, Number.MAX_VALUE]]
+  const live = math((component as ts.FunctionExpression).body, 'low', 'y', { series: [{ points }], size: { w: 800, h: 360 }, startTime: now - 60000, endTime: now }, 'low, high, y')
+  assert.equal(live.renderable, false, 'overflowing live bounds must not be silently plotted')
+  for (const values of [[0], [0, 1e-12]]) { const safe = math((component as ts.FunctionExpression).body, 'low', 'y', { series: [{ points: values.map((value, i) => [now + i, value]) }], size: { w: 800, h: 360 }, startTime: now - 60000, endTime: now }, 'low, high, y'); assert.equal(safe.renderable, true); assert(values.every(value => Number.isFinite(safe.y(value)))) }
+  const historical = find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === 'ChartBody') as ts.FunctionDeclaration
+  const env = { visibleSeries: [{ id: 1, samples: points, min: -Number.MAX_VALUE, max: Number.MAX_VALUE }], hidden: new Set(), yView: null, relative: false, T: 16, ph: 300 }
+  for (const relative of [false, true]) assert.equal(math(historical.body!, 'minimum', 'displayValue', { ...env, relative }, 'yMin, yMax, y').renderable, false)
+  const manual = { ...env, yView: { min: -1, max: 1 } }; assert.equal(math(historical.body!, 'minimum', 'displayValue', manual, 'yMin, yMax, y').renderable, false)
+  const safeHistory = { ...env, visibleSeries: [{ id: 1, min: 0, max: 1e-12 }] }; assert.equal(math(historical.body!, 'minimum', 'displayValue', safeHistory, 'yMin, yMax, y').renderable, true)
+  const constantRelative = { ...env, relative: true, visibleSeries: [{ id: 1, min: Number.MAX_VALUE, max: Number.MAX_VALUE }] }; assert.equal(math(historical.body!, 'minimum', 'displayValue', constantRelative, 'yMin, yMax, y').renderable, true)
+  const dictionary = evaluate((find(source, node => ts.isVariableDeclaration(node) && node.name.getText(source) === 'I18N') as ts.VariableDeclaration).initializer!, {})
+  for (const owner of [component, historical]) {
+    const gate = find(owner, node => ts.isConditionalExpression(node) && node.condition.getText(source) === 'scaleValid' && node.getText(source).includes("t('curveScaleUnavailable')")); assert(gate)
+    for (const lang of ['zh', 'en']) { const html = renderToStaticMarkup(evaluate(gate, { scaleValid: false, React, t: (key: string) => dictionary[lang][key] })); assert(html.includes('role="status"')); assert(!/<svg|<path|<circle/.test(html)); assert(html.includes(dictionary[lang].curveScaleUnavailable)) }
+  }
+})
 console.log('LIVE CURVE CONTEXT OK: ' + count + ' actual-render/synthetic-event groups; no browser or hardware')

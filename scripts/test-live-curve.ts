@@ -5,6 +5,17 @@ const now = Date.parse('2026-09-23T04:00:00Z')
 const reg = { id: 1, startAddress: 0, dataType: 'uint16', functionCode: 3 }
 const point = (rawValue: number, ms = now) => ({ rawValue, timestamp: new Date(ms).toISOString(), quality: 'good' })
 const key = '1:holding-register:0'
+for (const raw of [NaN, Infinity, -Infinity, -1, 65536, .5, null, '0']) {
+  const invalid = { ...point(0), rawValue: raw as number }
+  assert(sampleCurve({}, [reg], { [key]: invalid }, 1, now, 5000, new Set())[1].points.every(([, value]) => value === null), 'invalid raw words must remain unknown, never valid numbers: ' + String(raw))
+}
+const beforeInvalid = sampleCurve({}, [reg], { [key]: point(5) }, 1, now, 5000, new Set())
+const invalidMiddle = sampleCurve(beforeInvalid, [reg], { [key]: { ...point(0, now + 250), rawValue: null as unknown as number } }, 1, now + 250, 5000, new Set())
+assert.deepEqual(invalidMiddle[1].points, [[now, 5], [now + 250, null]], 'illegal words break the line instead of creating zero')
+assert.equal(sampleCurve(invalidMiddle, [reg], { [key]: point(0, now + 500) }, 1, now + 500, 5000, new Set())[1].points.at(-1)![1], 0, 'a genuine zero recovers normally')
+const floatWords = (words: number[]) => Object.fromEntries(words.map((word, i) => ['1:holding-register:' + i, point(word)]))
+assert.equal(sampleCurve({}, [{ ...reg, dataType: 'float64' }], floatWords([0x7fef, 65535, 65535, 65535]), 1, now, 5000, new Set())[1].points[0][1], Number.MAX_VALUE, 'valid extreme values are retained, not rejected as illegal words')
+for (const words of [[0x7ff0, 0, 0, 0], [0x7ff8, 0, 0, 0]]) assert.equal(sampleCurve({}, [{ ...reg, dataType: 'float64' }], floatWords(words), 1, now, 5000, new Set())[1].points[0][1], null, 'legal words decoding to nonfinite values remain unknown')
 let buffer = sampleCurve({}, [reg], { [key]: point(10) }, 1, now, 5000, new Set())
 assert.deepEqual(buffer[1].points, [[now, 10]])
 buffer = sampleCurve(buffer, [reg], { [key]: point(10) }, 1, now + 250, 5000, new Set())

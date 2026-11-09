@@ -43,7 +43,7 @@ export function sampleCurve(previous: CurveBuffer, registers: CurveRegister[], l
     const track: CurveTrack = { signature, times: old?.times ?? [], batchId: old?.batchId, points: (old?.points ?? []).filter(p => p[0] >= now - 600_000) }
     const words = Array.from({ length: registerWidth(r.dataType) }, (_, i) => sourceSample(latest, objectId, area, r.startAddress + i, r.slaveId))
     const times = words.map(sampleTime)
-    const valid = !blocked.has(r.id) && sameResponseBatch(words) && words.every((s, i) => s && s.quality === 'good' && times[i] !== null && now - times[i]! <= staleMs && times[i]! <= now + 1000)
+    const valid = !blocked.has(r.id) && sameResponseBatch(words) && words.every((s, i) => s && Number.isInteger(s.rawValue) && s.rawValue >= 0 && s.rawValue <= 65535 && s.quality === 'good' && times[i] !== null && now - times[i]! <= staleMs && times[i]! <= now + 1000)
     const batchId = words[0]?.batchId
     if (!valid) {
       if (track.points.length && track.points.at(-1)![1] !== null) track.points.push([now, null])

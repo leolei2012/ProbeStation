@@ -39,6 +39,10 @@ assert.deepEqual(historySampleStats([[t, 0]]), { min: 0, max: 0, last: 0 })
 assert.equal(historySampleStats([[t, null], [t + 1000, -5]]).last, -5, 'a later valid sample recovers the last reading')
 const r = { id: 1, groupId: 1, startAddress: 0, dataType: 'uint16', functionCode: 3 }
 const p = (offset: number, address: number, rawValue: number, area = 'holding-register'): HistoryPoint => ({ ts: new Date(t + offset).toISOString(), area, address, rawValue })
+for (const raw of [NaN, Infinity, -Infinity, -1, 65536, .5, null, '0']) {
+  const invalid = decodeHistorySeries([r], [p(0, 0, raw as number), p(1000, 0, 0)], new Set([1]))[0]
+  assert.deepEqual(invalid.samples, [[t, null], [t + 1000, 0]], 'history keeps illegal words unknown and a subsequent genuine zero valid')
+}
 const result = decodeHistorySeries([r, { ...r, id: 2, groupId: 2, functionCode: 4 }], [p(1000, 0, 10), p(0, 0, 2), p(0, 0, 50, 'input-register')], new Set([1, 2]))
 assert.deepEqual(result.find(s => s.id === 1)!.samples, [[t, 2], [t + 1000, 10]])
 assert.deepEqual(result.find(s => s.id === 2)!.samples, [[t, 50]])

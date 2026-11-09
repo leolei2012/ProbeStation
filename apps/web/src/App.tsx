@@ -107,6 +107,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointBookRejectedHint: '先核对错误详情、源文件与目标设备当前配置，再决定是否修改文件并重新选择。',
     pointBookTargetSnapshot: '发起时页面目标（仅作记录，不核验当前配置）',
     pointBookPagingHint: '分页只改变显示，全部回报条目仍保留。可用页码跳转，在列表内滚动查看长文本。', pointBookMessageRange: '显示 {start}–{end} / {total} 条 · 第 {page}/{pages} 页', pointBookPage: '页码', pointBookPrevious: '上一页', pointBookNext: '下一页',
+    curveScaleUnavailable: '当前数值超出可安全绘制的量程。图形已隐藏，请核对读数和倍率，或调整显示范围。',
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
     connectionUnverified: '设备连接状态未核实',
@@ -191,6 +192,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointBookRejectedHint: 'Check the error details, source file and target device\'s current configuration before deciding whether to edit and select the file again.',
     pointBookTargetSnapshot: 'Page target when sent (record only, not current configuration verification)',
     pointBookPagingHint: 'Paging changes display only; all received entries are retained. Jump by page number and scroll the list to read long text.', pointBookMessageRange: 'Showing {start}–{end} of {total} · Page {page}/{pages}', pointBookPage: 'Page', pointBookPrevious: 'Previous', pointBookNext: 'Next',
+    curveScaleUnavailable: 'This numeric range cannot be drawn safely. The plot is hidden; check the readings and scale, or adjust the display range.',
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
     connectionUnverified: 'Device connection unverified',
@@ -1423,22 +1425,28 @@ function HistoryTableBody({ pointLabels, t, rows, selectedRegisters, status, err
 const CHART_COLORS = ['#4176e6', '#22c55e', '#f59e0b', '#ec1313', '#8b5cf6', '#06b6d4', '#f97316', '#ec4899', '#84cc16', '#14b8a6']
 function niceStep(range: number, target: number): number {
   const rough = range / target
+  if (!Number.isFinite(rough) || rough <= 0) return NaN
   const pow = 10 ** Math.floor(Math.log10(rough))
+  if (!Number.isFinite(pow) || pow <= 0) return NaN
   const n = rough / pow
   const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10
   return nice * pow
 }
 function yTicks(min: number, max: number, count = 5): number[] {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min > max || !Number.isFinite(count) || count < 1 || count > 100) return []
   if (min === max) return [min]
   const step = niceStep(max - min, count)
+  if (!Number.isFinite(step) || step <= 0) return [min, max]
   const start = Math.ceil(min / step) * step
   const n = Math.floor((max - start) / step) + 1
+  if (!Number.isFinite(start) || !Number.isSafeInteger(n) || n < 0 || n > 100) return [min, max]
   const out: number[] = []
-  for (let i = 0; i < n; i++) out.push(Number((start + i * step).toFixed(10)))
-  return out
+  for (let i = 0; i < n; i++) { const value = Number((start + i * step).toPrecision(12)); if (Number.isFinite(value) && !out.includes(value)) out.push(value) }
+  return out.length ? out : [min, max]
 }
 function tickNum(v: number): string {
-  const r = Math.abs(v) < 1e-9 ? 0 : v
+  if (!Number.isFinite(v)) return '—'
+  const r = v === 0 ? 0 : v
   if (Number.isInteger(r)) return String(r)
   const a = Math.abs(r)
   if (a !== 0 && (a >= 100000 || a < 0.001)) return r.toExponential(1)
@@ -1529,6 +1537,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
   const plotWidth = Math.max(1, size.w - left - right), plotHeight = Math.max(1, size.h - top - bottom)
   const x = (time: number) => left + (time - startTime) / (endTime - startTime) * plotWidth
   const y = (value: number) => top + (high - value) / (high - low) * plotHeight
+  const scaleValid = Number.isFinite(low) && Number.isFinite(high) && Number.isFinite(high - low) && high > low
   const pathFor = (points: Array<[number, number | null]>) => {
     let path = '', previous: number | null = null
     for (const [time, value] of points) {
@@ -1566,7 +1575,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
     <div className="chart-wrap">
       <ChartReadout t={t} time={cursorTime} rows={liveReadings} />
       <div className="live-curve-plot" ref={setPlot}>
-        <svg width="100%" height="100%" role="img" aria-label={t('liveCurve')}
+        {scaleValid ? <svg width="100%" height="100%" role="img" aria-label={t('liveCurve')}
           style={{ touchAction: 'pan-y' }}
           onPointerDown={e => { if (e.pointerType !== 'mouse') e.currentTarget.setPointerCapture(e.pointerId); const rect = e.currentTarget.getBoundingClientRect(); setHover(startTime + Math.max(0, Math.min(1, (e.clientX - rect.left - left) / plotWidth)) * (endTime - startTime)) }}
           onPointerMove={e => { const rect = e.currentTarget.getBoundingClientRect(); setHover(startTime + Math.max(0, Math.min(1, (e.clientX - rect.left - left) / plotWidth)) * (endTime - startTime)) }}>
@@ -1578,8 +1587,8 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
             {liveReadings.filter(r => r.point && r.point[0] >= startTime && r.point[0] <= endTime).map(r => <circle key={r.id} cx={x(r.point![0])} cy={y(r.point![1])} r={3.5} fill={r.color} stroke="var(--surface)" strokeWidth={1.5} />)}
             <ChartCursorTime time={cursorTime} x={x(cursorTime)} width={size.w} y={size.h - 24} />
           </>}
-        </svg>
-        {(!hasData || chosen.length === 0) && <div className="live-curve-empty">{t(candidates.length === 0 ? 'curveNoNumeric' : chosen.length === 0 ? 'histNoRegs' : 'curveWaiting')}</div>}
+        </svg> : <div className="hist-empty warn" role="status">{t('curveScaleUnavailable')}</div>}
+        {scaleValid && (!hasData || chosen.length === 0) && <div className="live-curve-empty">{t(candidates.length === 0 ? 'curveNoNumeric' : chosen.length === 0 ? 'histNoRegs' : 'curveWaiting')}</div>}
       </div>
 
     </div>
@@ -1669,6 +1678,7 @@ function ChartBody({ queryContextKey, pointLabels, valueMode, t, registers, sele
   }
   const y = (value: number) => T + (yMax - value) / (yMax - yMin) * ph
   const displayValue = (value: number, s: typeof visibleSeries[number]) => relative ? s.max === s.min ? 50 : (value - s.min) / (s.max - s.min) * 100 : value
+  const scaleValid = Number.isFinite(yMin) && Number.isFinite(yMax) && Number.isFinite(ySpan) && ySpan > 0 && visibleSeries.filter(s => !hidden.has(s.id)).every(s => !Number.isFinite(s.min) || [s.min, s.max].every(value => Number.isFinite(y(displayValue(value, s)))))
   const pathFor = (s: typeof visibleSeries[number]) => {
     let path = ''
     const starts = historyLineStarts(s.samples, s.gapMs, s.segments)
@@ -1728,7 +1738,7 @@ function ChartBody({ queryContextKey, pointLabels, valueMode, t, registers, sele
       onCapture={slot => { if (hover !== null) setComparison(previous => updateHistoryComparison(previous, { type: 'capture', context: comparisonContext, slot, anchor: captureHistoryAnchor(hover, visibleSeries.filter(s => !hidden.has(s.id))) })) }}
       onClear={() => setComparison(previous => updateHistoryComparison(previous, { type: 'clear', context: comparisonContext }))} />
     <div className="history-chart-plot" ref={setPlot}>
-      <svg width="100%" height="100%" role="img" aria-label={t('tabCurve')} style={{ touchAction: 'none' }}
+      {scaleValid ? <svg width="100%" height="100%" role="img" aria-label={t('tabCurve')} style={{ touchAction: 'none' }}
         onPointerDown={e => { if (e.button !== 0) return; if (e.pointerType === 'touch') { setHover(pointerTime(e)); e.currentTarget.setPointerCapture(e.pointerId); return }; const time = pointerTime(e), value = pointerValue(e); dragRef.current = { start: time, end: time, fromY: value, toY: value }; setDrag(dragRef.current); setHover(null); e.currentTarget.setPointerCapture(e.pointerId) }}
         onPointerMove={e => { const time = pointerTime(e); if (dragRef.current) { dragRef.current.end = time; dragRef.current.toY = pointerValue(e); setDrag({ ...dragRef.current }) } else setHover(time) }}
         onPointerUp={e => {
@@ -1763,8 +1773,8 @@ function ChartBody({ queryContextKey, pointLabels, valueMode, t, registers, sele
           {drag && <rect className="zoom-box" x={Math.abs(x(drag.end) - x(drag.start)) > 8 ? x(Math.min(drag.start, drag.end)) : L} y={Math.abs(y(drag.toY) - y(drag.fromY)) > 8 ? y(Math.max(drag.fromY, drag.toY)) : T} width={Math.abs(x(drag.end) - x(drag.start)) > 8 ? Math.abs(x(drag.end) - x(drag.start)) : pw} height={Math.abs(y(drag.toY) - y(drag.fromY)) > 8 ? Math.abs(y(drag.toY) - y(drag.fromY)) : ph} />}
         </g>
         {hover !== null && !drag && <ChartCursorTime time={hover} x={x(hover)} width={size.w} y={size.h - 24} />}
-      </svg>
-      {!anyVisible && <div className="live-curve-empty">{t(hasSamples ? 'histNoVisible' : 'histEmpty')}</div>}
+      </svg> : <div className="hist-empty warn" role="status">{t('curveScaleUnavailable')}</div>}
+      {scaleValid && !anyVisible && <div className="live-curve-empty">{t(hasSamples ? 'histNoVisible' : 'histEmpty')}</div>}
     </div>
     <div className="history-legend-head"><span>{t('histLegendHint')}</span><span>{t('histStatsHint')}</span></div>
     <div className="history-legend">
