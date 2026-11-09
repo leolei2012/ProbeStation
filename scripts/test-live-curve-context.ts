@@ -10,7 +10,7 @@ import { decodeRegister, encodeRegister } from '../packages/core/src/codec.ts'
 import { historyVerificationLabel } from '../packages/core/src/history-integrity.ts'
 import { nearestHistorySample } from '../apps/web/src/history-curve.ts'
 import { evaluateLivePoints } from '../apps/web/src/live-point-filter.ts'
-import { captureLiveSnapshot, liveSnapshotJson } from '../apps/web/src/live-snapshot.ts'
+import { captureLiveSnapshot, downloadLiveSnapshot, liveSnapshotJson } from '../apps/web/src/live-snapshot.ts'
 
 // Execute actual LiveCurve render expressions and interval/button callbacks with local inputs.
 // No browser, network, timers, storage, driver or hardware is created.
@@ -266,4 +266,34 @@ check('delayed recovery keeps a later unknown marker effective for hover and lin
   const dictionary = evaluate((find(source, node => ts.isVariableDeclaration(node) && node.name.getText(source) === 'I18N') as ts.VariableDeclaration).initializer!, {})
   for (const language of ['zh', 'en']) { const html = renderToStaticMarkup(evaluate(notice, { React, timeReordered: true, t: (key: string) => dictionary[language][key] })); assert(html.includes('role="status"')); assert(/不等同设备故障|does not establish a device fault/.test(html)) }
 })
+// Async Blob read verifies the real snapshot writer; no real download, timer or DOM.
+{
+  const chosen = chosenFor(1), first = curve.sampleCurve({}, chosen, values(1, 1), 1, now, 5000, new Set())
+  const duplicateLatest = Object.fromEntries(Object.entries(values(1, 2)).map(([key, value]) => [key, { ...value, batchId: 'duplicate-second' }]))
+  const second = curve.sampleCurve(first, chosen, duplicateLatest, 1, now + 250, 5000, new Set())
+  let frame: Frame = { buffer: second, now: now + 250 }, frozen: Frame | null = null, clock = now + 1000
+  const press = () => evaluate(button, { frame, frozen, setFrozen(value: Frame | null) { frozen = value }, setHover() {} })()
+  const visible = () => evaluate(declaration('visible'), { frozen, frame }) as Frame
+  press(); const frozenOriginal = structuredClone(visible()); assert.equal(render(visible(), chosen, 1, now).readings[0].value, '2', 'equal-time hover chooses the final accepted observation in this frame')
+  assert.deepEqual(visible().buffer[7].points, [[now, 1], [now, 2]], 'neither same-time observation is dropped')
+  const snapDevice = { ...device, name: 'synthetic temporal snapshot', isActive: 1 }, snapGroups = [{ ...group, name: 'synthetic source', isActive: 1, registers: [{ ...register, alias: 'same-time point' }] }]
+  const views = new Map([[7, { value: '2', label: null, covered: false, invalid: false }]])
+  const capture = captureLiveSnapshot({ device: snapDevice, groups: snapGroups, latest: duplicateLatest, views, states: evaluateLivePoints(snapGroups, views, duplicateLatest, snapDevice, [], {}, now + 250, 5000), visibleIds: new Set([7]), filters: { search: '', source: '', mode: 'all' }, rulesReady: false, observedAt: now + 250, capturedAt: now + 300, thresholdMs: 5000 }), capturedJson = liveSnapshotJson(capture)
+  const buffer = { current: second }, inputs = { current: { chosen, latest: duplicateLatest, device, groups: [group], groupErrors: {} as Record<number, string>, threshold: 5000, active: true, frozen: null as Frame | null } }
+  const tick = () => { inputs.current.frozen = frozen; evaluate(interval.arguments[0], { inputs, buffer, sampleCurve: curve.sampleCurve, Date: { now: () => clock }, document: { visibilityState: 'visible' }, setFrame(value: Frame) { frame = value } })() }
+  inputs.current.latest = Object.fromEntries(Object.entries(values(1, 0, now + 1000)).map(([key, value]) => [key, { ...value, quality: 'bad' }])); tick()
+  clock = now + 1250; inputs.current.latest = values(1, 3, now + 750); tick()
+  clock = now + 1500; inputs.current.latest = values(1, 4, now + 1500); tick()
+  assert.deepEqual(visible(), frozenOriginal); assert.equal(render(visible(), chosen, 1, now).readings[0].value, '2'); assert.equal(render(visible()).timeReordered, false, 'background sorting does not rewrite the frozen frame')
+  const background = structuredClone(buffer.current); press(); tick()
+  assert.equal(render(visible(), chosen, 1, now).readings[0].value, '2'); assert.equal(render(visible(), chosen, 1, now + 1100).readings[0].value, '—'); assert.equal(render(visible(), chosen, 1, now + 1500).readings[0].value, '4')
+  assert.equal(render(visible()).timeReordered, true); assert.deepEqual(buffer.current, background); assert.deepEqual(frozenOriginal.buffer[7].points, [[now, 1], [now, 2]])
+  duplicateLatest[sourceKey(1, 'holding-register', 0, 1)].rawValue = 99; views.get(7)!.value = 'later caller change'; assert.equal(liveSnapshotJson(capture), capturedJson)
+  let exported!: Blob, clicks = 0, removed = 0, revoked = 0
+  const anchor = { href: '', download: '', click() { clicks++ }, remove() { removed++ } }
+  downloadLiveSnapshot(capture, { createElement: () => anchor, body: { appendChild() {} } } as any, { createObjectURL(value) { assert(value instanceof Blob); exported = value; return 'blob:synthetic-time' }, revokeObjectURL() { revoked++ } }, fn => fn())
+  assert.equal(await exported.text(), capturedJson); assert.equal(clicks, 1); assert.equal(removed, 1); assert.equal(revoked, 1)
+  assert.equal(JSON.parse(capturedJson).points[0].words[0].sample.batchId, 'duplicate-second'); assert.equal(JSON.parse(capturedJson).points[0].display.raw, '2')
+  console.log('CURVE TIME FREEZE EXPORT OK: equal-time observations retained, frozen frame isolated from background delayed samples, resume after publishing tick, chronological hover and immutable one-observation JSON Blob; no browser download.')
+}
 console.log('LIVE CURVE CONTEXT OK: ' + count + ' actual-render/synthetic-event groups; no browser or hardware')

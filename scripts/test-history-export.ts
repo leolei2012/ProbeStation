@@ -124,4 +124,18 @@ for (const format of ['csv', 'xlsx'] as const) {
   assert.equal(reads, 4); assert.deepEqual(data, before, 'export source changes do not rewrite either source data')
   console.log('HISTORY NUMERIC EXPORT OK: actual CSV/XLSX retain zero, tiny and +/-MAX strings, source identity/eligibility and all selected raw rows; plot flags absent; synthetic query only.')
 }
+{
+  const group = { id: 10, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 1 }, point = { id: 101, objectId: 7, groupId: 10, alias: 'timestamp observations', functionCode: 3, startAddress: 0, dataType: 'uint16' }
+  const data = [{ at: 0, value: 1, quality: 'good' }, { at: 0, value: 2, quality: 'good' }, { at: 1000, value: 0, quality: 'bad' }, { at: 750, value: 3, quality: 'good' }, { at: 1500, value: 4, quality: 'good' }].map((event, index) => ({ objectId: 7, area: 'holding-register', address: 0, slaveId: 1, rawValue: event.value, quality: event.quality, ts: new Date(t + event.at).toISOString(), timestampMs: t + event.at, batchId: 'arrival-' + index }))
+  const before = structuredClone(data), sink = new Sink({ config: { getObject: () => ({ id: 7, mode: 'master' }), listGroups: () => [group], listRegistersByObject: () => [point] }, store: { async queryObjectForExport() { return data.slice() } } })
+  const start = new Date(t).toISOString(), end = new Date(t + 1500).toISOString(), csv = (await sink.exportCsv(7, start, end, [101])).split('\n').map(row => row.split(','))
+  assert.deepEqual(csv.slice(1).map(row => row[0]), [0, 1000, 750, 1500].map(offset => new Date(t + offset).toISOString().replace('T', ' ').replace('Z', '')), 'decoded export retains first-seen query timestamp order, independent of plot sorting')
+  assert.deepEqual(csv.slice(1).map(row => row[1]), ['', '', '3', '4']); assert.deepEqual(csv.slice(1).map(row => row[2]), ['未知', '未知', '批次/来源已验证', '批次/来源已验证']); assert.deepEqual(csv.slice(1).map(row => row[3]), ['false', 'false', 'true', 'true'])
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(await sink.exportXlsx(7, start, end, [101]) as any); const sheet = workbook.getWorksheet('data')!
+  assert.deepEqual([2, 3, 4, 5].map(row => String(sheet.getCell('B' + row).value ?? '')), ['', '', '3', '4'])
+  assert.deepEqual([2, 3, 4, 5].map(row => sheet.getCell('A' + row).value), csv.slice(1).map(row => row[0]))
+  assert.deepEqual(data, before); assert.equal(data.length, 5, 'decoded export never rewrites/deduplicates the original query observations')
+  assert.equal(data.filter(row => row.timestampMs === t).length, 2)
+  console.log('HISTORY TIME EXPORT OK: raw query and first-seen timestamp order retained, same-time conflicts stay unknown in decoded CSV/XLSX, quality gap remains unknown; not a raw-record replay format.')
+}
 console.log('HISTORY EXPORT OK: exact range/selection/milliseconds/timezones, real CSV/XLSX, batch status/empty/failure/retry, and actual Sink in-flight mutable definition/source/width isolation versus fresh export; isolated temporary or pure mock data only, no production service/device/model I/O')
