@@ -23,9 +23,9 @@ function RelatedPoints({ ids, points, pointLabels, english }: { ids: readonly nu
   </details>
 }
 
-export function PointDiagnosticsView({ state, points, groups, pointLabels, refresh, download, filter, onFilter, page, onPage, english = false }: {
+export function PointDiagnosticsView({ state, points, groups, pointLabels, refresh, download, downloadError = false, filter, onFilter, page, onPage, english = false }: {
   state: PointDiagnosticState; points: readonly DiagnosticPoint[]; groups: readonly DiagnosticGroup[]; pointLabels: Map<number, PointLabelData>
-  refresh: () => void; download: () => void; filter: Filter; onFilter: (next: Filter) => void; page: number; onPage: (next: number) => void; english?: boolean
+  refresh: () => void; download: () => void; downloadError?: boolean; filter: Filter; onFilter: (next: Filter) => void; page: number; onPage: (next: number) => void; english?: boolean
 }) {
   const text = (zh: string, en: string) => english ? en : zh
   const snapshot = state.status === 'ready' ? state.snapshot : null, report = snapshot?.report
@@ -34,6 +34,7 @@ export function PointDiagnosticsView({ state, points, groups, pointLabels, refre
   return <section className="point-diagnostics" aria-label={text('点表检查', 'Point table check')}>
     <p className="chart-hint">{text('只检查配置结构：点宽越界、引用、重复定义和可确定的冲突。不会连接设备或自动修改配置；无错误不代表在线、数据可信或测试通过。', 'Read-only structure checks: widths, references, duplicates and known conflicts. No device connection or automatic repair. No errors does not mean online, trustworthy data or a test PASS.')}</p>
     <div className="toolbar"><button className="btn" type="button" onClick={refresh} disabled={state.status === 'loading'}>{text('重新检查', 'Check again')}</button><button className="btn" type="button" disabled={!snapshot} onClick={download}>{text('下载完整诊断 JSON', 'Download full diagnostic JSON')}</button></div>
+    {snapshot && downloadError && <p role="alert" className="warn">{text('本地下载未完成或无法确认，诊断报告仍保留；请检查浏览器下载记录后再试。', 'Local download could not be completed or confirmed. Report retained; check browser downloads before retrying.')}</p>}
     {state.status === 'loading' && <p role="status">{text('正在检查点表…', 'Checking point table…')}</p>}
     {state.status === 'error' && <p role="alert" className="warn">{state.error === 'timeout' ? text('检查请求超时，请重新检查。', 'Check request timed out. Try again.') : state.error === 'invalid' ? text('诊断报告格式不完整或不一致，未作为有效结果显示，请重新检查。', 'Incomplete or inconsistent diagnostic report. Try again.') : text('点表检查失败，请重新检查；服务端可能尚未更新。', 'Check failed. Try again; the backend may need updating.')}</p>}
     {snapshot && report && <>
@@ -58,14 +59,25 @@ export function PointDiagnosticsPanel({ deviceId, points, groups, pointLabels, f
   fetcher: (url: string, signal: AbortSignal) => Promise<unknown>; english?: boolean
 }) {
   const [state, setState] = useState(initialPointDiagnosticState), [filter, setFilter] = useState<Filter>({ severity: 'all', query: '' }), [page, setPage] = useState(0)
+  const [downloadFailure, setDownloadFailure] = useState<PointDiagnosticState['snapshot']>(null)
   const loader = useRef<PointDiagnosticsLoader>()
   if (!loader.current) loader.current = new PointDiagnosticsLoader(setState)
   useEffect(() => { void loader.current!.refresh(deviceId, fetcher); return () => loader.current!.cancel() }, [deviceId, fetcher])
+  useEffect(() => setDownloadFailure(null), [deviceId, state.snapshot])
   const download = () => {
     if (state.status !== 'ready' || !state.snapshot || state.snapshot.deviceId !== deviceId) return
-    const blob = new Blob([pointDiagnosticDownload(state.snapshot)], { type: 'application/json;charset=utf-8' }), url = URL.createObjectURL(blob), link = document.createElement('a')
-    try { link.href = url; link.download = 'point-diagnostics-' + deviceId + '-' + state.snapshot.receivedAt.replace(/[:.]/g, '-') + '.json'; link.click() }
-    finally { setTimeout(() => URL.revokeObjectURL(url), 1000) }
+    setDownloadFailure(null)
+    let url: string | undefined, link: HTMLAnchorElement | undefined
+    try {
+      const blob = new Blob([pointDiagnosticDownload(state.snapshot)], { type: 'application/json;charset=utf-8' })
+      url = URL.createObjectURL(blob); link = document.createElement('a')
+      link.href = url; link.download = 'point-diagnostics-' + deviceId + '-' + state.snapshot.receivedAt.replace(/[:.]/g, '-') + '.json'
+      document.body.appendChild(link); link.click()
+    } catch { setDownloadFailure(state.snapshot) }
+    finally {
+      try { link?.remove() } catch { setDownloadFailure(state.snapshot) }
+      finally { if (url !== undefined) { const created = url; setTimeout(() => URL.revokeObjectURL(created), 1000) } }
+    }
   }
-  return <PointDiagnosticsView state={state.snapshot && state.snapshot.deviceId !== deviceId ? initialPointDiagnosticState() : state} points={points} groups={groups} pointLabels={pointLabels} english={english} filter={filter} onFilter={next => { setFilter(next); setPage(0) }} page={page} onPage={setPage} refresh={() => { setPage(0); void loader.current!.refresh(deviceId, fetcher) }} download={download} />
+  return <PointDiagnosticsView state={state.snapshot && state.snapshot.deviceId !== deviceId ? initialPointDiagnosticState() : state} points={points} groups={groups} pointLabels={pointLabels} english={english} filter={filter} onFilter={next => { setFilter(next); setPage(0) }} page={page} onPage={setPage} refresh={() => { setPage(0); void loader.current!.refresh(deviceId, fetcher) }} download={download} downloadError={downloadFailure !== null && downloadFailure === state.snapshot && downloadFailure.deviceId === deviceId} />
 }

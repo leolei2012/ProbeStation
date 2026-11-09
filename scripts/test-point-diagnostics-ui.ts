@@ -4,9 +4,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import Fastify from 'fastify'
 import { diagnosePointTable } from '../packages/core/src/point-diagnostics.ts'
 import { registerPointDiagnostics } from '../packages/api/src/point-diagnostics.ts'
-import { parsePointDiagnosticReport, PointDiagnosticsLoader, pointDiagnosticDownload, filterPointDiagnosticIssues, filterRelatedDiagnosticIds, type PointDiagnosticState, type PointDiagnosticSnapshot } from '../apps/web/src/point-diagnostics.ts'
+import { parsePointDiagnosticReport, initialPointDiagnosticState, PointDiagnosticsLoader, pointDiagnosticDownload, filterPointDiagnosticIssues, filterRelatedDiagnosticIds, type PointDiagnosticState, type PointDiagnosticSnapshot } from '../apps/web/src/point-diagnostics.ts'
 import { PointDiagnosticsView } from '../apps/web/src/PointDiagnostics.tsx'
 import { buildPointLabels } from '../apps/web/src/PointLabel.tsx'
+import { hookDriver } from './fixtures/component-hook-driver.ts'
 
 const devices = [{ id: 7, mode: 'master', slaveId: 1 }]
 const groups = [{ id: 10, objectId: 7, name: '冷机组', slaveId: 1, functionCode: 3, startAddress: 0, quantity: 2 }, { id: 20, objectId: 7, name: '第二来源', slaveId: 2, functionCode: 3, startAddress: 0, quantity: 2 }]
@@ -116,3 +117,61 @@ assert.equal(JSON.parse(pointDiagnosticDownload(large.snapshot!)).report.issues.
 assert.equal(actions, 0, 'SSR cannot perform requests, downloads, repairs or other actions')
 assert.equal(JSON.stringify(report), before)
 console.log('POINT DIAGNOSTICS UI OK: real read-only API contract, validation/projection, filtering, complete export, stale/unmount/timeout/retry guards, empty/error/paged/escaped SSR states; only mock metadata, no databases, hardware or network')
+
+for (const english of [false, true]) for (const fault of ['blob', 'url', 'element', 'href', 'append', 'click', 'remove']) {
+  let failure: string | null = fault, reads = 0, sequence = 0, downloaded: Blob | undefined
+  const created: string[] = [], revoked: string[] = [], queued: (() => void)[] = []
+  const props = { deviceId: 7, points, groups, pointLabels: labels, english, async fetcher(url: string) { reads++; assert.equal(url, '/api/monitor_objects/7/point-diagnostics'); return report } }
+  const driver = hookDriver('PointDiagnostics.tsx', 'PointDiagnosticsPanel', {
+    initialPointDiagnosticState, PointDiagnosticsLoader, pointDiagnosticDownload, PointDiagnosticsView,
+    Blob: class extends Blob { constructor(parts: BlobPart[], options: BlobPropertyBag) { if (failure === 'blob') throw Error('private blob failure'); super(parts, options) } },
+    URL: { createObjectURL(blob: Blob) { if (failure === 'url') throw Error('private URL failure'); downloaded = blob; const url = 'blob:mock-' + (++sequence); created.push(url); return url }, revokeObjectURL(url: string) { revoked.push(url) } },
+    document: { createElement() { if (failure === 'element') throw Error('private DOM failure'); return { set href(_value: string) { if (failure === 'href') throw Error('private href failure') }, download: '', click() { if (failure === 'click') throw Error('private click failure') }, remove() { if (failure === 'remove') throw Error('private remove failure') } } }, body: { appendChild() { if (failure === 'append') throw Error('private append failure') } } },
+    setTimeout(fn: () => void) { queued.push(fn) },
+  }, props)
+  try {
+    await new Promise<void>(done => setImmediate(done)); driver.render()
+    const view = () => driver.tree.props as any, original = view().state.snapshot
+    assert.equal(view().state.status, 'ready'); assert.equal(reads, 1)
+    view().onFilter({ severity: 'warning', query: '#103' }); view().onPage(1); driver.render()
+    assert.doesNotThrow(() => view().download(), 'local browser download failures must not escape the event callback'); driver.render()
+    assert.equal(view().state.snapshot, original); assert.equal(view().state.status, 'ready'); assert.equal(reads, 1)
+    assert.deepEqual(view().filter, { severity: 'warning', query: '#103' }); assert.equal(view().page, 1)
+    const failed = renderToStaticMarkup(driver.tree)
+    assert.match(failed, english ? /Local download could not/ : /本地下载未完成或无法确认/); assert.doesNotMatch(failed, /private .* failure/)
+    failure = null; view().download(); driver.render()
+    assert.equal(view().state.snapshot, original); assert.equal(reads, 1); assert.equal(view().state.status, 'ready')
+    assert.doesNotMatch(renderToStaticMarkup(driver.tree), english ? /Local download could not/ : /本地下载未完成或无法确认/)
+    assert.deepEqual(JSON.parse(await downloaded!.text()), JSON.parse(pointDiagnosticDownload(original)), 'retry still downloads the complete original report')
+    while (queued.length) queued.shift()!()
+    assert.deepEqual(revoked, created, 'every allocated object URL is revoked, including DOM/append/click failures')
+  } finally { failure = null; while (queued.length) queued.shift()!(); driver.dispose() }
+}
+console.log('POINT DIAGNOSTICS DOWNLOAD OK: 14 bilingual Blob/URL/DOM/href/append/click/remove failures, retained full report, local retry without GET, safe feedback and complete URL cleanup; mock browser only, no files/devices/model or configuration writes')
+
+for (const english of [false, true]) {
+  let reads = 0, allocations = 0, failedGet = false
+  const queued: (() => void)[] = []
+  const props = { deviceId: 7, points, groups, pointLabels: labels, english, async fetcher(url: string) { reads++; if (failedGet) throw Error('private read failure'); return url.includes('/8/') ? diagnosePointTable({ devices: [{ ...devices[0], id: 8 }], groups: [], registers: [] }) : report } }
+  const driver = hookDriver('PointDiagnostics.tsx', 'PointDiagnosticsPanel', {
+    initialPointDiagnosticState, PointDiagnosticsLoader, pointDiagnosticDownload, PointDiagnosticsView, Blob,
+    URL: { createObjectURL() { allocations++; return 'blob:refresh-mock' }, revokeObjectURL() {} },
+    document: { createElement() { return { href: '', download: '', click() { throw Error('private local failure') }, remove() {} } }, body: { appendChild() {} } }, setTimeout(fn: () => void) { queued.push(fn) },
+  }, props)
+  const settle = async () => { await new Promise<void>(done => setImmediate(done)); driver.render() }, view = () => driver.tree.props as any
+  const localMessage = english ? /Local download could not/ : /本地下载未完成或无法确认/
+  try {
+    await settle(); const original = view().state.snapshot; view().download(); driver.render(); assert.match(renderToStaticMarkup(driver.tree), localMessage)
+    view().refresh(); driver.render(); assert.doesNotMatch(renderToStaticMarkup(driver.tree), localMessage)
+    await settle(); assert.equal(view().state.status, 'ready'); assert.notEqual(view().state.snapshot, original); assert.equal(reads, 2)
+    assert.doesNotMatch(renderToStaticMarkup(driver.tree), localMessage)
+    view().download(); driver.render(); driver.render({ ...props, deviceId: 8 })
+    assert.doesNotMatch(renderToStaticMarkup(driver.tree), localMessage, 'old local error is not attributed to the next device even before effects settle')
+    await settle(); assert.equal(view().state.snapshot.deviceId, 8); assert.equal(view().state.snapshot.report.issues.length, 0)
+    failedGet = true; view().refresh(); await settle(); assert.equal(view().state.status, 'error')
+    assert.match(renderToStaticMarkup(driver.tree), english ? /Check failed/ : /点表检查失败/); assert.doesNotMatch(renderToStaticMarkup(driver.tree), localMessage)
+    const beforeDownload = allocations; view().download(); assert.equal(allocations, beforeDownload, 'read errors cannot download an old successful report')
+    failedGet = false; view().refresh(); await settle(); assert.equal(view().state.status, 'ready'); assert.doesNotMatch(renderToStaticMarkup(driver.tree), localMessage)
+  } finally { while (queued.length) queued.shift()!(); driver.dispose() }
+}
+console.log('POINT DIAGNOSTICS RECOVERY OK: bilingual local-error ownership across report refresh/device switch/empty report/read failure/recovery, without extra downloads or configuration changes; simulated components only')
