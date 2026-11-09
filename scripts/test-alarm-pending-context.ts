@@ -298,6 +298,27 @@ await check('live matching-card shrink/grow keeps the clamped page, isolates new
     refresh(3, 0); assert.equal(cards().length, 0); refresh(3); assert.equal(cards()[0].props.state.registerId, 101); assert.equal(opens, 1)
   } finally { panel.dispose() }
 })
+await check('same-count live membership shifts remain identifiable even with identical point names and rule text', () => {
+  let rules = Array.from({ length: 41 }, (_, i) => ({ ...rule, id: 101 + i })); const source = 2
+  const latest = { [sourceKey(1, 'holding-register', 0, source)]: { rawValue: 200, quality: 'good', timestamp: new Date(now).toISOString(), slaveId: source, batchId: 'B' } }
+  const value = { t, device: { id: 1, ...props.device }, groups: [{ ...group, slaveId: source }], latest, groupErrors: {}, now, threshold: 5000, configurationReady: true, api: async () => { assert.fail('no I/O') }, onHistory() { assert.fail('no automatic navigation') } }
+  const panel = hookDriver('AlarmPanel.tsx', 'AlarmPanel', scope({ AlarmWriteGate, alarmOpeningState, readPointAlarmObservation, alarmMatches, alarmRuleSummaryKey, AlarmRuleReadStatus, DeferredAlarmPendingContext, AlarmHistoryAction, alarmHistoryState, symbols: { '>': '>' }, useAlarmRules: () => ({ rules, ready: true, reading: false, state: { status: 'ready', reading: false, rules, updatedAt: now }, lock: { current: false } }) }), value)
+  const list = () => panel.one('div', p => p.className === 'alarm-active-list'), keys = () => elements(list()).filter(node => node.type === 'div' && node.key !== null).map(node => Number(node.key))
+  try {
+    panel.one('input', p => p.type === 'number').props.onChange({ currentTarget: { valueAsNumber: 2 } }); panel.render()
+    assert.deepEqual(keys(), Array.from({ length: 20 }, (_, i) => 121 + i)); const before = renderToStaticMarkup(list())
+    rules = [...rules.slice(1), { ...rule, id: 142 }]; panel.render(); const after = renderToStaticMarkup(list())
+    assert.deepEqual(keys(), Array.from({ length: 20 }, (_, i) => 122 + i))
+    console.log('SAME COUNT MEMBERSHIP VISIBLE: ' + String(before !== after) + '; rule 121 left page 2 and rule 141 entered, total remains 41')
+    assert.notEqual(after, before, 'different displayed rules must not render identically when point and rule text are identical')
+    assert(after.includes('规则 #122') && after.includes('规则 #141') && !after.includes('规则 #121'))
+    assert(renderToStaticMarkup(panel.tree).includes('同一页号不代表同一批规则') && renderToStaticMarkup(panel.tree).includes('不是固定快照'))
+    panel.render({ ...value, t: (key: string) => key === 'cancel' ? 'Cancel' : key }); const english = renderToStaticMarkup(panel.tree)
+    assert(english.includes('Rule #122') && english.includes('same page number does not identify the same rules'))
+    assert(english.includes('loaded rule order') && english.includes('not severity or trigger time') && english.includes('not a fixed snapshot'))
+    assert.equal(rules.length, 41)
+  } finally { panel.dispose() }
+})
 await check('synthetic matching-rule cards measure render work with history actions without opening history', () => {
   const measurements: unknown[] = []
   for (const size of [1000, 5000, 10000]) {
