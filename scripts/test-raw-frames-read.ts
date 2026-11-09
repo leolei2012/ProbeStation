@@ -182,6 +182,69 @@ for (const [index, timestamp] of times.entries()) {
   assert.equal(shown.children, timestamp, 'capture rows must preserve the original date, precision and explicit or absent zone instead of showing seconds alone')
   assert.equal(shown.title, timestamp); assert.equal(row.props.children[1].props.children, index % 2 ? 'RX' : 'TX'); assert.equal(JSON.stringify(snapshot), original)
 }
+const previousZone = process.env.TZ, offsets = new Set<number>()
+const zonedTimes = [
+  '2026-01-01T00:00:00.123+14:00', '2025-12-31T10:00:00.123Z',
+  '2025-12-31T22:00:00.123-12:00', '2026-01-01T10:00:00.123+00:00',
+  '2026-11-01T01:30:00.100-04:00', '2026-11-01T01:30:00.100-05:00',
+  '2026-03-08T01:59:59.999-05:00', '2026-03-08T03:00:00.000-04:00',
+  '2026-10-25T02:30:00.123+02:00', '2026-10-25T02:30:00.123+01:00',
+  '2026-03-29T01:59:59.999+01:00', '2026-03-29T03:00:00.000+02:00',
+  '2026-03-08T01:59-05:00', '2026-03-08T01:59:59-05:00',
+  '2026-03-08T01:59:59.1-05:00', '2026-03-08T01:59:59.123456789-05:00',
+  '2026-03-08T02:30:00.123', '2026-11-01T01:30:00.123',
+]
+const invalidTimes = [null, undefined, 0, NaN, {}, '', 'PRIVATE invalid timestamp', '2026-13-01T00:00:00Z', '2026-01-32T00:00:00Z', '2026-01-01T25:00:00Z', '2026-01-01T00:60:00Z', '2026-01-01T00:00:60Z', '2026-01-01T00:00:00+24:00']
+let zoneRows = 0, rejectedTimes = 0, toleratedCalendar = 0
+try {
+  for (const zone of ['UTC', 'America/New_York', 'Europe/Berlin', 'Asia/Shanghai']) {
+    process.env.TZ = zone; offsets.add(new Date('2026-07-01T00:00:00Z').getTimezoneOffset())
+    if (zone === 'America/New_York') {
+      assert.deepEqual([4, 5, 6, 7].map(index => new Date(zonedTimes[index]).getTimezoneOffset()), [240, 300, 300, 240], 'runtime timezone data must confirm the selected US DST boundaries')
+      assert.equal(new Date(zonedTimes[16]).getHours(), 3, 'the native parser may normalize a local spring gap; raw capture text must not follow that normalization')
+    }
+    if (zone === 'Europe/Berlin') assert.deepEqual([8, 9, 10, 11].map(index => new Date(zonedTimes[index]).getTimezoneOffset()), [-120, -60, -60, -120], 'runtime timezone data must confirm the selected European DST boundaries')
+    assert.equal(Date.parse(zonedTimes[0]), Date.parse(zonedTimes[1])); assert.equal(Date.parse(zonedTimes[2]), Date.parse(zonedTimes[3]))
+    for (const [a, b, difference] of [[4, 5, 3600000], [6, 7, 1], [8, 9, 3600000], [10, 11, 1]]) assert.equal(Date.parse(zonedTimes[b]) - Date.parse(zonedTimes[a]), difference)
+    const labels: string[] = []
+    for (const timestamp of zonedTimes) {
+      const source = { ...raw[0], timestamp }, snapshot = parseRawFrames([source], scope, 200), row = renderRow(snapshot.frames[0]), label = row.props.children[0].props
+      assert.equal(label.children, timestamp, 'ambient local zone cannot add seconds/fraction/offset or collapse a repeated wall time')
+      assert.equal(label.title, timestamp); assert.equal(source.timestamp, timestamp); labels.push(label.children); zoneRows++
+    }
+    assert.notEqual(labels[4], labels[5]); assert.notEqual(labels[8], labels[9], 'explicit offsets keep repeated wall-clock records distinguishable')
+    const read = new RawFramesRead(device, 200)
+    await read.refresh(async () => [{ ...raw[0], timestamp: '2026-01-01T25:00:00Z' }]); assert.equal(read.snapshot().phase, 'error'); assert.equal(read.snapshot().value, undefined)
+    for (const english of [false, true]) { const html = renderToStaticMarkup(createElement(RawFramesStatus, { state: read.snapshot(), paused: false, english })); assert(!html.includes(english ? 'This read returned no captures' : '本次读取没有返回捕获记录')); assert(!html.includes('1970-01-01')) }
+    rejectedTimes++; await read.refresh(async () => raw); const accepted = read.snapshot().value!
+    for (const timestamp of invalidTimes) {
+      const damaged = { ...raw[1], timestamp }
+      await read.refresh(async () => [raw[0], damaged]); assert.equal(read.snapshot().phase, 'error'); assert.equal(read.snapshot().error, 'invalid')
+      assert.equal(read.snapshot().value, accepted, 'invalid time rejects the entire new response instead of showing a valid prefix as fresh')
+      assert.equal(damaged.timestamp, timestamp); assert.equal(renderRow(accepted.frames[0]).props.children[0].props.children, accepted.frames[0].timestamp)
+      for (const english of [false, true]) {
+        const html = renderToStaticMarkup(createElement(RawFramesStatus, { state: read.snapshot(), paused: false, english }))
+        assert(html.includes(english ? 'Previous captures' : '保留上次显示')); assert(!html.includes('PRIVATE')); assert(!html.includes(english ? 'This read returned no captures' : '本次读取没有返回捕获记录'))
+      }
+      rejectedTimes++
+    }
+    // Finite Date.parse is a legacy compatibility check, not strict calendar/IANA-zone validation.
+    const legacyCalendar = '2026-02-30T12:00:00.123Z'
+    if (Number.isFinite(Date.parse(legacyCalendar))) {
+      const literal = parseRawFrames([{ ...raw[0], timestamp: legacyCalendar }], scope, 200)
+      assert.equal(renderRow(literal.frames[0]).props.children[0].props.children, legacyCalendar, 'never silently replace a tolerated raw calendar string with its normalized date')
+      assert.notEqual(legacyCalendar, new Date(Date.parse(legacyCalendar)).toISOString()); toleratedCalendar++
+    } else assert.throws(() => parseRawFrames([{ ...raw[0], timestamp: legacyCalendar }], scope, 200))
+    await read.refresh(async () => raw); assert.equal(read.snapshot().phase, 'ready'); read.cancel()
+    for (const english of [false, true]) {
+      const html = renderToStaticMarkup(createElement(RawFramesStatus, { state: read.snapshot(), paused: false, english }))
+      assert(html.includes(english ? 'missing zone stays unknown' : '未标时区则不推断'))
+    }
+  }
+  assert.equal(offsets.size, 4, 'the matrix must actually exercise different process-local zones')
+} finally { if (previousZone === undefined) delete process.env.TZ; else process.env.TZ = previousZone }
+assert.equal(process.env.TZ, previousZone); assert.equal(effects, 0)
+console.log(`RAW CAPTURE TIMEZONE OK: ${zoneRows} raw labels across 4 ambient zones, fixed-offset date boundaries/DST repeats and gaps, original precision; ${rejectedTimes} invalid whole-response rejections/recovery; ${toleratedCalendar} Date.parse calendar compatibility observations without normalization; TZ restored, no hardware`)
 const sharedAttribute = status.attributes.properties.find(node => ts.isJsxAttribute(node) && node.name.getText(appSource) === 'sharedSerial') as ts.JsxAttribute
 assert(sharedAttribute?.initializer && ts.isJsxExpression(sharedAttribute.initializer), 'actual RTU display must provide channel scope even when its capture list is empty')
 const sharedExpression = (sharedAttribute.initializer as ts.JsxExpression).expression!
