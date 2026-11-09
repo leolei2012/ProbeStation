@@ -122,6 +122,7 @@
     "scripts/test-group-create-atomic.ts",
     "scripts/test-live-snapshot-comparison.ts",
     "scripts/test-live-watch-list.ts",
-    "scripts/test-alarm-pending-context.ts"
+    "scripts/test-alarm-pending-context.ts",
+    "scripts/audit-guarded-write.ts"
   ]
 }
