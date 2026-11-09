@@ -115,5 +115,60 @@ const bounded = Object.freeze(Array.from({ length: 2000 }, (_, index) => Object.
 exceptionReader = reader
 assert.deepEqual(focus(reader, bounded).visibleFrames.map((frame: any) => frame.id), bounded.filter(frame => frame.isException).map(frame => frame.id), 'maximum-size snapshot preserves all matching records in source order')
 assert.equal(focus(reader, bounded).visibleFrames.length, 500)
+// Capture markers describe observed byte chunks, not validated protocol responses.
+const renderRow = evaluate(map.arguments[0], { React: { createElement }, formatLocalTs: (value: string) => value, dir: (value: string) => value.toUpperCase() })
+let semanticInputs = 0
+for (const transport of ['tcp', 'rtu'] as const) {
+  const target = transport === 'tcp' ? device : serial, targetScope = communicationScope(target)
+  const prefix = transport === 'tcp' ? [0, 1, 0, 0, 0, 3, 1, 0x83] : [1, 0x83]
+  const diag = new ModbusDiagnostics(transport, 2000, transport === 'tcp' ? { deviceId: 1, channelKey: 'tcp:1' } : { channelKey: 'rtu:COM_MOCK' })
+  diag.recordFrame('rx', new Uint8Array()); assert.equal(diag.getFrames().length, 0, 'zero bytes do not invent a capture')
+  for (let length = 1; length <= prefix.length; length++) diag.recordFrame('rx', Uint8Array.from(prefix.slice(0, length)))
+  const codes = [0, 1, 2, 3, 4, 5, 6, 8, 10, 11, 127, 255]
+  for (const code of codes) diag.recordFrame('rx', Uint8Array.from([...prefix, code]))
+  diag.recordFrame('tx', Uint8Array.from([...prefix, 2]))
+  const captured = JSON.parse(JSON.stringify(diag.getFrames())), originalCaptured = JSON.stringify(captured), originalMetrics = JSON.stringify(diag.snapshot())
+  const snapshot = parseRawFrames(captured, targetScope, 200), current = new RawFramesRead(target, 200)
+  exceptionReader = current
+  const marked = focus(current, snapshot.frames).visibleFrames
+  assert.deepEqual(marked.map((frame: any) => frame.id), captured.filter((frame: any) => frame.isException === true).map((frame: any) => frame.id))
+  assert.equal(marked.length, codes.length + 2, 'the flag is retained even without an exception byte or on TX; no RX-only inference')
+  assert.deepEqual(snapshot.frames.slice(0, prefix.length).map(frame => [frame.isException, frame.exceptionCode]), Array.from({ length: prefix.length }, (_, index) => [index === prefix.length - 1, undefined]))
+  assert.deepEqual(marked.slice(1, -1).map((frame: any) => frame.exceptionCode), codes, 'unknown or zero byte codes remain raw numbers, not inferred fault names')
+  const truncated = marked[0], truncatedHtml = renderToStaticMarkup(renderRow(truncated))
+  assert(truncatedHtml.includes('(err ?)') && !truncatedHtml.includes('undefined'), 'marked truncated captures must display an unknown exception code, not a JavaScript undefined value')
+  assert.equal(truncated.exceptionCode, undefined, 'a display placeholder cannot fill in the raw code')
+  assert(renderToStaticMarkup(renderRow(marked[1])).includes('(err 0)'), 'a real zero byte is retained, not replaced by an unknown placeholder')
+  assert(renderToStaticMarkup(renderRow(marked.at(-2))).includes('(err 255)'))
+  const mismatch = parseRawFrames([{ ...captured.at(-1), isException: false }], targetScope, 200)
+  assert.equal(focus(current, mismatch.frames).visibleFrames.length, 0, 'exception-looking bytes and a code cannot override an explicit false marker')
+  const withoutCode = parseRawFrames([{ ...captured.at(-1), functionCode: undefined, exceptionCode: undefined }], targetScope, 200)
+  assert.equal(focus(current, withoutCode.frames).visibleFrames.length, 1, 'missing interpreted fields do not remove an existing true marker')
+  for (const code of [-1, 256, 1.2, '2', null, NaN, Infinity]) assert.throws(() => parseRawFrames([{ ...captured.at(-1), exceptionCode: code }], targetScope, 200))
+  await current.refresh(async () => captured); const accepted = current.snapshot().value!
+  await current.refresh(async () => [...captured, { ...captured[0], id: 999, hex: 'GG' }])
+  assert.equal(current.snapshot().error, 'invalid'); assert.equal(current.snapshot().value, accepted, 'reject the complete malformed snapshot; never show its valid prefix as current')
+  assert.deepEqual(focus(current, accepted.frames).visibleFrames.map((frame: any) => frame.id), marked.map((frame: any) => frame.id))
+  for (const english of [false, true]) {
+    const html = renderToStaticMarkup(createElement(RawFramesStatus, { state: current.snapshot(), paused: false, english, exceptionFocus: focus(current, accepted.frames).control }))
+    assert(html.includes(english ? 'could not be verified' : '无法核实')); assert(html.includes(english ? 'Previous captures' : '保留上次显示')); assert(!html.includes(english ? 'This read returned no captures' : '本次读取没有返回捕获记录'))
+  }
+  const retainedControl = focus(current, accepted.frames).control
+  retainedControl.change(false); assert.equal(focus(current, accepted.frames).visibleFrames, accepted.frames)
+  retainedControl.change(true)
+  const switched = new RawFramesRead(transport === 'tcp' ? serial : device, 200)
+  assert.equal(focus(switched, []).control.active, false); retainedControl.change(true); assert.equal(focus(switched, []).control.active, false)
+  await switched.refresh(async () => captured)
+  assert.equal(switched.snapshot().error, 'invalid'); assert.equal(switched.snapshot().value, undefined, 'new source cannot accept old-source captures or inherit its retained snapshot')
+  for (const english of [false, true]) {
+    const html = renderToStaticMarkup(createElement(RawFramesStatus, { state: switched.snapshot(), paused: false, english }))
+    assert(html.includes(english ? 'could not be verified' : '无法核实')); assert(!html.includes(english ? 'This read returned no captures' : '本次读取没有返回捕获记录'))
+  }
+  await current.refresh(async () => []); assert.equal(current.snapshot().phase, 'ready'); assert.equal(focus(current, current.snapshot().value!.frames).visibleFrames.length, 0)
+  assert.equal(JSON.stringify(captured), originalCaptured); assert.equal(JSON.stringify(diag.snapshot()), originalMetrics)
+  semanticInputs += prefix.length + codes.length + 2
+}
+assert.equal(effects, 0)
+console.log(`RAW FRAMES SEMANTICS OK: ${semanticInputs} TCP/RTU capture inputs, actual row rendering, flag-only selection, zero/unknown/missing codes, invalid whole-snapshot retention/recovery and source/control isolation; no capture mutation or hardware`)
 console.log('RAW FRAMES FOCUS OK: actual view selection/map and checkbox/show-all callbacks, bilingual counts and distinct empty/no-match, legacy/error/pause, source/limit/late-control isolation; local snapshot only')
 console.log('RAW FRAMES READ OK: producer/poller memory getters and RTU filtering, slow-response acceptance, single-flight, timeout/recovery, pause/late success/error/finalizer isolation, source/limit ownership, legacy metadata, strict immutable captures and bilingual status SSR; no real data, files, network, hardware, model or DOM automation')

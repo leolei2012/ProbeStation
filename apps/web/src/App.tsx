@@ -1832,7 +1832,7 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
               <span style={{ color: 'var(--text-3, #888)', minWidth: 72 }}>{formatLocalTs(f.timestamp).slice(11)}</span>
               <span style={{ color: f.direction === 'tx' ? 'var(--accent)' : 'var(--success)', minWidth: 28, fontWeight: 600 }}>{dir(f.direction)}</span>
               <span style={{ minWidth: 40, color: 'var(--text-2, #bbb)' }}>{f.slaveId != null ? 'slave ' + f.slaveId : ''}</span>
-              <span style={{ minWidth: 44, color: 'var(--text-2, #bbb)' }}>FC{f.functionCode ?? '?'}{f.isException ? ' (err ' + f.exceptionCode + ')' : ''}</span>
+              <span style={{ minWidth: 44, color: 'var(--text-2, #bbb)' }}>FC{f.functionCode ?? '?'}{f.isException ? ' (err ' + (f.exceptionCode ?? '?') + ')' : ''}</span>
               <span style={{ color: 'var(--text-3, #999)', minWidth: 40 }}>{f.byteLength}B</span>
               <span style={{ wordBreak: 'break-all' }}>{f.hex ? f.hex.replace(/(..)/g, '$1 ').replace(/\s+$/, '') : ''}</span>
             </div>
