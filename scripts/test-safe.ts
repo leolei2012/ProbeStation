@@ -23,6 +23,7 @@ tests.push('group-drafts')
 tests.push('live-snapshot-comparison')
 tests.push('live-watch-list')
 tests.push('alarm-pending-context')
+tests.push('config-generation-contract')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {

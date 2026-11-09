@@ -124,6 +124,7 @@
     "scripts/test-live-watch-list.ts",
     "scripts/test-alarm-pending-context.ts",
     "scripts/audit-guarded-write.ts",
-    "scripts/audit-write-send-boundary.ts"
+    "scripts/audit-write-send-boundary.ts",
+    "scripts/test-config-generation-contract.ts"
   ]
 }
