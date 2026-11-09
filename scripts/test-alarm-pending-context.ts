@@ -12,6 +12,9 @@ import { AlarmRuleReadStatus, alarmRuleSummaryKey } from '../apps/web/src/AlarmR
 import { readPointAlarmObservation } from '../apps/web/src/alarm-value.ts'
 import { alarmMatches } from '../packages/core/src/alarm.ts'
 import { sourceKey, validSlaveId } from '../packages/core/src/sample-source.ts'
+import { LiveWatchList } from '../apps/web/src/LiveWatchList.tsx'
+import { captureLiveWatch, liveWatchResult } from '../apps/web/src/live-watch-list.ts'
+import { evaluateLivePoints, livePointFilterResult } from '../apps/web/src/live-point-filter.ts'
 
 const now = Date.parse('2026-11-09T00:00:00.000Z'), t = (key: string) => key === 'cancel' ? '取消' : key
 const reg = { id: 101, alias: '同地址温度', startAddress: 0, dataType: 'uint16', functionCode: 3 }
@@ -169,5 +172,31 @@ await check('loaded paginated context never substitutes mixed-batch or missing-s
   assert(renderToStaticMarkup(view.tree).includes('不等同无告警或设备恢复'))
   delete latest[sourceKey(1, 'holding-register', 0, 2)]; assert.equal(refresh(), null); assert(renderToStaticMarkup(view.tree).includes('id:101'))
   view.dispose()
+})
+await check('watch and search/slave filters can show no unknown rows while device context lists two rules for one other point', () => {
+  const other = { ...reg, id: 102, alias: 'WATCHED POINT' }, groups = [{ ...group, functionCode: 3 }, { ...group, id: 2, name: 'Second slave', slaveId: 2, functionCode: 3, registers: [other] }]
+  const rules = [rule, { ...rule, id: 12, operator: '<', threshold: -1 }], device = { id: 1, ...props.device }, token = Symbol('watch scope')
+  const latest = { [sourceKey(1, 'holding-register', 0, 2)]: { rawValue: 1, quality: 'good', timestamp: new Date(now).toISOString(), slaveId: 2, batchId: 'B' } }
+  const states = evaluateLivePoints(groups, new Map([[101, { covered: false, invalid: false }], [102, { covered: false, invalid: false }]]), latest, device, rules, {}, now, 5000)
+  const filtered = livePointFilterResult(groups, states, 'id:102', '2', 'all'), selection = captureLiveWatch(token, new Set([102]), groups)!
+  const watch = liveWatchResult(selection, token, true, filtered.visibleIds)
+  assert.deepEqual([...watch.visibleIds], [102]); assert.equal(filtered.counts.unknown, 0)
+  const full = livePointFilterResult(groups, states, '', '', 'all'); assert.equal(full.counts.unknown, 1, 'row count is one point even when it has two pending rules')
+  let requests = 0
+  const panel = hookDriver('AlarmPanel.tsx', 'AlarmPanel', scope({ AlarmWriteGate, alarmOpeningState, readPointAlarmObservation, alarmMatches, alarmRuleSummaryKey, AlarmRuleReadStatus, DeferredAlarmPendingContext, symbols: {}, useAlarmRules: () => ({ rules, ready: true, reading: false, state: { status: 'ready', reading: false, rules, updatedAt: now }, lock: { current: false } }) }), { t, device, groups, latest, groupErrors: {}, now, threshold: 5000, configurationReady: true, api: async () => { requests++; throw Error('no I/O') } })
+  try {
+    panel.one('button', p => p.children === '查看待定规则').props.onClick(); panel.render()
+    const pending = panel.one(DeferredAlarmPendingContext).props as AlarmPendingContextProps
+    assert.deepEqual(pending.rows.map(row => row.reg.id), [101, 101]); assert.equal(pending.rows.length, 2)
+    for (const english of [false, true]) {
+      const context = html({ ...pending, english })
+      assert(context.includes(english ? 'not narrowed by watch list' : '不随观察清单'), 'pending context must state its independent device scope')
+      assert(context.includes(english ? 'rule entries' : '规则条数'), 'rule count must not be presented as a point count')
+      const watchMarkup = renderToStaticMarkup(React.createElement(LiveWatchList, { selection, scope: token, only: true, matches: filtered.visibleIds, groups, t, english, onSelect() {}, onOnly() {}, onClear() {} }))
+      assert(watchMarkup.includes(english ? 'pending-rule list' : '待定规则清单'), 'watch-only must explain why the pending list can still contain other points')
+    }
+    assert.equal(liveWatchResult(selection, Symbol('changed'), true, filtered.visibleIds).visibleIds.size, 0)
+    assert.equal(pending.rows.length, 2); assert.equal(requests, 0)
+  } finally { panel.dispose() }
 })
 console.log(`ALARM PENDING TEST OK: ${passed} groups; production panel, source-scoped pending evaluations, neutral bilingual context, pagination and deferred error/lifecycle; component mocks only, no API/device/database/model/browser.`)
