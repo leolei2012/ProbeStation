@@ -79,6 +79,7 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
   })
   const active = evaluated.filter(e => e.active), unknown = evaluated.filter(e => !e.known)
   const activePages = Math.max(1, Math.ceil(active.length / 20)), shownActivePage = Math.min(activePage, activePages - 1)
+  useEffect(() => { if (activePage >= activePages) setActivePage(activePages - 1) }, [activePage, activePages])
   const reset = () => { gate.reset(); setError(''); setWriteWarning(''); setEditId(null); setEditExpected(null); setRegisterId(point ? String(point.id) : ''); setOperator('>'); setLimit(''); setMessage(''); setDeleting(null) }
   const mutate = async (action: (signal: AbortSignal) => Promise<readonly string[]>) => {
     if (lock.current || !ready || reading || !contextReady || gate.snapshot().phase !== 'idle') return

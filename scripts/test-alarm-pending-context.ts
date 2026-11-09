@@ -270,6 +270,34 @@ await check('matching cards are bounded without hiding rule totals, and paged hi
     rules = []; panel.render(); assert.equal(cards().length, 0); assert.throws(() => pager()); assert.equal(targets.length, 1)
   } finally { panel.dispose() }
 })
+await check('live matching-card shrink/grow keeps the clamped page, isolates new sources and keeps native keyboard attributes', () => {
+  const points = Array.from({ length: 41 }, (_, i) => ({ ...reg, id: 101 + i, startAddress: i, alias: 'LIVE-' + i })), rules = points.map(point => ({ ...rule, id: point.id, registerId: point.id }))
+  const groups = [{ ...group, slaveId: 2, registers: points }]
+  const samples = (source: number, count = 41) => Object.fromEntries(points.map((point, i) => [sourceKey(1, 'holding-register', i, source), { rawValue: i < count ? 200 : 0, quality: 'good', timestamp: new Date(now).toISOString(), slaveId: source, batchId: 'source-' + source }]))
+  let calls = 0, opens = 0, current = { t, device: { id: 1, ...props.device }, groups, latest: samples(2), groupErrors: {}, now, threshold: 5000, configurationReady: true, api: async () => { assert.fail('no I/O') }, onHistory() { opens++ } }
+  const panel = hookDriver('AlarmPanel.tsx', 'AlarmPanel', scope({ AlarmWriteGate, alarmOpeningState, readPointAlarmObservation: (...args: Parameters<typeof readPointAlarmObservation>) => { calls++; return readPointAlarmObservation(...args) }, alarmMatches, alarmRuleSummaryKey, AlarmRuleReadStatus, DeferredAlarmPendingContext, AlarmHistoryAction, alarmHistoryState, Date: { now: () => now }, symbols: { '>': '>' }, useAlarmRules: () => ({ rules, ready: true, reading: false, state: { status: 'ready', reading: false, rules, updatedAt: now }, lock: { current: false } }) }), current)
+  const cards = () => elements(panel.tree).filter(node => node.type === AlarmHistoryAction)
+  const jump = (page: number) => { panel.one('input', p => p.type === 'number').props.onChange({ currentTarget: { valueAsNumber: page } }); panel.render(current) }
+  const refresh = (source: number, count = 41) => { current = { ...current, latest: samples(source, count) }; calls = 0; panel.render(current); assert.equal(calls, 41, 'pagination does not filter rule evaluation') }
+  try {
+    const input = panel.one('input', p => p.type === 'number').props
+    assert.equal(input['aria-label'], '命中规则页码'); assert.equal(input.min, 1); assert.equal(input.max, 3); assert.equal(input.step, 1)
+    assert.equal(input.onKeyDown, undefined); assert.equal(input.tabIndex, undefined, 'native spinbutton and tab behavior are not replaced')
+    for (const button of elements(panel.one('div', p => p.role === 'group' && p.className === 'toolbar')).filter(node => node.type === 'button')) assert.equal(button.props.type, 'button')
+    jump(3); assert.equal(cards()[0].props.state.registerId, 141)
+    refresh(2, 1); assert.equal(cards()[0].props.state.registerId, 101)
+    refresh(2); assert.equal(cards()[0].props.state.registerId, 101, 'growing again must not resurrect the old out-of-range page')
+    jump(3); refresh(2, 21); assert.equal(cards()[0].props.state.registerId, 121)
+    refresh(2); assert.equal(cards()[0].props.state.registerId, 121)
+    assert(renderToStaticMarkup(panel.tree).includes('缓存命中规则 41 条'))
+    groups[0].slaveId = 3; calls = 0; panel.render(current); assert.equal(calls, 41); assert.equal(cards().length, 0, 'source 2 values cannot supply source 3 matching cards'); assert(renderToStaticMarkup(panel.tree).includes('alarmWaiting'), 'unknown new-source values must not report a normal summary')
+    refresh(3); assert.equal(cards()[0].props.state.registerId, 101); assert(cards().every(node => node.props.state.slaveId === 3))
+    assert.equal(openAlarmHistory(cards()[0].props.resolve, current.onHistory).kind, 'ready'); assert.equal(opens, 1)
+    const next = elements(panel.one('div', p => p.role === 'group' && p.className === 'toolbar')).find(node => node.type === 'button' && node.props.children === '下一页')!
+    next.props.onClick(); panel.render(current); assert.equal(cards()[0].props.state.registerId, 121, 'button activation changes only the display page')
+    refresh(3, 0); assert.equal(cards().length, 0); refresh(3); assert.equal(cards()[0].props.state.registerId, 101); assert.equal(opens, 1)
+  } finally { panel.dispose() }
+})
 await check('synthetic matching-rule cards measure render work with history actions without opening history', () => {
   const measurements: unknown[] = []
   for (const size of [1000, 5000, 10000]) {
