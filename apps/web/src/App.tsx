@@ -36,7 +36,7 @@ import { capturePointBookOpening, pointBookOpeningMatches, pointBookReplacementP
 import { InvalidPointBookReportError, pointBookReportKind, uploadPointBook as sendPointBook, type PointBookReport } from './pointbook-result'
 import { PointLabel, buildPointLabels, type PointLabelData } from './PointLabel'
 import { RegisterSelectButton } from './DeferredRegisterPicker'
-import { sourceKey, sourceSample, withRegisterSources } from '../../../packages/core/src/sample-source.ts'
+import { sourceKey, configuredSourceSample as sourceSample, validSlaveId, withRegisterSources } from '../../../packages/core/src/sample-source.ts'
 import { decodeHistoricalSample, historyVerificationLabel } from '../../../packages/core/src/history-integrity.ts'
 import type { DeviceFields } from './DeviceModal'
 import { DeferredDeviceModal as DeviceModal, DeferredGroupModal as GroupModal } from './DeferredConfigModal'
@@ -97,6 +97,7 @@ type RealtimeStatus = 'connecting' | 'connected' | 'stale' | 'reconnecting' | 'd
 
 const I18N: Record<Lang, Record<string, string>> = {
   zh: {
+    sourceUnverified: '采样来源未核实',
     pointCheckTab: '点表检查', pointCheckWaiting: '正在等待点表配置；加载失败时可使用顶部重试。',
     histCompareTitle: 'A/B 两点对比', histCompareHint: '先在图中移动指针或点击选择时刻，再设置 A、B。逐点取最近的显示采样，不插值；请核对每点实际采样时间。', histCompareSetA: '当前时刻设为 A', histCompareSetB: '当前时刻设为 B', histCompareClear: '清空对比', histCompareCursorDelta: '游标时间差 B − A', histCompareA: 'A 最近显示采样', histCompareB: 'B 最近显示采样', histCompareDifference: '数值差 B − A', histCompareSampleDelta: '实际采样时间差', histCompareNoSample: '无可用显示采样', histCompareEmpty: '设置 A/B 后在这里比较；可先设置任意一端。', histCompareLimit: '基于显示采样快照，放大可获取更细数据；断线/无效处显示未知，不跨缺口取值。未验证端点仅供查看，不作自动 PASS/FAIL。缩放或刷新不会改写已设点；更改点位、图例、配置、数值模式或完整时间范围会清空。相对量程仅影响绘图。',
     histNavigationWaiting: '正在等待点表加载以定位点位 #{id}；加载失败时可使用顶部重试。', histNavigationMissing: '当前已加载点表中未找到点位 #{id}，请刷新配置后再次点击引用，或重新选择点位。', histNavigationChanged: '点位 #{id} 的来源或类型已变化，未自动定位；请核对当前点位后重新点击告警引用。', histNavigationInvalid: '历史跳转参数无效，请手动选择时间与点位。',
@@ -186,6 +187,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     tabMonitor: '设备观测', tabDatabase: '数据管理', dbHistory: '历史数据', dbTotalRows: '采样总行数', dbTimeSpan: '时间跨度', dbDiskUsage: '磁盘占用', dbPerDevice: '每台设备', dbMetadata: '元数据', dbRetention: '保留策略', dbRefresh: '刷新', dbNoData: '暂无历史数据', dbBufferHint: '内存缓冲 {n} 条待落盘', dbDevices: '设备', dbGroups: '分组', dbRegisters: '寄存器', dbRules: '告警规则', dbFirmwares: '固件', dbLogs: '日志', dbRetentionForever: '永久', dbRetentionDays: '{n} 天',
   },
   en: {
+    sourceUnverified: 'Sample source unverified',
     pointCheckTab: 'Point table check', pointCheckWaiting: 'Waiting for point definitions. Use the retry control above if loading fails.',
     histCompareTitle: 'A/B sample comparison', histCompareHint: 'Move or tap in the plot, then set A and B. Use nearest displayed samples without interpolation; check each actual sample time.', histCompareSetA: 'Set A at cursor', histCompareSetB: 'Set B at cursor', histCompareClear: 'Clear comparison', histCompareCursorDelta: 'Cursor elapsed B − A', histCompareA: 'A nearest displayed sample', histCompareB: 'B nearest displayed sample', histCompareDifference: 'Value B − A', histCompareSampleDelta: 'Actual sample elapsed', histCompareNoSample: 'No usable displayed sample', histCompareEmpty: 'Set either endpoint to begin comparing.', histCompareLimit: 'Frozen displayed-sample snapshots; zoom for detail. Gaps and invalid data stay unknown. Unverified endpoints are view-only, never automatic PASS/FAIL evidence. Zoom/refresh keeps snapshots; changes to points, legend, configuration, value mode or full range clear them. Relative scaling affects the plot only.',
     histNavigationWaiting: 'Waiting for point definitions to locate #{id}. Use the retry control above if loading fails.', histNavigationMissing: 'Point #{id} was not found in the loaded definitions. Refresh configuration and reopen the reference, or select a point.', histNavigationChanged: 'Point #{id} source or type changed; automatic focus blocked. Check the point and click its alarm reference again.', histNavigationInvalid: 'Invalid history navigation parameters. Select the time range and points manually.',
@@ -1018,7 +1020,8 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
   const [pointFilter, setPointFilter] = useState<LivePointFilter>('all')
   const [watchSelection, setWatchSelection] = useState<LiveWatchSelection | null>(null), [watchOnly, setWatchOnly] = useState(false)
   const [sourceFilter, setSourceFilter] = useState('')
-  const deviceSlaveId = device.mode === 'slave' ? device.slaveId : undefined
+  // Undefined means use the group; an unknown slave-device override must remain distinct.
+  const deviceSlaveId = device.mode === 'slave' ? device.slaveId ?? NaN : undefined
   const sources = pickerSources(groups, deviceSlaveId), activeSource = sources.includes(sourceFilter) ? sourceFilter : '', sourcesKey = sources.join(',')
   useEffect(() => { if (sourceFilter && !sources.includes(sourceFilter)) setSourceFilter('') }, [sourceFilter, sourcesKey])
   const operation = useOperation(t)
@@ -1078,7 +1081,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
     })
     if (bookInputRef.current) bookInputRef.current.value = ''
   }
-  const views = useMemo(() => buildRegViews(groups, latest, device.id, device.mode === 'slave' ? device.slaveId : undefined), [groups, latest, device.id, device.mode, device.slaveId])
+  const views = useMemo(() => buildRegViews(groups, latest, device.id, deviceSlaveId), [groups, latest, device.id, device.mode, device.slaveId])
   const pointStates = useMemo(() => evaluateLivePoints(groups, views, latest, device, alarmRules, groupErrors, now, threshold), [groups, views, latest, device.id, device.isActive, device.mode, device.slaveId, alarmRules, groupErrors, now, threshold])
   const baseFilteredPoints = useMemo(() => livePointFilterResult(groups, pointStates, search, activeSource, pointFilter, deviceSlaveId), [groups, pointStates, search, activeSource, pointFilter, deviceSlaveId])
   const watchResult = liveWatchResult(watchSelection, snapshotComparisonScope, watchOnly, baseFilteredPoints.visibleIds)
@@ -1087,9 +1090,10 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
   const pointFilterKey = JSON.stringify([search.trim(), activeSource, pointFilter, watchOnly, watchResult.ids.size ? [...watchResult.ids] : null])
   // Summarize the full group before applying search or issue filters.
   const summaries = new Map(groups.map(g => {
+    const configuredSource = device.mode === 'slave' ? device.slaveId : g.slaveId
     const state = pointHealth(Array.from({ length: g.quantity }, (_, i) => sourceSample(latest, device.id, areaForFunctionCode(g.functionCode), g.startAddress + i, device.mode === 'slave' ? device.slaveId : g.slaveId)), now, threshold, !device.isActive || !g.isActive, !!groupErrors[g.id])
     const incomplete = state.missing || g.registers.some(r => views.get(r.id)?.invalid)
-    const status = !device.isActive || !g.isActive ? 'pausedData' : groupErrors[g.id] ? 'groupCommunicationError' : state.timestamp === null ? 'notSampled' : incomplete ? 'groupPartialData' : state.stale ? 'groupOldValues' : 'fresh'
+    const status = !device.isActive || !g.isActive ? 'pausedData' : !validSlaveId(configuredSource) ? 'sourceUnverified' : groupErrors[g.id] ? 'groupCommunicationError' : state.timestamp === null ? 'notSampled' : incomplete ? 'groupPartialData' : state.stale ? 'groupOldValues' : 'fresh'
     return [g.id, { ...state, status }] as const
   }))
   const shown = groups.map(g => ({ ...g, registers: g.registers.filter(r => filteredPoints.visibleIds.has(r.id)) })).filter(g => g.registers.length > 0 || !hasPointFilters)
@@ -1114,6 +1118,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
       {bookResult && <PointBookImportResult result={bookResult} t={t} onDismiss={() => setBookResult(null)} />}
       {shown.map((g) => {
         const summary = summaries.get(g.id)!
+        const configuredSource = device.mode === 'slave' ? device.slaveId : g.slaveId
         return (
         <div key={g.id} className="group-block">
           <div className="group-data-summary">
@@ -1123,7 +1128,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
           <div className="group-head">
             <button className="group-collapse" disabled={hasPointFilters} aria-label={g.name} aria-expanded={hasPointFilters || !collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}><span className={'group-chevron' + (!hasPointFilters && collapsed.has(g.id) ? ' is-collapsed' : '')}>▾</span></button>
             <button className="group-name group-name-toggle" disabled={hasPointFilters} aria-expanded={hasPointFilters || !collapsed.has(g.id)} onClick={() => toggleCollapse(g.id)}>{g.name}</button>
-            <span className="kv">FC{g.functionCode} · 从站 {device.mode === 'slave' ? device.slaveId : g.slaveId} · 起始 {g.startAddress} · {g.quantity} 个</span>
+            <span className="kv">FC{g.functionCode} · 从站 {validSlaveId(configuredSource) ? configuredSource : '?'} · 起始 {g.startAddress} · {g.quantity} 个</span>
             {groupErrors[g.id] && <span className="group-error" title={groupErrors[g.id]}>⚠ {groupErrors[g.id] === 'Disconnected' ? t('groupDisconnected') : groupErrors[g.id]}</span>}
             <div style={{ flex: 1 }} />
             <button className="btn" disabled={operation.busy} onClick={() => toggleGroupPause(g.id)}>{g.isActive ? t('pause') : t('resume')}</button>

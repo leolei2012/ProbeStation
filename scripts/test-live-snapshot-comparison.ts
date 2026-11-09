@@ -8,7 +8,7 @@ import { compareLiveSnapshots, liveSnapshotComparisonKey, type FrozenLiveObserva
 import { LiveSnapshotComparison } from '../apps/web/src/LiveSnapshotComparison.tsx'
 import { encodeRegister, decodeRegister } from '../packages/core/src/codec.ts'
 import * as codec from '../packages/core/src/codec.ts'
-import { sourceKey, sourceSample } from '../packages/core/src/sample-source.ts'
+import { sourceKey, configuredSourceSample as sourceSample } from '../packages/core/src/sample-source.ts'
 import { sameResponseBatch } from '../packages/core/src/sample-batch.ts'
 import { RealtimeFallbackRead } from '../apps/web/src/realtime-fallback.ts'
 import { displayNumber, physicalValue } from '../apps/web/src/physical-value.ts'

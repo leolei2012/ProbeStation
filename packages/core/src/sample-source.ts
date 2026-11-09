@@ -12,6 +12,11 @@ export function sourceSample<T extends { slaveId?: number | null }>(latest: Reco
   return scoped?.slaveId === slaveId ? scoped : latest[key]?.slaveId === slaveId ? latest[key] : undefined
 }
 
+/** A configured-source view must not interpret an absent/invalid source as an unscoped legacy lookup. */
+export function configuredSourceSample<T extends { slaveId?: number | null }>(latest: Record<string, T>, objectId: number | string, area: string, address: number, slaveId?: number | null): T | undefined {
+  return validSlaveId(slaveId) ? sourceSample(latest, objectId, area, address, slaveId) : undefined
+}
+
 export function withRegisterSources<T extends { groupId?: number; functionCode: number; startAddress: number; dataType: string; slaveId?: number }>(registers: T[], groups: Array<{ id: number; slaveId?: number; functionCode: number; startAddress: number; quantity: number }>, device?: { mode?: string; slaveId?: number }) {
   return registers.map(r => {
     const group = groups.find(g => g.id === r.groupId)
