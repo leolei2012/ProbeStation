@@ -11,6 +11,8 @@ export function captureLiveWatch(scope: symbol | null, ids: ReadonlySet<number>,
 export function liveWatchResult(selection: LiveWatchSelection | null, scope: symbol | null, only: boolean, matches: ReadonlySet<number>) {
   const status = !scope ? 'unverified' : !selection ? 'empty' : selection.scope !== scope ? 'changed' : 'ready'
   const ids = new Set(status === 'ready' ? selection!.ids : [])
-  const visibleIds = only ? new Set([...matches].filter(id => ids.has(id))) : new Set(matches)
+  // Callers only read this set. Preserve the full scope without copying when off;
+  // a watch-only intersection needs at most 32 membership checks, not a table scan.
+  const visibleIds = only ? new Set([...ids].filter(id => matches.has(id))) : matches
   return { status, ids, visibleIds, matching: [...ids].filter(id => matches.has(id)).length }
 }

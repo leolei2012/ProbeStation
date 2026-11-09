@@ -15,16 +15,19 @@ import { sameResponseBatch } from '../packages/core/src/sample-batch.ts'
 import { displayNumber, physicalValue } from '../apps/web/src/physical-value.ts'
 import { addVisiblePickerPoints, filterPickerGroups, pickerSource, pickerSources } from '../apps/web/src/register-picker.ts'
 import { LiveSnapshotComparison } from '../apps/web/src/LiveSnapshotComparison.tsx'
-import { sourceKey, sourceSample } from '../packages/core/src/sample-source.ts'
+import { sourceKey, sourceSample, withRegisterSources } from '../packages/core/src/sample-source.ts'
 import { hookDriver } from './fixtures/component-hook-driver.ts'
-import { syntheticDevice } from './fixtures/draft-navigation-driver.ts'
+import { pointHealth } from '../apps/web/src/observation.ts'
+import { historyQueryPlan, startHistoryQuery, type HistoryQueryTask } from '../apps/web/src/history-query-task.ts'
+import { reduceHistoryRead, type HistoryReadState } from '../apps/web/src/history-read-context.ts'
+import { draftEditor, draftSurface, syntheticDevice } from './fixtures/draft-navigation-driver.ts'
 
 const scope = Symbol('synthetic'), now = 1800000000000, device = { ...syntheticDevice, isActive: 1 }
 const groups = [1, 2].map(slaveId => ({ id: slaveId, objectId: 1, name: '<group>' + slaveId, isActive: 1, slaveId, functionCode: 3, startAddress: 0, quantity: 20, registers: Array.from({ length: 20 }, (_, i) => ({ id: slaveId * 100 + i, groupId: slaveId, objectId: 1, alias: '<point>' + i, startAddress: i, functionCode: 3, dataType: 'uint16' })) }))
 const matches = new Set(groups.flatMap(group => group.registers.map(point => point.id))), choose = (ids = [100, 200], token: symbol | null = scope) => captureLiveWatch(token, new Set(ids), groups)!
 const t = (key: string) => ({ selectRegisters: 'Select points', pickerSource: 'Slave', cancel: 'Cancel', save: 'Apply', curveSelectLimit: 'Select up to {n} points' }[key] ?? key)
 let passed = 0
-async function check(name: string, fn: () => void) { fn(); passed++; console.log('LIVE WATCH OK: ' + name) }
+async function check(name: string, fn: () => void | Promise<void>) { await fn(); passed++; console.log('LIVE WATCH OK: ' + name) }
 await check('bounded immutable selection rejects unknown duplicate or invalid identities without mutating inputs', () => {
   const before = JSON.stringify(groups), ids = new Set([100, 200]), selected = captureLiveWatch(scope, ids, groups)!
   ids.clear(); assert.deepEqual(selected.ids, [100, 200]); assert(Object.isFrozen(selected)); assert(Object.isFrozen(selected.ids)); assert.equal(JSON.stringify(groups), before)
@@ -163,5 +166,56 @@ await check('actual picker enforces 32 while sampling input stays at 40 and dese
     const value = data(), token = scopes()(value), selected = captureLiveWatch(token, applied, value.groups)!, current = { value: null as ReturnType<typeof captureLiveSnapshot> | null, notices: 0 }; combined(value, token, selected, current).click(); assert.equal(current.value!.points.length, 31); assert.equal(current.value!.scope.availablePoints, 40); assert.equal(JSON.stringify({ groups, latest }), before)
     picker.one('button', p => p.children === 'pickerClearSelection').props.onClick(); picker.render(); picker.one('button', p => p.children === 'Apply').props.onClick(); assert.equal(applied.size, 0)
   } finally { picker.dispose(); assert.equal(focuses, 1); assert.equal(picker.lateWrites, 0) }
+})
+await check('actual parent and watch controls avoid whole-table copies when unused and bound watch-only work', () => {
+  let walked = 0, probes = 0
+  const all = new Proxy(new Set(Array.from({ length: 10000 }, (_, i) => i + 1)), { get(target, key) { if (key === Symbol.iterator) return function* () { for (const id of target.values()) { walked++; yield id } }; if (key === 'has') return (id: number) => { probes++; return target.has(id) }; const value = Reflect.get(target, key, target); return typeof value === 'function' ? value.bind(target) : value } })
+  const parent = (selection: LiveWatchSelection | null, only: boolean) => run(variable('watchResult'), { liveWatchResult, watchSelection: selection, snapshotComparisonScope: scope, watchOnly: only, baseFilteredPoints: { visibleIds: all } })
+  const initial = parent(null, false), control = hookDriver('LiveWatchList.tsx', 'LiveWatchList', { liveWatchResult, LIVE_WATCH_LIMIT, RegisterSelectModal }, { selection: null, scope, only: false, matches: all, groups, t, onSelect() {}, onOnly() {}, onClear() {} })
+  try { assert.equal(walked, 0, 'unused watch layer must not iterate/copy the complete matched table twice'); assert.equal(initial.visibleIds, all); assert.equal(probes, 0) } finally { control.dispose() }
+  const selection = { scope, ids: Object.freeze(Array.from({ length: 32 }, (_, i) => i + 1)) }; walked = 0; probes = 0
+  const chosen = parent(selection, true), active = hookDriver('LiveWatchList.tsx', 'LiveWatchList', { liveWatchResult, LIVE_WATCH_LIMIT, RegisterSelectModal }, { selection, scope, only: true, matches: all, groups, t, onSelect() {}, onOnly() {}, onClear() {} })
+  try { assert.equal(chosen.visibleIds.size, 32); assert.equal(walked, 0); assert(probes <= 128, 'membership checks depend on at most 32 watched points in each caller, not 10000 table rows') } finally { active.dispose() }
+  assert.equal(all.size, 10000)
+})
+function mountedTable(registration?: ReturnType<ReturnType<typeof draftSurface>['registration']>) {
+  let clock = now; const notices: unknown[] = [], noAction = () => assert.fail('No business operation or network is allowed'), leaf = () => null
+  const props = (value = data()) => ({ draftScope: registration, t: (key: string) => key === 'cancel' ? '取消' : key, device: value.device, groups: value.groups, latest: value.latest, groupErrors: {}, now: value.now, threshold: 5000, onRefresh: noAction })
+  const driver = hookDriver('App.tsx', 'LiveTable', hooks => ({ useMemo(fn: () => unknown, deps: unknown[]) { const ref = (hooks.useRef as Function)({ ready: false, deps: [], value: undefined }); if (!ref.current.ready || deps.length !== ref.current.deps.length || deps.some((value, i) => !Object.is(value, ref.current.deps[i]))) ref.current = { ready: true, deps, value: fn() }; return ref.current.value }, Date: class extends Date { static now() { return clock } }, liveSnapshotComparisonKey, captureLiveSnapshot, captureLiveWatch, liveWatchResult, useAlarmRules: () => ({ rules: [], ready: true, error: null, reading: false, retry: noAction }), useDisplayColumns: () => [{ address: true, type: true, raw: true, physical: true, action: false }, noAction], useOperation: () => ({ busy: false, run: noAction, setNotice(value: unknown) { notices.push(value) } }), pickerSources, buildRegViews: buildViews, evaluateLivePoints, livePointFilterResult, pointHealth, sourceSample, areaForFunctionCode: (fc: number) => fc === 1 ? 'coil' : fc === 2 ? 'discrete-input' : fc === 4 ? 'input-register' : 'holding-register', formatLocalTs: (value: string) => value, ColumnControl: leaf, LivePointFilters, LiveWatchList, LiveSnapshotComparison, LiveSnapshotPanel: 'mock-snapshot-panel', GroupFold: leaf }), props())
+  return { driver, notices, render(value = data()) { clock = value.now; driver.render(props(value)) }, watch: () => driver.one(LiveWatchList).props, comparison: () => driver.one(LiveSnapshotComparison).props, freeze() { driver.one('button', p => String(p.children).includes('冻结当前')).props.onClick(); driver.render() } }
+}
+await check('actual LiveTable survives cancelled history navigation then remounts without watch or frozen baseline', () => {
+  const page = draftSurface(), live = mountedTable(page.registration()), editor = draftEditor('point', page.registration())
+  let comparison: ReturnType<typeof hookDriver> | undefined, fresh: ReturnType<typeof mountedTable> | undefined
+  try {
+    live.watch().onSelect(live.watch().scope, new Set([200, 100])); live.render(); assert.equal(live.watch().only, true); live.freeze(); const a = live.comparison().current; assert.deepEqual(a.snapshot.points.map((point: { id: number }) => point.id), [100, 200], 'table/freeze order follows groups even if selected IDs are reversed')
+    comparison = hookDriver('LiveSnapshotComparison.tsx', 'LiveSnapshotComparison', { compareLiveSnapshots, useMemo: (fn: () => unknown) => fn() }, live.comparison()); comparison.one('button', p => String(p.children).includes('设为基线')).props.onClick(); comparison.render()
+    live.render(data(1, 1000)); live.freeze(); const b = live.comparison().current; comparison.render(live.comparison()); assert.deepEqual(compareLiveSnapshots(a, b, live.watch().scope).counts, { changed: 2, unchanged: 0, unknown: 0 })
+    live.driver.one('button', p => p.children === 'configure').props.onClick(); live.render(data(1, 1000)); editor.change('KEEP LIVE DRAFT'); page.localTab(2); assert.equal(page.state().tab, 0); assert.equal(live.comparison().current, b); assert.equal(editor.value(), 'KEEP LIVE DRAFT'); assert.equal(editor.calls.save, 0); assert.deepEqual(live.watch().selection.ids, [200, 100])
+    page.setAnswer(true); page.localTab(2); assert.equal(page.state().tab, 2); editor.driver.dispose(); live.driver.dispose(); comparison.dispose()
+    const view = find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === 'DeviceView')!, branch = (tag: string) => find(view, node => ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && ts.isJsxSelfClosingElement(node.right) && node.right.tagName.getText(source) === tag)!
+    const evaluate = (node: ts.Node, env: Record<string, unknown>) => new Function(...Object.keys(env), ts.transpileModule('return (' + node.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, jsx: ts.JsxEmit.React } }).outputText)(...Object.values(env))
+    const registers = withRegisterSources(groups.flatMap(group => group.registers), groups, device), env = { React, tab: 2, LiveTable: 'live', HistoryView: 'history', draftScope: page.registration(), t, device, groups, latest, groupErrors: {}, now, threshold: 5000, onRefresh() {}, historyNavigation: { current: {} }, queryMemory: { current: {} }, configurationReady: true, target: null, registers }
+    assert.equal(evaluate(branch('LiveTable'), env), false); const history = evaluate(branch('HistoryView'), env); assert.equal(history.props.registers.length, 40); assert(!('watchSelection' in history.props))
+    const selectionFn = find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === 'useRegisterSelection')!, storage = new Map([['ps-regs-1', '[101,201]']])
+    const historySelection = run(selectionFn, { useState: (init: () => unknown) => [init(), () => {}], useMemo: (fn: () => unknown) => fn(), useCallback: (fn: unknown) => fn, localStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) } })(1, registers)
+    assert.deepEqual([...historySelection[0]], [101, 201]); historySelection[1](new Set([102, 202])); assert.equal(storage.get('ps-regs-1'), '[102,202]')
+    page.localTab(0); fresh = mountedTable(page.registration()); assert.equal(fresh.watch().selection, null); assert.equal(fresh.watch().only, false); assert.equal(fresh.comparison().current, null)
+    const empty = hookDriver('LiveSnapshotComparison.tsx', 'LiveSnapshotComparison', { compareLiveSnapshots, useMemo: (fn: () => unknown) => fn() }, fresh.comparison()); try { assert.equal(renderToStaticMarkup(empty.tree), '') } finally { empty.dispose() }
+    assert.equal(live.driver.lateWrites, 0); assert.equal(fresh.notices.length, 0)
+  } finally { editor.driver.dispose(); live.driver.dispose(); comparison?.dispose(); fresh?.driver.dispose() }
+})
+await check('actual HistoryView cleanup aborts an old read without updating a newly mounted live table', async () => {
+  const history = find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === 'HistoryView')!, effect = find(history, node => ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect' && !!node.arguments[0]?.getText(source).includes('startHistoryQuery')) as ts.CallExpression
+  const plan = historyQueryPlan({ objectId: 1, start: now, end: now + 10000, mode: 'chart', page: 0, registerIds: [101, 201] })!, queryTask: { current: HistoryQueryTask | null } = { current: null }
+  let state: HistoryReadState<unknown> | null = null, writes = 0, signal: AbortSignal | undefined, resolve!: (value: unknown) => void
+  const pending = new Promise<unknown>(done => { resolve = done })
+  const cleanup = run(effect.arguments[0], { plan, queryTask, startHistoryQuery: (p: Parameters<typeof startHistoryQuery>[0], fetcher: Parameters<typeof startHistoryQuery>[1], changed: Parameters<typeof startHistoryQuery>[2]) => startHistoryQuery(p, fetcher, changed, { delayMs: 0, timeoutMs: 1000 }), request: (_url: string, options: { signal: AbortSignal }) => { signal = options.signal; return pending }, reduceHistoryRead, setReadState: (update: (old: HistoryReadState<unknown> | null) => HistoryReadState<unknown> | null) => { state = update(state); writes++ } })()
+  const live = mountedTable()
+  try {
+    await new Promise(done => setTimeout(done, 10)); assert(signal); cleanup(); assert.equal(signal.aborted, true); assert.equal(queryTask.current, null)
+    live.watch().onSelect(live.watch().scope, new Set([100])); live.render(); live.freeze(); const snapshot = live.comparison().current, frozen = liveSnapshotJson(snapshot.snapshot), before = writes
+    resolve({ points: [], series: [], total: 0 }); await new Promise(done => setTimeout(done, 10)); live.render(); assert.equal(writes, before); assert.equal(live.comparison().current, snapshot); assert.equal(liveSnapshotJson(snapshot.snapshot), frozen); assert.deepEqual(live.watch().selection.ids, [100]); assert.equal(live.notices.length, 0)
+  } finally { cleanup(); resolve({ points: [] }); live.driver.dispose() }
 })
 console.log(`LIVE WATCH TEST OK: ${passed} pure/actual App and component groups; no requests, storage, database, collection, hardware, models or browser`)
