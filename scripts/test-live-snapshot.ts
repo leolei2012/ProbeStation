@@ -78,6 +78,42 @@ for (const english of [false, true]) {
   assert(html.includes(english ? 'Frozen live observation' : '已冻结的实时观测')); assert(html.includes('18446744073709551615')); assert(html.includes('&lt;script&gt;name&lt;/script&gt;')); assert(!html.includes('<script>'))
   assert(html.includes(english ? 'Acquisition continues' : '采集仍继续')); assert(html.includes('PASS/FAIL'))
 }
+let ageCases = 0
+for (const english of [false, true]) {
+  for (const [name, delays, quality, batches, expected] of [
+    ['zero', [0, 0], 'good', ['same', 'same'], 0], ['oldest', [9000, 2000], 'good', ['same', 'same'], 9],
+    ['missing', [null, null], 'good', ['same', 'same'], null], ['future', [-60000, -60000], 'good', ['same', 'same'], null],
+    ['partial', [5000, null], 'good', ['same', 'same'], 5], ['bad-quality', [0, 0], 'bad', ['same', 'same'], 0], ['mixed', [0, 0], 'good', ['a', 'b'], 0],
+  ] as const) {
+    const point = { id: 71, alias: name, startAddress: 0, functionCode: 3, dataType: 'uint32' }, owner = { id: 77, name: 'age fixture', mode: 'master', isActive: 1 }
+    const groups = [{ id: 70, name: 'one source', slaveId: 1, functionCode: 3, isActive: 1, registers: [point] }]
+    const latest = Object.fromEntries(delays.flatMap((delay, index) => delay === null ? [] : [[sourceKey(owner.id, 'holding-register', index, 1), { rawValue: 0, quality, timestamp: new Date(now - delay).toISOString(), timestampMs: now - delay, batchId: batches[index], slaveId: 1 }]]))
+    latest[sourceKey(owner.id, 'holding-register', 0, 2)] = { rawValue: 999, quality: 'good', timestamp: new Date(now - 999000).toISOString(), timestampMs: now - 999000, batchId: 'other', slaveId: 2 }
+    const views = new Map([[point.id, { value: delays.some(delay => delay === null) ? '—' : '0', label: null, covered: false, invalid: delays.some(delay => delay === null) }]])
+    const states = evaluateLivePoints(groups, views, latest, owner, [], {}, now, 5000)
+    const captured = captureLiveSnapshot({ device: owner, groups, views, states, latest, visibleIds: new Set([point.id]), filters: { search: '', source: '', mode: 'all' }, rulesReady: true, observedAt: now, capturedAt: now + 10000, thresholdMs: 5000 }), original = liveSnapshotJson(captured)
+    assert.equal(captured.points[0].health.ageSeconds, expected, 'age uses the oldest known word at observedAt; missing/other-source/future is not fabricated as zero')
+    const render = (value = captured) => renderToStaticMarkup(createElement(LiveSnapshotPanel, { snapshot: value, close() {}, english, download() { throw new Error('age rendering must not download') } }))
+    const clock = Date.now
+    let html: string
+    try { Date.now = () => now + 600000; html = render(); Date.now = () => now + 86400000; assert.equal(render(), html, 'a frozen age does not advance with the current clock') } finally { Date.now = clock }
+    assert(html!.includes(english ? 'Age at freeze (s)' : '冻结时年龄（秒）'), 'frozen preview must expose the already captured age instead of requiring JSON inspection')
+    assert(html!.includes(english ? 'oldest available word' : '最早已知字')); assert(html!.includes(english ? 'does not increase after freezing' : '冻结后不会递增'))
+    const row = html!.match(/<tbody><tr>([\s\S]*?)<\/tr><\/tbody>/)![1], cells = [...row.matchAll(/<td(?: [^>]*)?>([\s\S]*?)<\/td>/g)].map(match => match[1])
+    assert.equal(cells.length, 5); assert.equal(cells[3].split('<')[0], expected === null ? english ? 'Unknown' : '未知' : String(expected))
+    if (name === 'partial') assert(cells[3].includes(english ? 'Available words only' : '仅已有字'))
+    if (name === 'missing') assert(!cells[3].includes(english ? 'Available words only' : '仅已有字'), 'no captured words must not be labelled as available words')
+    if (name === 'bad-quality' || name === 'future') assert(cells[4].includes(english ? 'Stale/issue' : '旧值/异常'))
+    if (name === 'mixed') assert(cells[4].includes(english ? 'Mixed or missing batch IDs' : '批次混杂或缺失'))
+    assert.equal(liveSnapshotJson(captured), original); assert.equal(captured.automaticEligible, false); ageCases++
+  }
+  for (const invalidAge of [-1, Infinity, NaN]) {
+    const value = { ...snapshot, points: [{ ...snapshot.points[0], health: { ...snapshot.points[0].health, ageSeconds: invalidAge } }] }
+    const html = renderToStaticMarkup(createElement(LiveSnapshotPanel, { snapshot: value, close() {}, english, download() {} })), cells = [...html.match(/<tbody><tr>([\s\S]*?)<\/tr><\/tbody>/)![1].matchAll(/<td(?: [^>]*)?>([\s\S]*?)<\/td>/g)]
+    assert.equal(cells[3][1].split('<')[0], english ? 'Unknown' : '未知')
+  }
+}
+console.log(`FROZEN AGE OK: ${ageCases} bilingual zero/oldest/missing/future/partial/bad-quality/mixed-source-aware frozen displays, 6 invalid-age projections, clock independence and unchanged JSON; no device writes`)
 const largePoints = Array.from({ length: 10000 }, (_, i) => ({ id: i + 1, alias: 'point ' + i, startAddress: i, functionCode: 3, dataType: 'uint16' }))
 const emptyState = { health: { missing: true, stale: true, timestamp: null, ageSeconds: null }, alarmActive: false, alarmUnknown: false, dataIssue: true, attention: true }
 const large = captureLiveSnapshot({ device: { id: 9, name: 'large synthetic', mode: 'master', isActive: 1 }, groups: [{ id: 9, name: 'logical rows', isActive: 1, slaveId: 1, functionCode: 3, registers: largePoints }], visibleIds: new Set(largePoints.map(point => point.id)), views: new Map(largePoints.map(point => [point.id, { value: '—', label: null, covered: false, invalid: true }])), states: new Map(largePoints.map(point => [point.id, emptyState])), latest: {}, filters: { search: '', source: '', mode: 'all' }, rulesReady: false, observedAt: now, capturedAt: now, thresholdMs: 5000 })
