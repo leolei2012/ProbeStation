@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { apply } from '../packages/poller/src/index.ts'
@@ -56,4 +58,62 @@ for (const english of [false, true]) {
   assert(render({ phase: 'ready', value: parseRawFrames(legacy, scope, 1) }).includes(english ? 'legacy captures' : '部分旧记录'))
   assert(render({ phase: 'ready', value: parseRawFrames(raw, scope, 2) }).includes(english ? 'Display limit reached' : '达到显示上限'))
 }
+// Evaluate the actual view expressions and callbacks without mounting App or opening a connection.
+const appSource = ts.createSourceFile('App.tsx', readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+const view = appSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'RawDataView')!
+assert(view, 'raw capture view exists')
+const nodes: ts.Node[] = []; const visit = (node: ts.Node) => { nodes.push(node); ts.forEachChild(node, visit) }; visit(view)
+const variable = (name: string) => nodes.find(node => ts.isVariableDeclaration(node) && node.name.getText(appSource) === name) as ts.VariableDeclaration
+const evaluate = (node: ts.Node, context: Record<string, unknown>) => Function(...Object.keys(context), ts.transpile(`const result = (${node.getText(appSource)}); return result`, { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React }))(...Object.values(context))
+const status = nodes.find(node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(appSource) === 'RawFramesStatus') as ts.JsxSelfClosingElement
+const focusAttribute = status?.attributes.properties.find(node => ts.isJsxAttribute(node) && node.name.getText(appSource) === 'exceptionFocus') as ts.JsxAttribute
+assert(focusAttribute?.initializer && ts.isJsxExpression(focusAttribute.initializer), 'raw view must connect the local exception focus control')
+const focusExpression = (focusAttribute.initializer as ts.JsxExpression).expression!
+const map = nodes.find(node => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'map') as ts.CallExpression
+assert.equal((map.expression as ts.PropertyAccessExpression).expression.getText(appSource), 'visibleFrames', 'actual rendered rows must follow the focus, not merely its count')
+assert(nodes.some(node => ts.isCallExpression(node) && node.expression.getText(appSource) === 'useEffect' && /setExceptionReader\(null\)/.test(node.arguments[0].getText(appSource)) && node.arguments[1]?.getText(appSource) === '[reader]'), 'release the old reader on source/limit change')
+const captures = new ModbusDiagnostics('tcp', 2000, { deviceId: 1, channelKey: 'tcp:1' })
+captures.recordFrame('tx', Buffer.from([0, 1, 0, 0, 0, 6, 1, 3, 0, 0, 0, 1]))
+captures.recordFrame('rx', Buffer.from([0, 1, 0, 0, 0, 3, 1, 0x83, 2]))
+captures.recordFrame('rx', Buffer.from([0, 1, 0, 0, 0, 5, 1, 3, 2, 0, 0]))
+const mixed = parseRawFrames(captures.getFrames(200), scope, 200), original = JSON.stringify(mixed)
+let exceptionReader: RawFramesRead | null = null
+const focus = (current: RawFramesRead, frames = mixed.frames) => {
+  const onlyExceptions = evaluate(variable('onlyExceptions').initializer!, { exceptionReader, reader: current })
+  const visibleFrames = evaluate(variable('visibleFrames').initializer!, { onlyExceptions, frames })
+  const control = evaluate(focusExpression, { onlyExceptions, visibleFrames, reader: current, setExceptionReader: (value: RawFramesRead | null) => { exceptionReader = value } })
+  return { control, visibleFrames }
+}
+const walkElements = (node: any): any[] => Array.isArray(node) ? node.flatMap(walkElements) : node && typeof node === 'object' && node.props ? [node, ...walkElements(node.props.children)] : []
+assert.equal(focus(reader).visibleFrames, mixed.frames, 'all view retains the exact source sequence')
+for (const english of [false, true]) {
+  exceptionReader = null
+  const initial = focus(reader), tree = RawFramesStatus({ state: { phase: 'ready', value: mixed }, paused: false, english, exceptionFocus: initial.control })
+  const checkbox = walkElements(tree).find(node => node.type === 'input' && node.props.type === 'checkbox')
+  assert(checkbox); assert(walkElements(tree).some(node => node.type === 'label' && walkElements(node.props.children).includes(checkbox)), 'native keyboard control has a visible label')
+  checkbox.props.onChange({ target: { checked: true } })
+  const filtered = focus(reader); assert.equal(filtered.control.active, true)
+  assert.deepEqual(filtered.visibleFrames, mixed.frames.filter(frame => frame.isException)); assert.equal(filtered.visibleFrames.length, 1)
+  const render = (value: typeof mixed, shown: number, phase: 'ready' | 'error' = 'ready', paused = false) => renderToStaticMarkup(createElement(RawFramesStatus, { state: { phase, error: phase === 'error' ? 'request' : undefined, value }, paused, english, exceptionFocus: { ...filtered.control, shown } }))
+  const html = render(mixed, 1); assert(html.includes('1/3')); assert(html.includes(english ? 'timeouts/connection errors' : '超时/连接错误'))
+  assert(render(parsed, 0).includes(english ? 'No matches' : '当前快照未匹配'))
+  const empty = render(parseRawFrames([], scope, 200), 0); assert(!empty.includes(english ? 'No matches' : '当前快照未匹配')); assert(empty.includes(english ? 'no captures' : '没有返回捕获记录'))
+  assert(render(mixed, 1, 'error', true).includes(english ? 'Previous captures' : '保留上次显示'))
+  const legacyException = parseRawFrames([{ ...captures.getFrames(200).find(frame => frame.isException)!, channelKey: undefined, deviceId: undefined }], scope, 200)
+  assert.equal(focus(reader, legacyException.frames).visibleFrames.length, 1); assert(render(legacyException, 1).includes(english ? 'legacy captures' : '部分旧记录'))
+  const activeTree = RawFramesStatus({ state: { phase: 'ready', value: mixed }, paused: false, english, exceptionFocus: filtered.control })
+  const showAll = walkElements(activeTree).find(node => node.type === 'button'); assert.equal(showAll.props.type, 'button'); showAll.props.onClick(); assert.equal(focus(reader).visibleFrames, mixed.frames)
+  filtered.control.change(true)
+  for (const next of [other, new RawFramesRead(device, 20), new RawFramesRead({ ...device, ip: 'mock-new-source' }, 200)]) {
+    assert.equal(focus(next).control.active, false, 'source or limit replacement defaults to all')
+    filtered.control.change(true); assert.equal(focus(next).visibleFrames, mixed.frames, 'late old-source callback cannot filter the new source')
+  }
+  filtered.control.change(false); assert.equal(focus(reader).visibleFrames, mixed.frames)
+}
+assert.equal(JSON.stringify(mixed), original); assert.equal(effects, 0, 'local controls never connect, poll, clear or write')
+const bounded = Object.freeze(Array.from({ length: 2000 }, (_, index) => Object.freeze({ ...mixed.frames[0], id: index + 1, isException: index % 4 === 0 })))
+exceptionReader = reader
+assert.deepEqual(focus(reader, bounded).visibleFrames.map((frame: any) => frame.id), bounded.filter(frame => frame.isException).map(frame => frame.id), 'maximum-size snapshot preserves all matching records in source order')
+assert.equal(focus(reader, bounded).visibleFrames.length, 500)
+console.log('RAW FRAMES FOCUS OK: actual view selection/map and checkbox/show-all callbacks, bilingual counts and distinct empty/no-match, legacy/error/pause, source/limit/late-control isolation; local snapshot only')
 console.log('RAW FRAMES READ OK: producer/poller memory getters and RTU filtering, slow-response acceptance, single-flight, timeout/recovery, pause/late success/error/finalizer isolation, source/limit ownership, legacy metadata, strict immutable captures and bilingual status SSR; no real data, files, network, hardware, model or DOM automation')

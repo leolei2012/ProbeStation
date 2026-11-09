@@ -1781,10 +1781,13 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
   const [clearedToken, setClearedToken] = useState('')
   const [limit, setLimit] = useState(200)
   const [paused, setPaused] = useState(false)
+  const [exceptionReader, setExceptionReader] = useState<RawFramesRead | null>(null)
   const pausedRef = useRef(false)
   const reader = useMemo(() => new RawFramesRead(device, limit), [device?.id, device?.transport, device?.serialPath, device?.ip, device?.port, device?.baudRate, device?.parity, device?.stopBits, device?.dataBits, device?.flowControl, device?.slaveId, limit])
   const state = useSyncExternalStore(reader.subscribe, reader.snapshot, reader.snapshot)
   const frames = state.value?.frames ?? [], busy = state.phase === 'loading', readerRef = useRef(reader), mounted = useRef(false)
+  const onlyExceptions = exceptionReader === reader, visibleFrames = onlyExceptions ? frames.filter(frame => frame.isException) : frames
+  useEffect(() => setExceptionReader(null), [reader])
   readerRef.current = reader
   const load = useCallback(() => pausedRef.current ? Promise.resolve() : reader.refresh(fetchRawFrames), [reader])
   useEffect(() => {
@@ -1821,10 +1824,10 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
         <button className="btn" onClick={() => void load()} disabled={busy || paused}>{busy ? '…' : '刷新'}</button>
         <DiagnosticsCleanupButton device={device} disabled={paused} english={t('cancel') === 'Cancel'} onCleared={result => { setClearedToken(result.token); if (mounted.current && readerRef.current === reader) { reader.invalidate(); void load() } }} />
       </div>
-      <RawFramesStatus state={state} paused={paused} english={t('cancel') === 'Cancel'} />
+      <RawFramesStatus state={state} paused={paused} english={t('cancel') === 'Cancel'} exceptionFocus={{ active: onlyExceptions, shown: visibleFrames.length, change: active => setExceptionReader(active ? reader : null) }} />
       <div style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, maxHeight: '60vh', overflow: 'auto', background: 'var(--surface)', color: 'var(--text-1, #eee)', borderRadius: 6, padding: 8 }}>
-        {frames.length === 0 ? null : (
-          frames.map((f) => (
+        {visibleFrames.length === 0 ? null : (
+          visibleFrames.map((f) => (
             <div key={f.id} style={{ display: 'flex', gap: 10, padding: '1px 0', borderBottom: '1px solid var(--border-1, #222)' }}>
               <span style={{ color: 'var(--text-3, #888)', minWidth: 72 }}>{formatLocalTs(f.timestamp).slice(11)}</span>
               <span style={{ color: f.direction === 'tx' ? 'var(--accent)' : 'var(--success)', minWidth: 28, fontWeight: 600 }}>{dir(f.direction)}</span>
