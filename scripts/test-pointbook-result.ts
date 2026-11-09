@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { capturePointBookOpening, pointBookOpeningMatches, pointBookReplacementPrompt } from '../apps/web/src/pointbook-confirmation.ts'
 import { liveSnapshotComparisonKey } from '../apps/web/src/live-snapshot-comparison.ts'
+import { hookDriver } from './fixtures/component-hook-driver.ts'
 
 const report = { groups: 1, registers: 2, errors: [], warnings: ['已提交，但同步通知失败，请勿重复导入。'] }
 const html = renderToStaticMarkup(createElement(PointBookImportResult, { result: { fileName: 'mock.xlsx', report }, t: key => key, onDismiss() {} }))
@@ -60,9 +61,40 @@ assert.equal(dismissed, 0, 'rendering never dismisses, retries or changes config
     assert(!lost.text.includes(phrases.counts), 'no response must not invent zero counts'); assert(refused.text.includes('row 7: invalid dtype'))
     const recorded = show({ fileName: 'old-target.xlsx', targetLabel: '<old-target> (#7) · TCP old.mock.invalid:502', report: null, error: 'lost' })
     assert(recorded.text.includes(labels[language].pointBookTargetSnapshot)); assert(recorded.markup.includes('&lt;old-target&gt;')); assert(!recorded.markup.includes('<old-target>'))
+    const paged = show({ fileName: 'large.xlsx', report: { ...report, errors: Array(21).fill('error'), warnings: Array(21).fill('warning') } })
+    assert(paged.text.includes(labels[language].pointBookPagingHint)); assert.equal((paged.markup.match(/<li>/g) ?? []).length, 40)
+    const ids = [...paged.markup.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]); assert.equal(new Set(ids).size, ids.length, 'real SSR uses unique IDs across error and warning controls')
   }
   assert.equal(dismissed, 0, 'rendering guidance does not dismiss, retry or mutate anything')
   console.log('POINTBOOK GUIDANCE OK: actual zh/en labels for clean completion, committed warning, rejection, response loss and contradictory legacy counts; presentation only.')
+}
+
+// Simulated native control callbacks, not browser keyboard/focus/layout automation.
+{
+  const messages = Object.freeze(Array.from({ length: 250 }, (_, i) => 'item-' + i + '\n' + '<long detail>'.repeat(20)))
+  const t = (key: string) => ({ pointBookPage: 'Page', pointBookPrevious: 'Previous', pointBookNext: 'Next', pointBookMessageRange: '{start}-{end}/{total}, {page}/{pages}', pointBookPagingHint: 'All received entries retained; paging display only.' }[key] ?? key)
+  const props = { title: 'Warnings', messages, t }, h = hookDriver('PointBookImportResult.tsx', 'PointBookMessages', {}, props)
+  const rows = () => (h.one('ul').props.children as any[]).map(row => row.props.children as string)
+  const jump = (value: string) => { h.one('input').props.onChange({ currentTarget: { value } }); h.render() }
+  const seen: string[] = []
+  for (let page = 1; page <= 13; page++) { jump(String(page)); assert(rows().length <= 20); seen.push(...rows()) }
+  assert.deepEqual(seen, [...messages], 'all long messages remain reachable in original order, without trimming')
+  assert.equal(h.one('input').props.value, 13); assert.equal(h.one('button', p => p.children === 'Next').props.disabled, true)
+  const list = h.one('ul'), input = h.one('input'), label = h.one('label'), nav = h.one('nav')
+  assert.equal(list.props.tabIndex, 0); assert.equal(input.props.type, 'number'); assert.equal(input.props.min, 1); assert.equal(input.props.max, 13)
+  assert.equal(input.props['aria-controls'], list.props.id); assert.equal(label.props.htmlFor, input.props.id); assert(nav.props['aria-label'].includes('Warnings'))
+  assert.equal(h.one('button', p => p.children === 'Previous').props.type, 'button'); assert.equal(h.one('button', p => p.children === 'Next').props.type, 'button')
+  assert.equal(list.props.onKeyDown, undefined); assert.equal(input.props.onKeyDown, undefined, 'native key behavior is not intercepted')
+  for (const invalid of ['', ' ', '0', '14', '-1', '1.2', 'NaN', 'Infinity', '9007199254740992']) { jump(invalid); assert.equal(h.one('input').props.value, 13) }
+  jump('2'); h.one('button', p => p.children === 'Previous').props.onClick(); h.render(); assert.equal(h.one('input').props.value, 1)
+  h.one('button', p => p.children === 'Next').props.onClick(); h.render(); assert.equal(h.one('input').props.value, 2)
+  const replacement = { ...props, messages: Object.freeze(['new report only']) }; h.render(replacement); assert.deepEqual(rows(), ['new report only']); h.render(); assert.deepEqual(rows(), ['new report only'])
+  h.render(props); assert.equal(h.one('input').props.value, 1, 'new report then old array does not revive an old page'); h.dispose()
+  const errorProps = { title: 'Errors', messages: Object.freeze(Array.from({ length: 20 }, (_, i) => 'error-' + i)), extra: 'response detail', t }, errors = hookDriver('PointBookImportResult.tsx', 'PointBookMessages', {}, errorProps)
+  errors.one('input').props.onChange({ currentTarget: { value: '2' } }); errors.render(); assert.deepEqual((errors.one('ul').props.children as any[]).map(row => row.props.children), ['response detail'])
+  errors.render({ ...errorProps, extra: 'different response detail' }); assert.equal(errors.one('input').props.value, 1); errors.dispose()
+  assert.deepEqual(messages[249], 'item-249\n' + '<long detail>'.repeat(20)); assert.equal(dismissed, 0)
+  console.log('POINTBOOK PAGING OK: every long message reachable, first/last/next/previous/jump/invalid input, report/extra ownership reset, native controls and unique SSR label targets; no browser focus/layout claim.')
 }
 const file = new Blob(['mock workbook']), target = '/api/monitor_objects/2/points/book'
 let calls = 0
@@ -102,7 +134,7 @@ assert.equal(failedCalls, 1, 'uncertain write failures are never automatically r
   const warnings = Array.from({ length: 250 }, (_, i) => 'warning-' + i + ': ' + 'long <unsafe> detail '.repeat(40) + 'END-' + i)
   const normalized = await uploadPointBook(2, file, (async () => new Response(JSON.stringify({ ...report, warnings }))) as typeof fetch)
   assert.deepEqual(normalized.warnings, warnings); const visible = render({ fileName: 'long-warnings.xlsx', report: normalized })
-  assert.equal((visible.match(/<li>/g) ?? []).length, 250); assert(visible.includes('END-0') && visible.includes('END-249')); assert(visible.includes('tabindex="0"')); assert(!visible.includes('<unsafe>'))
+  assert.equal((visible.match(/<li>/g) ?? []).length, 20, 'large warning lists must bound initial rendering without truncating the retained response'); assert(visible.includes('END-0') && visible.includes('END-19')); assert(!visible.includes('END-249')); assert(visible.includes('tabindex="0"')); assert(!visible.includes('<unsafe>'))
   console.log('POINTBOOK RESPONSE MATRIX OK: 9 malformed/contradictory/status/disconnect/legacy cases, 250 long warnings retained without client truncation; no rollback or retry claim.')
 }
 
