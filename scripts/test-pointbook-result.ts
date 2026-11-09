@@ -32,6 +32,36 @@ assert.match(unknown, /&lt;script&gt;/); assert.doesNotMatch(unknown, /<script|<
 assert.match(render({ fileName: 'bad.xlsx', report: { ...report, groups: 0, registers: 0, errors: ['row 7 invalid'] } }), /pointBookRejected/)
 assert.match(render({ fileName: 'ok.xlsx', report }), /1 groups \/ 2 points/)
 assert.equal(dismissed, 0, 'rendering never dismisses, retries or changes configuration')
+
+// Read the real bilingual dictionary without importing App or starting its runtime.
+{
+  const source = readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), tree = ts.createSourceFile('App.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const dictionary = tree.statements.flatMap(statement => ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : []).find(declaration => declaration.name.getText(tree) === 'I18N')!.initializer!
+  const labels = new Function('return (' + dictionary.getText(tree) + ')')() as Record<'zh' | 'en', Record<string, string>>
+  for (const language of ['zh', 'en'] as const) {
+    const show = (value: Parameters<typeof PointBookImportResult>[0]['result']) => {
+      const markup = renderToStaticMarkup(createElement(PointBookImportResult, { result: value, t: key => { assert.equal(typeof labels[language][key], 'string', 'missing ' + language + ' translation: ' + key); return labels[language][key] }, onDismiss() { dismissed++ } }))
+      return { markup, text: markup.replace(/<[^>]*>/g, '') }
+    }
+    const clean = show({ fileName: 'clean.xlsx', report: { groups: 1, registers: 2, errors: [], warnings: [] } })
+    const warned = show({ fileName: 'defaults.xlsx', report }), refused = show({ fileName: 'invalid.xlsx', report: { groups: 0, registers: 0, errors: ['row 7: invalid dtype'], warnings: [] } })
+    const lost = show({ fileName: 'lost.xlsx', report: null, error: 'response lost' }), contradictory = show({ fileName: 'legacy.xlsx', report: { groups: 1, registers: 2, errors: ['legacy partial report'], warnings: [] } })
+    assert.match(clean.markup, /data-import-outcome="completed"/); assert.match(clean.markup, /role="status"/)
+    assert.match(warned.markup, /data-import-outcome="completed"/); assert(warned.text.includes(report.warnings[0])); assert.match(refused.markup, /data-import-outcome="rejected"/)
+    for (const value of [lost, contradictory]) { assert.match(value.markup, /data-import-outcome="uncertain"/); assert.match(value.markup, /role="alert"/) }
+    const phrases = language === 'zh'
+      ? { clean: ['从站/地址/类型/倍率', '告警规则', '不表示设备通信或采样已验证'], warned: ['逐条核对', '不要仅为消除提示重复导入'], refused: ['错误详情', '源文件', '当前配置'], uncertain: ['不要直接重复导入', '分组、点位和告警规则'], counts: '服务端回报' }
+      : { clean: ['slave/address/type/scale', 'alarm rules', 'does not verify device communication or sampling'], warned: ['Review each item', 'Do not re-import just to clear warnings'], refused: ['error details', 'source file', 'current configuration'], uncertain: ['Do not import again immediately', 'groups, points and alarm rules'], counts: 'Server report' }
+    for (const phrase of phrases.clean) assert(clean.text.includes(phrase), language + ' success must explain what remains to verify: ' + phrase)
+    for (const phrase of phrases.warned) assert(warned.text.includes(phrase), language + ' warning guidance: ' + phrase)
+    for (const phrase of phrases.refused) assert(refused.text.includes(phrase), language + ' rejection guidance: ' + phrase)
+    for (const value of [lost, contradictory]) for (const phrase of phrases.uncertain) assert(value.text.includes(phrase), language + ' unknown guidance: ' + phrase)
+    for (const value of [clean, warned, refused, contradictory]) assert(value.text.includes(phrases.counts), 'counts must remain attributed to the response, including contradictory reports')
+    assert(!lost.text.includes(phrases.counts), 'no response must not invent zero counts'); assert(refused.text.includes('row 7: invalid dtype'))
+  }
+  assert.equal(dismissed, 0, 'rendering guidance does not dismiss, retry or mutate anything')
+  console.log('POINTBOOK GUIDANCE OK: actual zh/en labels for clean completion, committed warning, rejection, response loss and contradictory legacy counts; presentation only.')
+}
 const file = new Blob(['mock workbook']), target = '/api/monitor_objects/2/points/book'
 let calls = 0
 const mockFetch = (async (url, options) => {
