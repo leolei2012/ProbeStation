@@ -13,7 +13,7 @@ import { compareLiveSnapshots, liveSnapshotComparisonKey } from '../apps/web/src
 import * as codec from '../packages/core/src/codec.ts'
 import { sameResponseBatch } from '../packages/core/src/sample-batch.ts'
 import { displayNumber, physicalValue } from '../apps/web/src/physical-value.ts'
-import { addVisiblePickerPoints, filterPickerGroups, pickerSource, pickerSources } from '../apps/web/src/register-picker.ts'
+import { addVisiblePickerPoints, filterPickerGroups, pickerContext, pickerSource, pickerSources } from '../apps/web/src/register-picker.ts'
 import { LiveSnapshotComparison } from '../apps/web/src/LiveSnapshotComparison.tsx'
 import { sourceKey, sourceSample, withRegisterSources } from '../packages/core/src/sample-source.ts'
 import { hookDriver } from './fixtures/component-hook-driver.ts'
@@ -157,7 +157,7 @@ await check('source reassignment device reuse and A-B-A invalidate watch and com
 })
 await check('actual picker enforces 32 while sampling input stays at 40 and deselection or clear recovers', () => {
   let applied = new Set<number>(), focuses = 0
-  const picker = hookDriver('RegisterPicker.tsx', 'RegisterSelectModal', { addVisiblePickerPoints, filterPickerGroups, pickerSource, pickerSources, document: { activeElement: { focus() { focuses++ } } } }, { t, groups, initial: new Set(), max: 32, onClose() {}, onApply(ids: Set<number>) { applied = ids } })
+  const picker = hookDriver('RegisterPicker.tsx', 'RegisterSelectModal', { addVisiblePickerPoints, filterPickerGroups, pickerContext, pickerSource, pickerSources, document: { activeElement: { focus() { focuses++ } } } }, { t, groups, initial: new Set(), max: 32, onClose() {}, onApply(ids: Set<number>) { applied = ids } })
   try {
     const before = JSON.stringify({ groups, latest })
     for (let index = 0; index < 32; index++) { picker.one('input', p => p.type === 'checkbox' && !p.checked && !p.disabled).props.onChange(); picker.render() }
@@ -239,7 +239,7 @@ await check('actual picker describes limit and keeps removals keyboard-reachable
     let closes = 0, applies = 0, restored = 0, firstFocus = 0, lastFocus = 0, prevented = 0, stopped = 0
     const opener = { focus() { restored++ } }, document = { activeElement: opener as unknown }, first = { focus() { firstFocus++ } }, last = { focus() { lastFocus++ } }
     const translate = (key: string) => key === 'cancel' ? english ? 'Cancel' : '取消' : key === 'curveSelectLimit' ? english ? 'Select up to {n} points' : '最多选择 {n} 个点位' : t(key)
-    const picker = hookDriver('RegisterPicker.tsx', 'RegisterSelectModal', { addVisiblePickerPoints, filterPickerGroups, pickerSource, pickerSources, document }, { t: translate, groups, initial: new Set(), max: 1, onClose() { closes++ }, onApply() { applies++ } })
+    const picker = hookDriver('RegisterPicker.tsx', 'RegisterSelectModal', { addVisiblePickerPoints, filterPickerGroups, pickerContext, pickerSource, pickerSources, document }, { t: translate, groups, initial: new Set(), max: 1, onClose() { closes++ }, onApply() { applies++ } })
     try {
       const dialog = () => picker.one('div', p => p.role === 'dialog'), descriptions = dialog().props['aria-describedby']; assert.equal(typeof descriptions, 'string'); const refs = descriptions.split(/\s+/); assert.equal(refs.length, 2)
       assert.equal(picker.one('input', p => p.className === 'reg-picker-search').props.autoFocus, true); assert.equal(picker.one('input', p => p.type === 'checkbox').props['aria-describedby'], descriptions)

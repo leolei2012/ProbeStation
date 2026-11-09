@@ -10,6 +10,10 @@ export const pickerSourceKey = (group: PickerGroup, deviceSlaveId?: number) => S
 export function pickerSources(groups: readonly PickerGroup[], deviceSlaveId?: number): string[] {
   return [...new Set(groups.filter(g => g.registers.length).map(g => pickerSourceKey(g, deviceSlaveId)))].sort((a, b) => a === '?' ? 1 : b === '?' ? -1 : Number(a) - Number(b))
 }
+/** Snapshot only the options this picker can display; equivalent refetch/reordering is harmless. */
+export function pickerContext(groups: readonly PickerGroup[], deviceSlaveId?: number, max?: number): string {
+  return JSON.stringify([max ?? null, groups.map(g => [g.id, g.name, pickerSourceKey(g, deviceSlaveId), g.registers.map(r => [r.id, r.alias, r.startAddress, r.functionCode, r.dataType]).sort((a, b) => Number(a[0]) - Number(b[0]))]).sort((a, b) => Number(a[0]) - Number(b[0]))])
+}
 export function filterPickerGroups(groups: readonly PickerGroup[], search: string, source = '', deviceSlaveId?: number, selected?: ReadonlySet<number>): PickerGroup[] {
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
   return groups.filter(g => !source || pickerSourceKey(g, deviceSlaveId) === source).map(g => ({ ...g, registers: g.registers.filter(r => {
