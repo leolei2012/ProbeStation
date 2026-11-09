@@ -19,8 +19,8 @@ const frames=(target,tag,marked=true)=>{
  diag.recordFrame('rx',Uint8Array.from([...header,3,tag]));if(marked)diag.recordFrame('rx',Uint8Array.from([...header,0x83,tag]));return diag.getFrames()
 }
 const Summary=()=>null,Cleanup=()=>null
-function harness(english){
- let props={device,t:key=>key==='cancel'?(english?'Cancel':'取消'):key},nextInterval=0
+function harness(english,initialDevice=device){
+ let props={device:initialDevice,t:key=>key==='cancel'?(english?'Cancel':'取消'):key},nextInterval=0
  const requests=[],intervals=new Map(),readers=[],commits=[]
  class Read extends RawFramesRead{constructor(...args){super(...args);readers.push(this)}}
  const driver=hookDriver('App.tsx','RawDataView',hooks=>{
@@ -96,6 +96,36 @@ for(const english of [false,true]) await check('segmented records retain full sn
   lateControl=older().props.onClick
  }finally{await h.close()}
  lateControl?.();assert.equal(h.driver.lateWrites,0)
+})
+for(const english of [false,true])for(const transport of ['tcp','rtu']) await check('long segmented snapshots/refresh/filter/pause/shrink '+english+'/'+transport,async()=>{
+ const target={...device,transport,serialPath:'MOCK_LONG'},h=harness(english,target)
+ const walk=node=>Array.isArray(node)?node.flatMap(walk):React.isValidElement(node)?[node,...walk(node.props.children)]:[]
+ const rows=()=>walk(h.driver.tree).filter(node=>node.type==='div'&&Array.isArray(node.props.children)&&node.props.children[0]?.props?.title&&node.props.children.at(-1)?.type==='span')
+ const ids=()=>rows().map(node=>Number(node.key)),older=()=>h.driver.one('button',p=>p.children===(english?'Previous 20 records':'前20条')),newer=()=>h.driver.one('button',p=>p.children===(english?'Next 20 records':'后20条'))
+ const fixture=(count,offset,tag)=>{const sample=frames(target,tag,false)[0];return Array.from({length:count},(_,index)=>{const bytes=Buffer.alloc(4096,tag);bytes.set(Buffer.from(sample.hex,'hex'));bytes.set([index,0,255],bytes.length-3);return{...sample,id:offset+index+1,hex:bytes.toString('hex').toUpperCase(),byteLength:bytes.length,isException:index%3===0}})}
+ const verify=(source)=>{const expected=new Map(source.map(frame=>[frame.id,frame]));assert(rows().length<=20);for(const row of rows()){const frame=expected.get(Number(row.key));assert(frame,'rendered record must belong to the displayed snapshot');const text=row.props.children.at(-1).props.children;assert.equal(text.replace(/\s/g,''),frame.hex);assert.equal(text.length,frame.byteLength*3-1);assert(!text.includes('…')&&!text.includes('...'))}}
+ const nextRead=async()=>{const count=h.requests.length;h.refresh();await h.settle();assert.equal(h.requests.length,count+1);return h.requests.at(-1)}
+ try{
+  await h.settle();const first=fixture(43,0,0xA1),original=JSON.stringify(first);h.requests[0].response.resolve(first);await h.settle();const initial=h.view().state.value
+  verify(first);assert.equal(ids()[0],24);older().props.onClick();h.render();assert.equal(ids()[0],4);const oldControl=older().props.onClick
+  const delayed=await nextRead();h.focus(true);assert.equal(h.view().exceptionFocus.shown,15);assert.deepEqual(ids(),first.filter(frame=>frame.isException).map(frame=>frame.id));verify(first)
+  h.pause();assert(delayed.signal.aborted);const pausedRequests=h.requests.length;h.spam();h.refresh();await h.settle();assert.equal(h.requests.length,pausedRequests)
+  if(transport==='tcp')delayed.response.resolve(fixture(57,100,0xB1));else delayed.response.reject(Error('PRIVATE obsolete long capture'))
+  await h.settle();assert.equal(h.view().state.value,initial);assert.equal(h.view().paused,true);assert.equal(h.view().exceptionFocus.shown,15);verify(first);assert(!h.html().includes('PRIVATE'))
+  h.focus(false);older().props.onClick();h.render();const selected=ids();oldControl();h.render();assert.deepEqual(ids(),selected);verify(first)
+  while(!newer().props.disabled){newer().props.onClick();h.render()}
+  const blocks=[];do{verify(first);blocks.push(ids());if(older().props.disabled)break;older().props.onClick();h.render()}while(true)
+  assert.deepEqual(blocks.reverse().flat(),first.map(frame=>frame.id));assert.equal(h.view().state.value,initial);assert.equal(h.requests.length,pausedRequests)
+  h.pause();await h.settle();const second=fixture(57,100,0xB1);h.requests.at(-1).response.resolve(second);await h.settle();assert.equal(ids()[0],101);assert.equal(ids().length,17);verify(second);assert(h.html().includes(english?'not a fixed snapshot':'不是固定快照'))
+  newer().props.onClick();h.render();assert.equal(ids()[0],118);verify(second);h.focus(true);assert.equal(h.view().exceptionFocus.shown,19);verify(second)
+  h.focus(false);older().props.onClick();h.render();older().props.onClick();h.render();assert.equal(ids()[0],101)
+  const shrinkRead=await nextRead(),small=fixture(9,200,0xC1);shrinkRead.response.resolve(small);await h.settle();assert.deepEqual(ids(),small.map(frame=>frame.id));verify(small)
+  h.pause();h.pause();await h.settle();const grown=fixture(57,300,0xD1);h.requests.at(-1).response.resolve(grown);await h.settle();assert.equal(ids()[0],338,'resume after shrink keeps the adjusted segment, not the old index');verify(grown)
+  const invalidRead=await nextRead(),retained=h.view().state.value;invalidRead.response.resolve([...grown.slice(0,-1),{...grown.at(-1),hex:grown.at(-1).hex.slice(0,-2)}]);await h.settle()
+  assert.equal(h.view().state.phase,'error');assert.equal(h.view().state.value,retained);verify(grown);assert(h.html().includes(english?'Previous captures':'保留上次显示'))
+  const emptyRead=await nextRead();emptyRead.response.resolve([]);await h.settle();assert.deepEqual(ids(),[]);assert(h.html().includes(english?'This read returned no captures':'本次读取没有返回捕获记录'))
+  assert.equal(JSON.stringify(first),original)
+ }finally{await h.close()}
 })
 console.log(`RAW COMPOSITION AUDIT OK: ${cases} bilingual delayed-response/refresh/pause/filter/source/limit/unmount/segment combinations; actual extracted view callbacks, real reader, virtual intervals and mock GET only. React DOM, native event scheduling, backend physical identity and real devices not proven.`)
 const {apply}=await load('packages/poller/src/index.ts')
