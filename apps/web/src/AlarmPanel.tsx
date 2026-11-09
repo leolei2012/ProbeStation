@@ -11,6 +11,7 @@ import { captureAlarmRule } from '../../../packages/core/src/alarm-settings-edit
 import type { AlarmRule } from '../../../packages/core/src/alarm'
 import { AlarmWriteGate, writeGuardedAlarm, createAlarm, completeAlarmWrite, captureAlarmOpening, alarmOpeningState } from './alarm-settings-save'
 import { AlarmRuleWriteStatus, AlarmContextNotice } from './AlarmRuleWriteStatus'
+import { DeferredAlarmPendingContext } from './DeferredAlarmPendingContext'
 
 type Register = { id: number; alias: string | null; startAddress: number; dataType: string; functionCode: number }
 type Group = { id: number; name: string; isActive: number; slaveId?: number; registers: Register[] }
@@ -48,6 +49,7 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
 }) {
   const { rules, setRules, error, setError, lock, ready, reading, state: readState, invalidate, retry } = useAlarmRules(device.id, api)
   const [open, setOpen] = useState(!!point)
+  const [pendingOpen, setPendingOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [registerId, setRegisterId] = useState(point ? String(point.id) : '')
@@ -69,7 +71,7 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
     const reg = group.registers.find(r => r.id === rule.registerId)!
     const observation = readPointAlarmObservation(reg, latest, device, group, now, threshold, !!groupErrors[group.id]), value = observation?.value ?? null
     const known = value !== null && (typeof value === 'bigint' || Number.isFinite(value))
-    return { rule, reg, observation, known, value, active: known && alarmMatches(value, rule.operator, rule.threshold) }
+    return { rule, reg, group, observation, known, value, active: known && alarmMatches(value, rule.operator, rule.threshold) }
   })
   const active = evaluated.filter(e => e.active), unknown = evaluated.filter(e => !e.known)
   const reset = () => { gate.reset(); setError(''); setWriteWarning(''); setEditId(null); setEditExpected(null); setRegisterId(point ? String(point.id) : ''); setOperator('>'); setLimit(''); setMessage(''); setDeleting(null) }
@@ -107,6 +109,8 @@ export function AlarmPanel({ t, device, groups, latest, groupErrors, now, thresh
         {onHistory && <AlarmHistoryAction state={alarmHistoryState(observation, rule, reg, device.id, configurationReady, ready && !reading, now, threshold)} resolve={() => alarmHistoryState(observation, rule, reg, device.id, configurationReady, ready && !reading, Date.now(), threshold)} onOpen={onHistory} english={t('cancel') === 'Cancel'} />}
       </div>)}{onHistory && <p className="alarm-history-hint">{t('alarmHistoryHint')}</p>}</div>}
       {ready && !reading && unknown.length > 0 && <p className="alarm-hint">{t('alarmUnknown').replace('{n}', String(unknown.length))}</p>}
+      <button className="btn" type="button" aria-expanded={pendingOpen} onClick={() => setPendingOpen(value => !value)}>{t('cancel') === 'Cancel' ? pendingOpen ? 'Hide pending rule context' : 'Review pending rules' : pendingOpen ? '收起待定规则' : '查看待定规则'}</button>
+      {pendingOpen && <DeferredAlarmPendingContext rows={unknown} current={configurationReady && ready && !reading} device={{ isActive: device.isActive, mode: device.mode, slaveId: device.slaveId }} groupErrors={groupErrors} english={t('cancel') === 'Cancel'} />}
       {error && <p className="write-msg error" role="alert">{t('alarmLoadError')}: {error}</p>}
     </>}
     {open && <div className="modal-mask"><form className="modal alarm-editor" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={e => { e.preventDefault(); save() }}>
