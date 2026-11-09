@@ -7,6 +7,9 @@ import { registerRegisterWrite } from '../packages/api/src/register-write.ts'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { registerWidth, isHexType, isBinType } from '../packages/core/src/codec.ts'
 import { hookDriver } from './fixtures/component-hook-driver.ts'
+import { readFileSync } from 'node:fs'
+import React from 'react'
+import ts from 'typescript'
 
 // The target is always a spy. Never import/start the poller, connect a device or open a real config.
 const cfg = new ConfigStore({ dbPath: ':memory:' }), app = Fastify()
@@ -77,21 +80,39 @@ assert.equal(parseRegisterWriteValue('uint64', 18446744073709551615n), 184467440
 assert.throws(() => parseRegisterWriteValue('uint64', Number.MAX_SAFE_INTEGER + 1), /安全整数/)
 console.log('REGISTER WRITE VALUE OK: null/empty/missing/coercion/nonfinite rejection before spy writes/logs, safe 64-bit numeric input and exact strings, JSON-safe UI values, legacy 16/32/64 BE/LE/raw/q/float encoding, methods/slave/area and target failure; Fastify.inject + memory config only, no poller/hardware/listeners/model or real data')
 
-for (const english of [false, true]) for (const local of [false, true]) {
-  let calls = 0, reject!: (error: Error) => void
-  const pending = new Promise<void>((_resolve, fail) => { reject = fail })
-  const props = { t: (key: string) => key === 'cancel' ? english ? 'Cancel' : '取消' : key, reg: { id: 1, alias: 'Mock', startAddress: 0, dataType: 'uint16', functionCode: 3 }, deviceName: 'Mock only', currentValue: '0', local, onClose() {}, onSaved() { throw Error('unexpected save') } }
-  const driver = hookDriver('App.tsx', 'WriteModal', { registerWidth, isHexType, isBinType, registerWritePayloadValue, api: { async post() { calls++; return pending } } }, props)
-  const warning = english ? /Source is not locked\. Changes may redirect this write\./ : /来源未锁定；配置变化可能使写入转向新目标。/
+const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+function find(node: ts.Node, predicate: (node: ts.Node) => boolean): ts.Node | undefined { if (predicate(node)) return node; let found: ts.Node | undefined; ts.forEachChild(node, child => { found ??= find(child, predicate) }); return found }
+const evaluate = (node: ts.Node, env: Record<string, unknown>) => new Function(...Object.keys(env), ts.transpileModule('return (' + node.getText(source) + ')', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, jsx: ts.JsxEmit.React } }).outputText)(...Object.values(env))
+const modalNode = find(source, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === 'WriteModal')!
+for (const english of [false, true]) for (const local of [false, true]) for (const entry of ['onClick', 'onDoubleClick']) {
+  const memory = new ConfigStore({ dbPath: ':memory:' }), apiApp = Fastify(), emitted: unknown[][] = []
+  const device = memory.createObject('Mock only', '0.0.0.0', 1502, local ? 'slave' : 'master'), group = memory.createGroup(device.id, 'Mock only', 3, 0, 4, 'read', 7), reg = memory.createRegister(group.id, device.id, 'Mock only', 3, 0, 'uint16')
+  registerRegisterWrite(apiApp, memory, { async write(...args: unknown[]) { emitted.push(args) } })
+  let calls = 0, saved = 0, writeReg: typeof reg | null = null
+  const t = (key: string) => key === 'cancel' ? english ? 'Cancel' : '取消' : key
+  const opening = find(source, node => ts.isJsxAttribute(node) && node.name.getText(source) === entry && node.initializer?.getText(source).includes('setWriteReg(r)') === true) as ts.JsxAttribute
+  const env = { React, t, device, views: new Map([[reg.id, { value: '0' }]]), writable: true, r: reg, setWriteReg(value: typeof reg | null) { writeReg = value }, operation: { setNotice() { saved++ } }, WriteModal: () => null }
+  evaluate((opening.initializer as ts.JsxExpression).expression!, env)(); assert.equal(writeReg, reg)
+  const element = evaluate(modalNode, { ...env, writeReg }) as React.ReactElement<Record<string, unknown>>, props = element.props
+  const driver = hookDriver('App.tsx', 'WriteModal', { registerWidth, isHexType, isBinType, registerWritePayloadValue, api: { async post(url: string, payload: unknown) { calls++; const response = await apiApp.inject({ method: 'POST', url, payload: JSON.stringify(payload), headers: { 'content-type': 'application/json' } }); if (response.statusCode >= 400) throw Error(response.body); return response.json() } } }, props)
   try {
-    assert.match(renderToStaticMarkup(driver.tree), warning, 'both remote and local dialogs must expose the unresolved source boundary')
-    assert.equal(calls, 0, 'warning display never submits or preflights')
-    driver.one('input').props.onChange({ target: { value: '42' } }); driver.render()
-    driver.one('button', p => p.className === 'btn primary').props.onClick(); driver.render()
-    assert.equal(calls, 1); assert.match(renderToStaticMarkup(driver.tree), warning)
-    reject(Error('synthetic response lost')); await new Promise<void>(done => setImmediate(done)); driver.render()
-    assert.equal(driver.one('input').props.value, '42'); assert.equal(calls, 1)
+    const warning = english ? /Direct writes blocked: source binding unavailable/ : /直接写入已阻止：缺少来源绑定/
     assert.match(renderToStaticMarkup(driver.tree), warning)
-  } finally { reject(Error('cleanup')); driver.dispose() }
+    const send = driver.one('button', p => p.className === 'btn primary')
+    assert.equal(send.props.disabled, true, 'unbound UI must never offer an enabled sender')
+    assert.equal(send.props.onClick, undefined, 'blocking must remove the sender, not just its visual state')
+    for (const value of ['0', '42', '18446744073709551615', 'bad-number']) {
+      driver.one('input').props.onChange({ target: { value } }); driver.render()
+      memory.updateGroup(group.id, { slaveId: 9 }); memory.updateObject(device.id, { mode: 'master', ip: 'changed.mock.invalid' })
+      driver.render({ ...props, deviceName: 'Changed source', local: false, currentValue: '99' })
+      assert.equal(driver.one('input').props.value, value); assert.match(renderToStaticMarkup(driver.tree), warning)
+      assert.equal(driver.one('button', p => p.className === 'btn primary').props.onClick, undefined)
+    }
+    assert.equal(calls, 0); assert.equal(emitted.length, 0); assert.equal(saved, 0)
+    // The real legacy route is still operational against a spy, independently of UI blocking.
+    const legacy = await apiApp.inject({ method: 'POST', url: '/api/registers/' + reg.id + '/write', payload: { value: 42 } })
+    assert.equal(legacy.statusCode, 200); assert.equal(emitted.length, 1); assert.equal(emitted[0][4], 9); assert.equal(calls, 0)
+    driver.one('button', p => p.className === 'btn').props.onClick(); assert.equal(writeReg, null)
+  } finally { driver.dispose(); await apiApp.close(); await memory.close() }
 }
-console.log('WRITE SOURCE WARNING OK: bilingual remote/local dialogs retain warning and input through pending and lost response; spy only, no auto-write or preflight, not an atomic source guard')
+console.log('WRITE UI BLOCK OK: actual click/double-click entry and modal props, bilingual remote/local source changes, zero UI API/spy writes, input preservation and close; real legacy route unchanged. Risk mitigation only; old APIs and old loaded clients remain unguarded.')

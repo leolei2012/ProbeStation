@@ -5,7 +5,6 @@ import { RecordingIntervalNotice } from './RecordingIntervalNotice'
 import { PersistenceStatus } from './PersistenceStatus'
 import { RetentionSummary } from './RetentionSummary'
 import { RealtimeFallbackRead } from './realtime-fallback'
-import { registerWritePayloadValue } from '../../../packages/core/src/register-write-value'
 import { bindUiTheme, readUiLanguage, readUiTheme, readSidebarCollapsed, saveUiLanguage, saveSidebarCollapsed } from './ui-preferences'
 import { captureLiveSnapshot } from './live-snapshot'
 import { LiveSnapshotPanel } from './LiveSnapshotPanel'
@@ -1193,50 +1192,24 @@ function GroupFold({ collapsed, children }: { collapsed: boolean; children: () =
 }
 
 
-function WriteModal({ t, reg, deviceName, currentValue, local, onClose, onSaved }: { t: T; reg: Register; deviceName: string; currentValue: string; local?: boolean; onClose: () => void; onSaved: () => void }) {
+function WriteModal({ t, reg, deviceName, currentValue, local, onClose }: { t: T; reg: Register; deviceName: string; currentValue: string; local?: boolean; onClose: () => void; onSaved: () => void }) {
   const [value, setValue] = useState('')
-  const [method, setMethod] = useState<'single' | 'multiple'>('multiple')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const [ok, setOk] = useState(false)
   const width = registerWidth(reg.dataType)
   const isRaw = isHexType(reg.dataType) || isBinType(reg.dataType)
-  const write = async () => {
-    if (value.trim() === '') { setErr(t('writeErrEmpty')); return }
-    let num: string | number
-    try {
-      num = registerWritePayloadValue(reg.dataType, value)
-    } catch (error) { setErr((error as Error).message); return }
-    if (typeof num === 'number' && !Number.isFinite(num)) { setErr(t('writeErrNaN')); return }
-    setBusy(true); setErr(null)
-    try {
-      await api.post('/api/registers/' + reg.id + '/write', { value: num, method: width > 1 ? 'multiple' : method })
-      setOk(true)
-      setTimeout(() => onSaved(), 600)
-    } catch (e) {
-      setErr((e as any)?.message ?? String(e))
-    } finally { setBusy(false) }
-  }
+  const english = t('cancel') === 'Cancel'
   return (
     <div className="modal-mask">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{local ? '设置从站点位值' : t('writeReg')}</h3>
-        <div className="write-context"><strong>{deviceName}</strong><span>{t('currentValue')}: {currentValue}</span><small>{local ? '修改本设备的从站内存，不向外部设备写入。' : t('pointWriteHint')}</small></div>
-        <p className="write-msg error" role="status">{t('cancel') === 'Cancel' ? 'Source is not locked. Changes may redirect this write.' : '来源未锁定；配置变化可能使写入转向新目标。'}</p>
+        <div className="write-context"><strong>{deviceName}</strong><span>{t('currentValue')}: {currentValue}</span></div>
+        <p className="write-msg error" role="status">{english ? 'Direct writes blocked: source binding unavailable. Legacy APIs unaffected.' : '直接写入已阻止：缺少来源绑定。旧接口不受此限制。'}</p>
         <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}{width > 1 ? '（' + width + ' 寄存器）' : ''}</div>
         <label>{t('valuePh')}</label>
-        <input value={value} onChange={(e) => { setValue(e.target.value); setErr(null); setOk(false) }} autoFocus placeholder={isHexType(reg.dataType) ? '0x1234' : isBinType(reg.dataType) ? '0b1010' : t('valuePh')} />
+        <input value={value} onChange={(e) => setValue(e.target.value)} autoFocus placeholder={isHexType(reg.dataType) ? '0x1234' : isBinType(reg.dataType) ? '0b1010' : t('valuePh')} />
         {isRaw && <div className="kv">{isHexType(reg.dataType) ? '输入十六进制整数，可带 0x 前缀。' : '输入二进制整数，可带 0b 前缀。'} {width * 16} 位无符号值；直接写入原始数据，不应用系数或偏移。</div>}
-        {!local && <><label>{t('functionCode')}</label>
-        <select value={method} onChange={(e) => setMethod(e.target.value as 'single' | 'multiple')} disabled={width > 1}>
-          <option value="multiple">{reg.functionCode === 1 ? 'FC05' : t('fc16')}</option>
-          {width === 1 && reg.functionCode !== 1 && <option value="single">{t('fc06')}</option>}
-        </select></>}
-        {err && <div className="write-msg error">{err}</div>}
-        {ok && <div className="write-msg ok">{t('writeOk')}</div>}
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" onClick={write} disabled={busy || ok}>{ok ? t('writeOk') : t('write')}</button>
+          <button className="btn primary" disabled>{english ? 'Write blocked' : '写入已阻止'}</button>
         </div>
       </div>
     </div>
