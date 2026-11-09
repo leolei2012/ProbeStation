@@ -13,6 +13,7 @@
   "scripts": {
     "test": "tsx scripts/test-safe.ts",
     "audit:history-breaks": "tsx scripts/audit-history-breaks.ts",
+    "audit:history-evidence": "tsx scripts/audit-history-evidence.ts --synthetic",
     "preview:picker": "tsx scripts/preview-register-picker.ts",
     "preview:settings": "tsx scripts/preview-register-picker.ts --settings",
     "preview:comparison": "tsx scripts/preview-register-picker.ts --comparison",

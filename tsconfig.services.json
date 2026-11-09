@@ -32,6 +32,7 @@
     "packages/api/src/readiness.ts",
     "scripts/audit-history-export-version.ts",
     "scripts/audit-history-breaks.ts",
+    "scripts/audit-history-evidence.ts",
     "scripts/audit-export-entry.ts",
     "scripts/audit-sink-condition.ts",
     "scripts/test-database-upgrade.ts",
