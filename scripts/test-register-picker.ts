@@ -169,3 +169,24 @@ console.log('REGISTER PICKER OK: explicit source/point identity, exact source an
   }
   console.log('REGISTER PICKER COMPOSITION OK: 20 bilingual context-change cases, equivalent reorder and 3 edited-draft cancel/reopen paths with source/search/limit; no real browser.')
 }
+{
+  const env = { ...picker, document: { activeElement: { focus() {} } } }
+  for (const english of [false, true]) {
+    const pageGroups = structuredClone(groups), backendGroups = structuredClone(groups)
+    let applied: number[] = []
+    const props = { t: (key: string) => key === 'cancel' ? english ? 'Cancel' : '取消' : key, groups: pageGroups, initial: new Set([11]), onClose() {}, onApply(ids: Set<number>) { applied = [...ids] } }
+    const driver = hookDriver('RegisterPicker.tsx', 'RegisterSelectModal', env, props)
+    try {
+      backendGroups[0].slaveId = 2; driver.render(props)
+      assert.equal(driver.one('button', p => p.children === 'save').props.disabled, false, 'unreceived backend changes cannot be detected from unchanged page options')
+      driver.one('button', p => p.children === 'save').props.onClick(); assert.deepEqual(applied, [11])
+      assert.equal(pageGroups[0].slaveId, 1); assert.equal(backendGroups[0].slaveId, 2)
+      const html = renderToStaticMarkup(driver.tree)
+      assert.match(html, english ? /does not lock the backend version/ : /不锁定后台版本/)
+      assert.match(html, english ? /can change again after refresh/ : /刷新后后台仍可能变化/)
+      const description = driver.one('div', p => p.role === 'dialog').props['aria-describedby'].split(' ')
+      assert(description.includes(driver.one('p', p => p.id?.endsWith('-context')).props.id), 'the limitation is part of the dialog description')
+    } finally { driver.dispose() }
+  }
+  console.log('REGISTER PICKER UNSEEN LIMIT: unchanged page options still permit local ID selection after unseen backend edits; explicit bilingual limitation, not backend protection.')
+}

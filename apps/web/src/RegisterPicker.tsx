@@ -13,8 +13,8 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
   const context = pickerContext(groups, deviceSlaveId, max), [openedContext] = useState(context), invalidated = useRef(false)
   if (context !== openedContext) invalidated.current = true
   const blocked = invalidated.current
-  const titleId = useId(), countId = titleId + '-count', limitId = titleId + '-limit'
-  const description = countId + (max === undefined ? '' : ' ' + limitId), atLimit = max !== undefined && draft.size >= max
+  const titleId = useId(), countId = titleId + '-count', limitId = titleId + '-limit', contextId = titleId + '-context'
+  const description = countId + ' ' + contextId + (max === undefined ? '' : ' ' + limitId), atLimit = max !== undefined && draft.size >= max
   const english = t('cancel') === 'Cancel'
   const toggle = (id: number) => setDraft((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else if (max === undefined || next.size < max) next.add(id); return next })
   const allIds = groups.flatMap(g => g.registers).map(r => r.id)
@@ -44,6 +44,7 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
           <span id={titleId}>{t('selectRegisters')}</span>
           <button className="modal-close" aria-label={t('cancel')} onClick={onClose}>✕</button>
         </div>
+        <p id={contextId} className="chart-hint" role="note">{english ? 'Selection changes viewing scope using this page’s loaded definitions; it does not lock the backend version. Refresh and check sources before history queries or exports; configuration can change again after refresh.' : '选点只调整查看范围，按本页已加载配置，不锁定后台版本。历史查询或导出前请刷新并核对来源；刷新后后台仍可能变化。'}</p>
         {blocked && <p className="chart-hint warn" role="alert">{english ? 'Configuration or source changed. This draft cannot be applied; close and reopen to select again.' : '配置或来源已变化，此草稿不可应用；请关闭后重新打开并选择。'}</p>}
         <input className="reg-picker-search" disabled={blocked} aria-describedby={description} aria-label={t('pickerSearch')} placeholder={t('pickerSearch')} value={search} onChange={e => setSearch(e.target.value)} autoFocus />
         <div className="reg-picker-filters">

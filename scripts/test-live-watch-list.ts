@@ -241,7 +241,9 @@ await check('actual picker describes limit and keeps removals keyboard-reachable
     const translate = (key: string) => key === 'cancel' ? english ? 'Cancel' : '取消' : key === 'curveSelectLimit' ? english ? 'Select up to {n} points' : '最多选择 {n} 个点位' : t(key)
     const picker = hookDriver('RegisterPicker.tsx', 'RegisterSelectModal', { addVisiblePickerPoints, filterPickerGroups, pickerContext, pickerSource, pickerSources, document }, { t: translate, groups, initial: new Set(), max: 1, onClose() { closes++ }, onApply() { applies++ } })
     try {
-      const dialog = () => picker.one('div', p => p.role === 'dialog'), descriptions = dialog().props['aria-describedby']; assert.equal(typeof descriptions, 'string'); const refs = descriptions.split(/\s+/); assert.equal(refs.length, 2)
+      const dialog = () => picker.one('div', p => p.role === 'dialog'), descriptions = dialog().props['aria-describedby']; assert.equal(typeof descriptions, 'string'); const refs = descriptions.split(/\s+/); assert.equal(refs.length, 3)
+      assert.equal(picker.one('p', p => p.id === refs[1]).props.role, 'note'); assert.match(renderToStaticMarkup(picker.one('p', p => p.id === refs[1])), english ? /does not lock the backend version/ : /不锁定后台版本/)
+      assert(picker.one('p', p => p.id === refs[2]).props.children)
       assert.equal(picker.one('input', p => p.className === 'reg-picker-search').props.autoFocus, true); assert.equal(picker.one('input', p => p.type === 'checkbox').props['aria-describedby'], descriptions)
       const event = (key: string, composing = false, shiftKey = false) => ({ key, shiftKey, nativeEvent: { isComposing: composing }, preventDefault() { prevented++ }, stopPropagation() { stopped++ }, currentTarget: { querySelectorAll(selector: string) { assert(selector.includes(':not(:disabled)')); return [first, last] } } })
       dialog().props.onKeyDown(event('Escape', true)); assert.equal(closes, 0, 'IME cancellation must not discard the selection draft'); assert.equal(prevented, 0)

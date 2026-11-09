@@ -29,6 +29,12 @@ try {
   assert.equal(old.json().series[0].samples[0][1], 10); assert.equal(next.json().series[0].samples[0][1], 200)
   assert.equal(oldPlan.url, newPlan.url)
   oldBody = old.json(); newBody = next.json()
+  const unseen = await app.inject(oldPlan.url)
+  assert.equal(unseen.statusCode, 200); assert.equal(unseen.json().series[0].samples[0][1], 200, 'unchanged old client plan still receives the current backend source')
+  const unseenState = reduceHistoryRead(reduceHistoryRead<any>(null, oldPlan, { status: 'loading' }), oldPlan, { status: 'done', plan: oldPlan, data: unseen.json() })
+  assert.equal(historyReadView(oldPlan, unseenState).contextChanged, false, 'local result ownership cannot detect unreceived server definitions')
+  assert.equal(unseen.headers.etag, undefined); assert.equal(unseen.headers['last-modified'], undefined)
+  console.log('HISTORY UNSEEN CONFIG LIMIT: old plan URL returns new source 200 with no definition revision acknowledgment; client contextChanged=false. Known boundary, not a safety pass.')
   console.log('Reproduced with real in-memory API routing and mock provider: identical history URL, same point ID, source 1→2 changes decoded series 10→200. No databases, sockets or devices.')
   registry = [{ ...point, startAddress: 1 }, { ...point, id: 102, startAddress: 0, dataType: 'uint16' }]
   const beforeCoverage = context(), eligible = await app.inject(oldPlan.url)
