@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import Fastify from 'fastify'
+import { registerRegisterWrite } from '../packages/api/src/register-write.ts'
 import { ConfigStore, type DeviceRecord } from '../packages/config/src/index.ts'
 import { apply } from '../packages/poller/src/index.ts'
 import { Recorder } from '../packages/mcp/src/recorder.ts'
@@ -8,7 +10,7 @@ import { captureAcquisitionOrigin, acquisitionOriginMatches } from '../packages/
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: Error) => void; const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail }); return { promise, resolve, reject } }
 const options = { pollIntervalMs: 1000, connectRetryMs: 0, watchdogTimeoutMs: 30000, autoResetFailThreshold: 0, autoResetCooldownMs: 0 }
 async function scenario(run: (h: any) => Promise<void>, extra: Partial<DeviceRecord> = {}) {
-  const listeners = new Map<string, ((event: any) => void)[]>(), stored: any[] = [], events: any[] = [], drivers: any[] = []
+  const listeners = new Map<string, ((event: any) => void)[]>(), stored: any[] = [], events: any[] = [], drivers: any[] = [], writes: any[] = []
   const hooks = { notify: true, beforeResult: undefined as undefined | (() => void), connect: async (_d: any) => {}, read: async (_d: any, _start: number, count: number) => Array(count).fill(7) }
   const emit = (name: string, event: any) => { if (name === 'poller/result') hooks.beforeResult?.(); events.push({ name, event }); for (const listener of listeners.get(name) ?? []) listener(event) }
   const cfg = new ConfigStore({ dbPath: ':memory:' }, (scope, id) => { if (hooks.notify) emit('config/changed', { scope, id }) })
@@ -19,13 +21,14 @@ async function scenario(run: (h: any) => Promise<void>, extra: Partial<DeviceRec
     const d = { connected: false, target: null as any, disconnects: 0, reads: 0,
       async connect(target: any) { d.target = { ...target }; await hooks.connect(d); d.connected = true },
       async disconnect() { d.disconnects++; d.connected = false }, isConnected: () => d.connected,
-      readHoldingRegisters: (start: number, count: number) => { d.reads++; return hooks.read(d, start, count) } }
+      readHoldingRegisters: (start: number, count: number) => { d.reads++; return hooks.read(d, start, count) },
+      writeRegister: async (...args: unknown[]) => { writes.push({ target: { ...d.target }, args }) } }
     drivers.push(d); return d
   } }, on(name: string, fn: any) { listeners.set(name, [...listeners.get(name) ?? [], fn]) }, emit,
   provide(_name: string, value: any) { engine = value }, effect(setup: any) { dispose = setup() }, logger: () => ({ info() {}, warn() {} }) }
   const recorder = new Recorder(ctx, cfg)
   apply(ctx, options)
-  const h = { cfg, device, group, engine, recorder, hooks, drivers, stored, events, emit, ctx, dispose: () => dispose!(),
+  const h = { cfg, device, group, engine, recorder, hooks, drivers, writes, stored, events, emit, ctx, dispose: () => dispose!(),
     start: () => recorder.startRecording(device.id, 10, 60000),
     poll: () => { engine.groupsByDevice.set(device.id, [group]); return engine.pollNextGroup(cfg.getObject(device.id)) } }
   try { await run(h) }
@@ -182,4 +185,22 @@ await scenario(async ({ cfg, device, group, recorder, start, stored, emit }) => 
     await manager.sync(); assert.equal(starts, 2); assert.equal(stored.length, 1); assert.equal(recorder.getRecording(fresh)!.samples[0].rawValue, 42)
   } finally { await manager.stop() }
 })
+// Known write gap: even a route precheck cannot bind the eventual driver after an async wait.
+for (const transport of ['tcp', 'rtu']) await scenario(async ({ cfg, device, group, engine, writes }) => {
+  const entered = deferred<void>(), release = deferred<void>()
+  engine.waitInflight = async () => { entered.resolve(); await release.promise }
+  cfg.updateGroup(group.id, { slaveId: 7 })
+  const point = cfg.createRegister(group.id, device.id, 'mock write', 3, 0, 'uint16'), app = Fastify()
+  registerRegisterWrite(app, cfg, engine)
+  try {
+    const checked = cfg.getObject(device.id)!, pending = app.inject({ method: 'POST', url: '/api/registers/' + point.id + '/write', payload: { value: 42, method: 'single' } })
+    await entered.promise
+    cfg.updateObject(device.id, transport === 'tcp' ? { ip: 'after-write-wait.mock.invalid' } : { serialPath: 'MOCK-NEW-ONLY' })
+    assert.notDeepEqual(cfg.getObject(device.id), checked)
+    release.resolve(); assert.equal((await pending).statusCode, 200)
+    assert.equal(writes.length, 1); assert.equal(writes[0].args[2], 7)
+    assert.equal(transport === 'tcp' ? writes[0].target.ip : writes[0].target.serialPath, transport === 'tcp' ? 'after-write-wait.mock.invalid' : 'MOCK-NEW-ONLY')
+    console.log('POLLER WRITE SOURCE GAP: ' + transport + ' target changed after admission/precheck during mock wait; actual API/poller selects new spy driver. Not a safety pass.')
+  } finally { release.resolve(); await app.close() }
+}, transport === 'rtu' ? { transport: 'rtu', serialPath: 'MOCK-OLD-ONLY' } : {})
 console.log('POLLER ORIGIN OK: old/new recording repro, TCP cache binding, RTU queue, source ABA/reopen/delete/role/disable, stop/reconnect/pending-connect ownership, stale errors/finalizers, chunk cancellation, one-off collision, reentrant dispatch and slave reconciliation; memory/mock only, no sockets')

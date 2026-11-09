@@ -1222,6 +1222,7 @@ function WriteModal({ t, reg, deviceName, currentValue, local, onClose, onSaved 
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{local ? '设置从站点位值' : t('writeReg')}</h3>
         <div className="write-context"><strong>{deviceName}</strong><span>{t('currentValue')}: {currentValue}</span><small>{local ? '修改本设备的从站内存，不向外部设备写入。' : t('pointWriteHint')}</small></div>
+        <p className="write-msg error" role="status">{t('cancel') === 'Cancel' ? 'Source is not locked. Changes may redirect this write.' : '来源未锁定；配置变化可能使写入转向新目标。'}</p>
         <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}{width > 1 ? '（' + width + ' 寄存器）' : ''}</div>
         <label>{t('valuePh')}</label>
         <input value={value} onChange={(e) => { setValue(e.target.value); setErr(null); setOk(false) }} autoFocus placeholder={isHexType(reg.dataType) ? '0x1234' : isBinType(reg.dataType) ? '0b1010' : t('valuePh')} />

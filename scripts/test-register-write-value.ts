@@ -4,6 +4,9 @@ import { ConfigStore } from '../packages/config/src/index.ts'
 import { encodeRegister } from '../packages/core/src/codec.ts'
 import { parseRegisterWriteValue, registerWritePayloadValue } from '../packages/core/src/register-write-value.ts'
 import { registerRegisterWrite } from '../packages/api/src/register-write.ts'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { registerWidth, isHexType, isBinType } from '../packages/core/src/codec.ts'
+import { hookDriver } from './fixtures/component-hook-driver.ts'
 
 // The target is always a spy. Never import/start the poller, connect a device or open a real config.
 const cfg = new ConfigStore({ dbPath: ':memory:' }), app = Fastify()
@@ -73,3 +76,22 @@ assert.equal(registerWritePayloadValue('hex32', 'FFFFFFFF'), 4294967295)
 assert.equal(parseRegisterWriteValue('uint64', 18446744073709551615n), 18446744073709551615n)
 assert.throws(() => parseRegisterWriteValue('uint64', Number.MAX_SAFE_INTEGER + 1), /安全整数/)
 console.log('REGISTER WRITE VALUE OK: null/empty/missing/coercion/nonfinite rejection before spy writes/logs, safe 64-bit numeric input and exact strings, JSON-safe UI values, legacy 16/32/64 BE/LE/raw/q/float encoding, methods/slave/area and target failure; Fastify.inject + memory config only, no poller/hardware/listeners/model or real data')
+
+for (const english of [false, true]) for (const local of [false, true]) {
+  let calls = 0, reject!: (error: Error) => void
+  const pending = new Promise<void>((_resolve, fail) => { reject = fail })
+  const props = { t: (key: string) => key === 'cancel' ? english ? 'Cancel' : '取消' : key, reg: { id: 1, alias: 'Mock', startAddress: 0, dataType: 'uint16', functionCode: 3 }, deviceName: 'Mock only', currentValue: '0', local, onClose() {}, onSaved() { throw Error('unexpected save') } }
+  const driver = hookDriver('App.tsx', 'WriteModal', { registerWidth, isHexType, isBinType, registerWritePayloadValue, api: { async post() { calls++; return pending } } }, props)
+  const warning = english ? /Source is not locked\. Changes may redirect this write\./ : /来源未锁定；配置变化可能使写入转向新目标。/
+  try {
+    assert.match(renderToStaticMarkup(driver.tree), warning, 'both remote and local dialogs must expose the unresolved source boundary')
+    assert.equal(calls, 0, 'warning display never submits or preflights')
+    driver.one('input').props.onChange({ target: { value: '42' } }); driver.render()
+    driver.one('button', p => p.className === 'btn primary').props.onClick(); driver.render()
+    assert.equal(calls, 1); assert.match(renderToStaticMarkup(driver.tree), warning)
+    reject(Error('synthetic response lost')); await new Promise<void>(done => setImmediate(done)); driver.render()
+    assert.equal(driver.one('input').props.value, '42'); assert.equal(calls, 1)
+    assert.match(renderToStaticMarkup(driver.tree), warning)
+  } finally { reject(Error('cleanup')); driver.dispose() }
+}
+console.log('WRITE SOURCE WARNING OK: bilingual remote/local dialogs retain warning and input through pending and lost response; spy only, no auto-write or preflight, not an atomic source guard')
