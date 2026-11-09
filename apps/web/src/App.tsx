@@ -55,7 +55,7 @@ import { ColumnControl, ValueModeControl, useDisplayColumns, useValueMode } from
 import { AlarmPanel, useAlarmRules } from './AlarmPanel'
 import { ValueReading } from './ValueReading'
 import { physicalValue, displayNumber, curveValue, type ValueMode } from './physical-value'
-import { PointSettingsEditor } from './PointSettingsEditor'
+import { DeferredPointSettingsEditor as PointSettingsEditor } from './DeferredConfigModal'
 import { capturePointEditBaseline, type PointEditBaseline } from '../../../packages/core/src/point-settings-edit'
 import { saveGuardedPointSettings } from './point-settings-save'
 import { HistoryQualitySummary } from './HistoryQualitySummary'

@@ -4,9 +4,10 @@ import fs from 'node:fs'
 import React, { type ComponentProps, type ComponentType } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DeferredResource } from '../apps/web/src/deferred-resource.ts'
-import { DeferredConfigModal, DeferredDeviceModal, DeferredGroupModal, ConfigModalLoading, deviceModalResource, groupModalResource } from '../apps/web/src/DeferredConfigModal.tsx'
+import { DeferredConfigModal, DeferredDeviceModal, DeferredGroupModal, ConfigModalLoading, deviceModalResource, groupModalResource, DeferredPointSettingsEditor, pointSettingsResource } from '../apps/web/src/DeferredConfigModal.tsx'
 import { DeviceModal } from '../apps/web/src/DeviceModal.tsx'
 import { GroupModal } from '../apps/web/src/GroupModal.tsx'
+import { PointSettingsEditor } from '../apps/web/src/PointSettingsEditor.tsx'
 import { captureDeviceEditBaseline } from '../packages/core/src/device-settings-edit.ts'
 import { captureGroupOpening, parseGroupEditChanges, planGroupResize } from '../packages/core/src/group-settings-edit.ts'
 import { readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings } from '../apps/web/src/group-settings-save.ts'
@@ -21,6 +22,7 @@ async function check(name: string, action: () => void | Promise<void>) { await a
 const t = (key: string) => key === 'cancel' ? '取消' : key
 const deviceProps: ComponentProps<typeof DeviceModal> = { t, initial: syntheticDevice, onClose() {}, async onSave() { assert.fail('no automatic device save') } }
 const groupProps: ComponentProps<typeof GroupModal> = { t, device: captureDeviceEditBaseline(syntheticDevice), initial: null, onClose() {}, onSaved() { assert.fail('no automatic group save') }, async get() { assert.fail('no automatic group read before the form mounts') }, async put() { assert.fail('no automatic group write') }, async create() { assert.fail('no automatic group creation') } }
+const pointProps: ComponentProps<typeof PointSettingsEditor> = { t, name: 'mock point', address: 0, settings: { dataType: 'uint16', factor: 1, offset: 0, unit: null, enumJson: null }, available: 2, typeGroups: [{ key: 'grp16BE', types: ['uint16'] }], onClose() {}, async onSave() { assert.fail('no automatic point save') } }
 function wrapper<P extends { t: (key: string) => string; onClose: () => void }>(resource: DeferredResource<ComponentType<P>>, props: P) {
   let restored = 0, loadingFocus = 0, modalPresent = false
   const opener = { isConnected: true, matches: () => false, focus() { restored++ } }, body = {}, close = { focus() { loadingFocus++ } }
@@ -33,14 +35,15 @@ function wrapper<P extends { t: (key: string) => string; onClose: () => void }>(
 await check('source wiring and SSR never load a closed configuration editor', () => {
   const app = fs.readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8')
   assert(app.includes('DeferredDeviceModal as DeviceModal, DeferredGroupModal as GroupModal')); assert(app.includes('{showAdd && <DeviceModal')); assert(app.includes('{showEdit && <DeviceModal')); assert(app.includes('{modal && <GroupModal'))
-  assert(!/import \{ DeviceModal/.test(app)); assert(!/import \{ GroupModal/.test(app))
+  assert(!/import \{ DeviceModal/.test(app)); assert(!/import \{ GroupModal/.test(app)); assert(app.includes("DeferredPointSettingsEditor as PointSettingsEditor")); assert(!app.includes("from './PointSettingsEditor'"))
+  assert.equal(pointSettingsResource.snapshot().status, 'idle'); assert(renderToStaticMarkup(React.createElement(DeferredPointSettingsEditor, pointProps)).includes('正在加载编辑界面')); assert.equal(pointSettingsResource.snapshot().status, 'idle')
   assert.equal(deviceModalResource.snapshot().status, 'idle'); assert.equal(groupModalResource.snapshot().status, 'idle')
   assert(renderToStaticMarkup(React.createElement(DeferredDeviceModal, deviceProps)).includes('正在加载编辑界面'))
   assert(renderToStaticMarkup(React.createElement(DeferredGroupModal, groupProps)).includes('newGroup'))
   assert.equal(deviceModalResource.snapshot().status, 'idle'); assert.equal(groupModalResource.snapshot().status, 'idle')
 })
 await check('independent editors coalesce loads and use current visible props', async () => {
-  for (const [Modal, props] of [[DeviceModal, deviceProps], [GroupModal, groupProps]] as const) {
+  for (const [Modal, props] of [[DeviceModal, deviceProps], [GroupModal, groupProps], [PointSettingsEditor, pointProps]] as const) {
     let imports = 0; const code = deferred<ComponentType<any>>(), resource = new DeferredResource<ComponentType<any>>(() => { imports++; return code.promise })
     const view = wrapper(resource, props); const latest = { ...props, t: (key: string) => key === 'cancel' ? 'Cancel' : key }
     try { await tick(); assert.equal(imports, 1); assert.equal(resource.load(), resource.load()); view.update(latest); code.resolve(Modal); await resource.load(); view.update(latest); assert.equal(view.driver.one(Modal).props.t('cancel'), 'Cancel'); assert(!view.html().includes('Loading editor')); await resource.load(); assert.equal(imports, 1) } finally { view.driver.dispose() }
@@ -162,5 +165,37 @@ await check('loaded group draft blocks cancelled owner navigation after code loa
   const page = draftSurface(), editor = hookDriver('GroupModal.tsx', 'GroupModal', groupEditorScope({ captureDeviceEditBaseline, captureGroupOpening, parseGroupEditChanges, planGroupResize, readGroupSettings, saveGuardedGroupSettings, groupCreateWarnings, configurationWriteBlocked }), { ...groupProps, draftScope: page.registration() })
   try { editor.one('input').props.onChange({ target: { value: 'PROTECTED GROUP DRAFT' } }); editor.render(); page.select(2); assert.equal(page.state().selectedId, 1); assert.equal(page.prompts.length, 1); assert.equal(editor.one('input').props.value, 'PROTECTED GROUP DRAFT'); assert.equal(page.drafts.retained().length, 0) } finally { editor.dispose() }
 })
+await check('point editor code failure retries only code, preserves current settings and never writes automatically', async () => {
+  for (const english of [false, true]) {
+    let imports = 0, writes = 0
+    const resource = new DeferredResource<typeof PointSettingsEditor>(async () => { if (++imports === 1) throw Error('PRIVATE chunk error'); return PointSettingsEditor })
+    const props = { ...pointProps, t: (key: string) => key === 'cancel' ? english ? 'Cancel' : '取消' : key, async onSave() { writes++ } }, view = wrapper(resource, props)
+    try {
+      await resource.load(); view.update(); assert(view.html().includes('role="alert"')); assert(!view.html().includes('PRIVATE'))
+      await resource.load(); assert.equal(imports, 1)
+      const latest = { ...props, name: 'NEW POINT', settings: { ...props.settings, factor: 0 } }; view.update(latest)
+      view.driver.one(ConfigModalLoading).props.retry(); await resource.load(); view.update(latest)
+      assert.equal(view.driver.one(PointSettingsEditor).props.settings.factor, 0); assert.equal(view.driver.one(PointSettingsEditor).props.name, 'NEW POINT'); assert.equal(writes, 0)
+    } finally { view.driver.dispose() }
+  }
+})
+await check('closed point loader and late code cannot resurrect old point or bypass loaded draft protection', async () => {
+  const code = deferred<typeof PointSettingsEditor>(), resource = new DeferredResource<typeof PointSettingsEditor>(() => code.promise), page = draftSurface()
+  let closes = 0, oldWrites = 0, newWrites = 0
+  const old = wrapper(resource, { ...pointProps, onClose() { closes++ }, async onSave() { oldWrites++ } }); await tick()
+  old.driver.one(ConfigModalLoading).props.close(); old.driver.dispose(); page.select(2); assert.equal(page.prompts.length, 0, 'code loading has no editable draft')
+  const props = { ...pointProps, name: 'POINT B', address: 12, draftScope: page.registration(), async onSave() { newWrites++ } }, fresh = wrapper(resource, props)
+  try {
+    code.resolve(PointSettingsEditor); await resource.load(); fresh.update(); const forwarded = fresh.driver.one(PointSettingsEditor).props
+    assert.equal(forwarded.name, 'POINT B'); assert.equal(forwarded.address, 12); assert.equal(closes, 1); assert.equal(old.driver.lateWrites, 0)
+    const editor = draftEditor('point', forwarded.draftScope, forwarded.onSave)
+    try {
+      editor.change('B UNSAVED UNIT'); page.select(1); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 1); assert.equal(editor.value(), 'B UNSAVED UNIT')
+      editor.close(); editor.resume(); assert.equal(editor.value(), 'B UNSAVED UNIT'); assert.equal(oldWrites + newWrites, 0)
+      editor.submit(); await tick(); assert.equal(newWrites, 1); assert.equal(oldWrites, 0)
+    } finally { editor.driver.dispose() }
+  } finally { old.driver.dispose(); fresh.driver.dispose() }
+})
+await pointSettingsResource.load(); assert.equal(pointSettingsResource.snapshot().value, PointSettingsEditor)
 await deviceModalResource.load(); await groupModalResource.load(); assert.equal(deviceModalResource.snapshot().value, DeviceModal); assert.equal(groupModalResource.snapshot().value, GroupModal)
 console.log('CONFIG MODAL LOADING TEST OK: ' + passed + ' source/SSR and controlled loader/device/group/keyboard/focus lifecycle groups; no actual browser, network, storage, serial enumeration, model or hardware')

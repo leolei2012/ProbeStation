@@ -13,7 +13,7 @@ try { manifest = JSON.parse(readFileSync(resolve(dist, '.vite/manifest.json'), '
 catch { throw new Error('缺少有效前端构建清单，请先运行 npm run build:web。') }
 const renderer = 'src/AssistantMarkdown.tsx', settings = 'src/SettingsModal.tsx', diagnostics = 'src/PointDiagnostics.tsx', entry = 'index.html'
 const communication = 'src/CommunicationSummaryView.tsx'
-const editors = ['src/DeviceModal.tsx', 'src/GroupModal.tsx', 'src/AlarmPendingContext.tsx']
+const editors = ['src/DeviceModal.tsx', 'src/GroupModal.tsx', 'src/AlarmPendingContext.tsx', 'src/PointSettingsEditor.tsx']
 assert.equal(manifest[entry]?.isEntry, true, 'missing frontend entry; run npm run build:web')
 assert.equal(manifest[renderer]?.isDynamicEntry, true, 'Markdown must remain a separate deferred entry')
 assert.equal(manifest[settings]?.isDynamicEntry, true, 'Settings must remain a separate deferred entry')
@@ -79,7 +79,7 @@ function walkSource(key: string) {
   assert.ok(inputs[key], 'missing source dependency'); visited.add(key)
   assert.ok(!deferredDiagnostics.has(key.replaceAll('\\', '/')), 'Point diagnostics implementation is statically reachable from startup: ' + key)
   assert.ok(!deferredSettings.has(key.replaceAll('\\', '/')), 'Settings-only implementation is statically reachable from startup: ' + key)
-  assert.ok(!['DeviceModal', 'GroupModal', 'SerialPortPicker', 'AlarmPendingContext'].some(name => key.replaceAll('\\', '/') === 'apps/web/src/' + name + '.tsx'), 'Configuration editor implementation is statically reachable from startup: ' + key)
+  assert.ok(!['DeviceModal', 'GroupModal', 'SerialPortPicker', 'AlarmPendingContext', 'PointSettingsEditor', 'PointEnumEditor'].some(name => key.replaceAll('\\', '/') === 'apps/web/src/' + name + '.tsx'), 'Configuration editor implementation is statically reachable from startup: ' + key)
   assert.notEqual(key.replaceAll('\\', '/'), 'apps/web/src/CommunicationSummaryView.tsx', 'Communication details are statically reachable from startup')
   assert.ok(!/node_modules\/(react-markdown|remark-gfm)\//.test(key.replaceAll('\\', '/')), 'Markdown parser is statically reachable from startup')
   for (const dependency of inputs[key].imports) if (!dependency.external && dependency.kind !== 'dynamic-import') walkSource(dependency.path)

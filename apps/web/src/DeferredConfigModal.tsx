@@ -2,9 +2,11 @@ import React, { useEffect, useRef, useSyncExternalStore, type ComponentProps, ty
 import { DeferredResource, type DeferredState } from './deferred-resource'
 import type { DeviceModal } from './DeviceModal'
 import type { GroupModal } from './GroupModal'
+import type { PointSettingsEditor } from './PointSettingsEditor'
 
 type DeviceProps = ComponentProps<typeof DeviceModal>
 type GroupProps = ComponentProps<typeof GroupModal>
+type PointProps = ComponentProps<typeof PointSettingsEditor>
 type Renderer<P> = ComponentType<P>
 export const deviceModalResource = new DeferredResource<Renderer<DeviceProps>>(async () => {
   const module = await import('./DeviceModal')
@@ -15,6 +17,11 @@ export const groupModalResource = new DeferredResource<Renderer<GroupProps>>(asy
   const module = await import('./GroupModal')
   if (typeof module.GroupModal !== 'function') throw new Error('Invalid group editor')
   return module.GroupModal
+})
+export const pointSettingsResource = new DeferredResource<Renderer<PointProps>>(async () => {
+  const module = await import('./PointSettingsEditor')
+  if (typeof module.PointSettingsEditor !== 'function') throw new Error('Invalid point editor')
+  return module.PointSettingsEditor
 })
 
 export function ConfigModalLoading({ state, t, title, close, retry }: { state: DeferredState<unknown>; t: (key: string) => string; title: string; close: () => void; retry: () => void }) {
@@ -42,4 +49,7 @@ export function DeferredDeviceModal({ resource = deviceModalResource, ...props }
 }
 export function DeferredGroupModal({ resource = groupModalResource, ...props }: GroupProps & { resource?: DeferredResource<Renderer<GroupProps>> }) {
   return <DeferredConfigModal resource={resource} props={props} title={props.t(props.initial ? 'editGroup' : 'newGroup')} />
+}
+export function DeferredPointSettingsEditor({ resource = pointSettingsResource, ...props }: PointProps & { resource?: DeferredResource<Renderer<PointProps>> }) {
+  return <DeferredConfigModal resource={resource} props={props} title={props.t('pointSettings')} />
 }
