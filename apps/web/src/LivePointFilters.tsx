@@ -1,14 +1,14 @@
 import React from 'react'
 import { LIVE_POINT_FILTERS, type LivePointFilter } from './live-point-filter'
 
-export function LivePointFilters({ search, source, sources, mode, counts, rulesReady, ruleError, readingRules = false, onRetryRules, onSearch, onSource, onMode, onClear, english = false }: {
+export function LivePointFilters({ search, source, sources, mode, counts, rulesReady, ruleError, extraFiltered = false, readingRules = false, onRetryRules, onSearch, onSource, onMode, onClear, english = false }: {
   search: string; source: string; sources: readonly string[]; mode: LivePointFilter; counts: Record<LivePointFilter, number>; rulesReady: boolean; ruleError: boolean
   onSearch: (value: string) => void; onSource: (value: string) => void; onMode: (value: LivePointFilter) => void; onClear: () => void; english?: boolean
-  readingRules?: boolean; onRetryRules?: () => void
+  extraFiltered?: boolean; readingRules?: boolean; onRetryRules?: () => void
 }) {
   const text = (zh: string, en: string) => english ? en : zh
   const names = { all: text('全部点位', 'All points'), attention: text('需关注', 'Needs attention'), alarm: text('行内已触发告警', 'Triggered alarms (rows)'), data: text('数据异常/过期/暂停', 'Invalid / stale / paused'), unknown: text('行内规则结果待定', 'Unknown rule results (rows)') }
-  const filtered = !!search.trim() || !!source || mode !== 'all'
+  const filtered = !!search.trim() || !!source || mode !== 'all' || extraFiltered
   return <section className="live-point-filters" aria-label={text('实时点位筛选', 'Live point filters')}>
     <div className="toolbar"><label className="live-point-search">{text('搜索点位', 'Find points')}<input className="hist-input" value={search} placeholder={text('名称、分组、0x地址、id:编号、slave:从站', 'Name, group, 0x address, id:number, slave:number')} onChange={e => onSearch(e.target.value)} /></label>
       <label>{text('配置从站', 'Configured slave')}<select value={source} onChange={e => onSource(e.target.value)}><option value="">{text('全部从站', 'All slaves')}</option>{sources.map(value => <option key={value} value={value}>{value === '?' ? text('来源未知', 'Unknown source') : text('从站 ', 'Slave ') + value}</option>)}</select></label>

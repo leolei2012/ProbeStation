@@ -22,6 +22,8 @@ import { historyReadContextKey, reduceHistoryRead, historyReadView, type History
 import { HistoryQueryMemoryPanel } from './HistoryQueryMemory'
 import { HistoryQueryMemory, QueryMemoryError, queryMemoryContext } from './history-query-memory'
 import { historyTimeRange, resolveHistoryTimeRange, editHistoryTime, changeHistoryInputZone, historyPresetRange } from './history-time-range'
+import { LiveWatchList } from './LiveWatchList'
+import { captureLiveWatch, liveWatchResult, type LiveWatchSelection } from './live-watch-list'
 import { LivePointFilters } from './LivePointFilters'
 import { evaluateLivePoints, livePointFilterResult, type LivePointFilter } from './live-point-filter'
 import { pickerSources } from './register-picker'
@@ -988,6 +990,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
   const tableWidth = 220 + (shownColumns.address ? 90 : 0) + (shownColumns.type ? 140 : 0) + (showValue ? 240 : 0) + (shownColumns.action ? 90 : 0)
   const [search, setSearch] = useState('')
   const [pointFilter, setPointFilter] = useState<LivePointFilter>('all')
+  const [watchSelection, setWatchSelection] = useState<LiveWatchSelection | null>(null), [watchOnly, setWatchOnly] = useState(false)
   const [sourceFilter, setSourceFilter] = useState('')
   const deviceSlaveId = device.mode === 'slave' ? device.slaveId : undefined
   const sources = pickerSources(groups, deviceSlaveId), activeSource = sources.includes(sourceFilter) ? sourceFilter : '', sourcesKey = sources.join(',')
@@ -1037,9 +1040,11 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
   }
   const views = useMemo(() => buildRegViews(groups, latest, device.id, device.mode === 'slave' ? device.slaveId : undefined), [groups, latest, device.id, device.mode, device.slaveId])
   const pointStates = useMemo(() => evaluateLivePoints(groups, views, latest, device, alarmRules, groupErrors, now, threshold), [groups, views, latest, device.id, device.isActive, device.mode, device.slaveId, alarmRules, groupErrors, now, threshold])
-  const filteredPoints = useMemo(() => livePointFilterResult(groups, pointStates, search, activeSource, pointFilter, deviceSlaveId), [groups, pointStates, search, activeSource, pointFilter, deviceSlaveId])
-  const hasPointFilters = !!search.trim() || !!activeSource || pointFilter !== 'all'
-  const pointFilterKey = JSON.stringify([search.trim(), activeSource, pointFilter])
+  const baseFilteredPoints = useMemo(() => livePointFilterResult(groups, pointStates, search, activeSource, pointFilter, deviceSlaveId), [groups, pointStates, search, activeSource, pointFilter, deviceSlaveId])
+  const watchResult = liveWatchResult(watchSelection, snapshotComparisonScope, watchOnly, baseFilteredPoints.visibleIds)
+  const filteredPoints = { ...baseFilteredPoints, visibleIds: watchResult.visibleIds }
+  const hasPointFilters = !!search.trim() || !!activeSource || pointFilter !== 'all' || watchOnly
+  const pointFilterKey = JSON.stringify([search.trim(), activeSource, pointFilter, watchOnly, watchResult.ids.size ? [...watchResult.ids] : null])
   // Summarize the full group before applying search or issue filters.
   const summaries = new Map(groups.map(g => {
     const state = pointHealth(Array.from({ length: g.quantity }, (_, i) => sourceSample(latest, device.id, areaForFunctionCode(g.functionCode), g.startAddress + i, device.mode === 'slave' ? device.slaveId : g.slaveId)), now, threshold, !device.isActive || !g.isActive, !!groupErrors[g.id])
@@ -1056,7 +1061,8 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
         <ColumnControl t={t} columns={columns} configuring={configuring} onChange={setColumns} />
         <button className="btn" type="button" disabled={!filteredPoints.visibleIds.size} onClick={() => { try { const value = captureLiveSnapshot({ device, groups, visibleIds: filteredPoints.visibleIds, views, states: pointStates, latest, filters: { search, source: activeSource, mode: pointFilter }, rulesReady: alarmRulesReady, observedAt: now, capturedAt: Date.now(), thresholdMs: threshold }); setSnapshotCapture(Object.freeze({ snapshot: value, scope: snapshotComparisonScope })) } catch (error) { operation.setNotice({ error: true, text: error instanceof Error ? error.message : t('operationFailed') }) } }}>{t('cancel') === 'Cancel' ? 'Freeze current matches' : '冻结当前筛选结果'}</button>
       </div>
-      <LivePointFilters search={search} source={activeSource} sources={sources} mode={pointFilter} counts={filteredPoints.counts} rulesReady={alarmRulesReady} ruleError={!!alarmRuleError} readingRules={readingAlarmRules} onRetryRules={retryAlarmRules} onSearch={setSearch} onSource={setSourceFilter} onMode={setPointFilter} onClear={() => { setSearch(''); setSourceFilter(''); setPointFilter('all') }} english={t('cancel') === 'Cancel'} />
+      <LivePointFilters extraFiltered={watchOnly} search={search} source={activeSource} sources={sources} mode={pointFilter} counts={filteredPoints.counts} rulesReady={alarmRulesReady} ruleError={!!alarmRuleError} readingRules={readingAlarmRules} onRetryRules={retryAlarmRules} onSearch={setSearch} onSource={setSourceFilter} onMode={setPointFilter} onClear={() => { setSearch(''); setSourceFilter(''); setPointFilter('all'); setWatchOnly(false) }} english={t('cancel') === 'Cancel'} />
+      <LiveWatchList selection={watchSelection} scope={snapshotComparisonScope} only={watchOnly} matches={baseFilteredPoints.visibleIds} groups={groups} deviceSlaveId={deviceSlaveId} t={t} english={t('cancel') === 'Cancel'} onSelect={(scope, ids) => { const selected = captureLiveWatch(scope, ids, groups); if (selected) { setWatchSelection(selected); setWatchOnly(true) } else if (!ids.size) { setWatchSelection(null); setWatchOnly(false) } }} onOnly={setWatchOnly} onClear={() => { setWatchSelection(null); setWatchOnly(false) }} />
       <LiveSnapshotComparison current={snapshotCapture} scope={snapshotComparisonScope} english={t('cancel') === 'Cancel'} />
       {snapshot && <LiveSnapshotPanel key={snapshot.capturedAt} snapshot={snapshot} close={() => setSnapshotCapture(null)} english={t('cancel') === 'Cancel'} />}
       {configuring && <div className="toolbar">

@@ -118,6 +118,7 @@
     "scripts/test-group-drafts.ts",
     "scripts/test-group-create-active.ts",
     "scripts/test-group-create-atomic.ts",
-    "scripts/test-live-snapshot-comparison.ts"
+    "scripts/test-live-snapshot-comparison.ts",
+    "scripts/test-live-watch-list.ts"
   ]
 }
