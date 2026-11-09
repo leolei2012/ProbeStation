@@ -33,6 +33,7 @@ import { HistoryNavigation } from './history-navigation'
 import { LatestConfigRead, readDeviceGroups, groupsForSelection, readConfigRequest, configReadFailure, type ConfigReadFailure } from './config-read'
 import { ConfigLoadNotice } from './ConfigLoadNotice'
 import { PointBookImportResult, type PointBookResult } from './PointBookImportResult'
+import { capturePointBookOpening, pointBookOpeningMatches, pointBookReplacementPrompt } from './pointbook-confirmation'
 import { InvalidPointBookReportError, pointBookReportKind, uploadPointBook as sendPointBook, type PointBookReport } from './pointbook-result'
 import { PointLabel, buildPointLabels, type PointLabelData } from './PointLabel'
 import { RegisterSelectButton } from './RegisterPicker'
@@ -949,7 +950,7 @@ function DeviceView({ drafts, onLeaveDrafts, onNavigate, configurationReady, tar
       <RecordingIntervalNotice deviceId={device.id} />
       <TabBar tabs={[{ id: 0, label: t('tabLive') }, { id: 1, label: t('liveCurve') }, { id: 2, label: t('tabHistory') }, ...(device.mode === 'slave' ? [] : [{ id: 3, label: t('tabRaw') }, { id: 4, label: t('tabFirmware') }]), { id: 5, label: t('pointCheckTab') }]} active={tab} onChange={next => { if (tab === 0 && next !== 0 && onLeaveDrafts?.('live') === false) return; if (next !== 2) historyNavigation.current!.cancelPending(); setTab(next) }} />
       <AlarmPanel configurationReady={configurationReady} onHistory={onNavigate} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} />
-      {tab === 0 && <LiveTable draftScope={draftScope} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
+      {tab === 0 && <LiveTable configurationReady={configurationReady} draftScope={draftScope} t={t} device={device} groups={groups} latest={latest} groupErrors={groupErrors} now={now} threshold={threshold} onRefresh={() => onRefresh(device.id)} />}
       {tab === 2 && <HistoryView navigation={historyNavigation.current} memory={queryMemory.current} configurationReady={configurationReady} target={target} t={t} device={device} groups={groups} registers={registers} />}
       {tab === 3 && device.mode !== 'slave' && <RawDataView t={t} device={device} />}
       {tab === 4 && device.mode !== 'slave' && <FirmwareView t={t} device={device} />}
@@ -970,8 +971,8 @@ function TabBar({ tabs, active, onChange }: { tabs: { id: number; label: string 
   )
 }
 
-function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, threshold, onRefresh }: {
-  draftScope?: DraftRegistration; t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; now: number; threshold: number; onRefresh: () => void
+function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, threshold, onRefresh, configurationReady = false }: {
+  draftScope?: DraftRegistration; configurationReady?: boolean; t: T; device: Device; groups: DeviceGroup[]; latest: Record<string, LatestValue>; groupErrors: Record<number, string>; now: number; threshold: number; onRefresh: () => void
 }) {
   const [modal, setModal] = useState<null | { mode: 'add' } | { mode: 'edit'; group: DeviceGroup }>(null)
   const [writeReg, setWriteReg] = useState<Register | null>(null)
@@ -1020,9 +1021,20 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
   }
   const [bookResult, setBookResult] = useState<PointBookResult | null>(null)
   const bookInputRef = useRef<HTMLInputElement>(null)
+  const bookOpeningRef = useRef<ReturnType<typeof capturePointBookOpening>>(null), bookAlive = useRef(true)
+  const bookCurrentRef = useRef((): ReturnType<typeof capturePointBookOpening> => null)
+  bookCurrentRef.current = () => bookAlive.current && configurationReady ? capturePointBookOpening(snapshotComparisonScope, liveSnapshotComparisonKey(device, groups), device.id) : null
+  useEffect(() => { bookAlive.current = true; return () => { bookAlive.current = false; bookOpeningRef.current = null } }, [])
+  const chooseBook = () => { if (operation.busy) return; bookOpeningRef.current = bookCurrentRef.current(); if (bookOpeningRef.current) bookInputRef.current?.click() }
   const uploadBook = async (e: any) => {
     const file = e?.target?.files?.[0]
-    if (!file || !device) return
+    if (e?.target) e.target.value = ''
+    const opening = bookOpeningRef.current; bookOpeningRef.current = null
+    if (!file || !device || !bookAlive.current) return
+    const changed = () => operation.setNotice({ error: true, text: t('cancel') === 'Cancel' ? 'Import target or loaded definitions changed or are unverified. No import was sent for this selection; prior requests need separate verification. Check the target and choose the file again.' : '导入目标或已加载点表已变化或未核实，本次选择未发出导入；先前请求结果仍须单独核对。请核对目标后重新选择文件。' })
+    if (!pointBookOpeningMatches(opening, bookCurrentRef.current())) { changed(); return }
+    if (!window.confirm(pointBookReplacementPrompt(file.name, device, groups, t('cancel') === 'Cancel'))) return
+    if (!pointBookOpeningMatches(opening, bookCurrentRef.current())) { changed(); return }
     await operation.run(async () => {
       setBookResult(null)
       let report: PointBookReport
@@ -1067,7 +1079,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
       {snapshot && <LiveSnapshotPanel key={snapshot.capturedAt} snapshot={snapshot} close={() => setSnapshotCapture(null)} english={t('cancel') === 'Cancel'} />}
       {configuring && <div className="toolbar">
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>＋ {t('newGroup')}</button>
-        <button className="btn" disabled={operation.busy} onClick={() => bookInputRef.current?.click()}>⬆ {t('importPointBook')}</button>
+        <button className="btn" disabled={operation.busy || !configurationReady || !snapshotComparisonScope} onClick={chooseBook}>⬆ {t('importPointBook')}</button>
         <button className="btn" onClick={() => window.open('/api/monitor_objects/' + device.id + '/points/book')}>⬇ {t('exportPointBook')}</button>
         <input ref={bookInputRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={(e) => void uploadBook(e)} />
       </div>}

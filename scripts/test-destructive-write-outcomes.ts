@@ -14,13 +14,15 @@ import { ActivationUncertainError, saveActivation } from '../apps/web/src/activa
 import { InvalidPointBookReportError, uploadPointBook, pointBookReportKind } from '../apps/web/src/pointbook-result.ts'
 import { PointBookImportResult, type PointBookResult } from '../apps/web/src/PointBookImportResult.tsx'
 import { draftEditor, draftSurface } from './fixtures/draft-navigation-driver.ts'
+import { capturePointBookOpening, pointBookOpeningMatches, pointBookReplacementPrompt } from '../apps/web/src/pointbook-confirmation.ts'
+import { liveSnapshotComparisonKey } from '../apps/web/src/live-snapshot-comparison.ts'
 
 const source = (name: string) => ts.createSourceFile(name, readFileSync(new URL('../' + name, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 const api = source('packages/api/src/index.ts'), web = source('apps/web/src/App.tsx')
 const compile = (code: string, env: Record<string, unknown>) => new Function(...Object.keys(env), ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText)(...Object.values(env))
 const request = web.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'request')!
-let importCallback!: ts.VariableDeclaration
-const findImport = (node: ts.Node) => { if (ts.isVariableDeclaration(node) && node.name.getText(web) === 'uploadBook') importCallback = node; ts.forEachChild(node, findImport) }; findImport(web)
+let importCallback!: ts.VariableDeclaration, chooseCallback!: ts.VariableDeclaration
+const findImport = (node: ts.Node) => { if (ts.isVariableDeclaration(node) && node.name.getText(web) === 'uploadBook') importCallback = node; if (ts.isVariableDeclaration(node) && node.name.getText(web) === 'chooseBook') chooseCallback = node; ts.forEachChild(node, findImport) }; findImport(web)
 const passed: string[] = [], failures: string[] = [], unhandled: unknown[] = [], tick = () => new Promise<void>(done => setImmediate(done))
 const collect = (error: unknown) => unhandled.push(error)
 async function fixture(quarantine = true) {
@@ -45,7 +47,7 @@ async function fixture(quarantine = true) {
   }) as typeof fetch
   const actualRequest = compile('return (' + request.getText(web) + ')', { fetch: fetcher, configurationWriteReceipt, CONFIG_WRITE_NOT_STARTED })
   if (quarantine) { db.exec = query => { if (query === 'COMMIT' || query === 'ROLLBACK') throw Error('PRIVATE transaction'); return exec(query) }; assert.throws(() => cfg.updateGroup(g.id, { quantity: 2 }), AggregateError); db.exec = exec }
-  return { cfg, db, exec, prepare, target, file, fetcher, actualRequest, stats: () => ({ notifications, syncs, imports, requests, sql, lastStatus, lastBody }), force(value?: typeof force) { force = value }, lose(value: boolean) { lost = value },
+  return { cfg, db, exec, prepare, target, pageGroups: [{ ...g, registers: [p] }], file, fetcher, actualRequest, stats: () => ({ notifications, syncs, imports, requests, sql, lastStatus, lastBody }), force(value?: typeof force) { force = value }, lose(value: boolean) { lost = value },
     forbidSQL() { db.exec = () => { sql++; assert.fail('new refused request SQL') }; db.prepare = () => { sql++; assert.fail('new refused request prepare') } },
     async close() { db.exec = exec; db.prepare = prepare; if (db.isTransaction) exec('ROLLBACK'); await http.close(); await cfg.close() },
   }
@@ -57,8 +59,14 @@ async function deleteUI(f: Awaited<ReturnType<typeof fixture>>, expected: RegExp
 }
 async function importUI(f: Awaited<ReturnType<typeof fixture>>, outcome: 'uncertain', reported = false) {
   let result: PointBookResult | undefined, refreshes = 0, successes = 0; const before = f.stats().requests
-  const callback = compile('return (' + importCallback.initializer!.getText(web) + ')', { device: f.target, operation: { async run(action: () => Promise<void>) { try { await action(); successes++ } catch {} } }, setBookResult(value: PointBookResult) { result = value }, sendPointBook: (id: number, file: Blob) => uploadPointBook(id, file, f.fetcher), InvalidPointBookReportError, pointBookReportKind, t: (key: string) => key, onRefresh() { refreshes++ }, bookInputRef: { current: { value: 'synthetic.xlsx' } } })
+  const opening = capturePointBookOpening(Symbol('confirmed page'), liveSnapshotComparisonKey(f.target, f.pageGroups), f.target.id); assert(opening)
+  let confirmations = 0, pickerOpens = 0
+  const bookOpeningRef = { current: null as ReturnType<typeof capturePointBookOpening> }
+  const env = { device: f.target, groups: f.pageGroups, bookOpeningRef, bookAlive: { current: true }, bookCurrentRef: { current: () => opening }, pointBookOpeningMatches, pointBookReplacementPrompt, window: { confirm(text: string) { confirmations++; assert(text.includes('不是追加')); return true } }, operation: { busy: false, setNotice() { assert.fail('confirmed matching target must reach the tested write boundary') }, async run(action: () => Promise<void>) { try { await action(); successes++ } catch {} } }, setBookResult(value: PointBookResult) { result = value }, sendPointBook: (id: number, file: Blob) => uploadPointBook(id, file, f.fetcher), InvalidPointBookReportError, pointBookReportKind, t: (key: string) => key, onRefresh() { refreshes++ }, bookInputRef: { current: { value: 'synthetic.xlsx', click() { pickerOpens++ } } } }
+  compile('return (' + chooseCallback.initializer!.getText(web) + ')', env)()
+  const callback = compile('return (' + importCallback.initializer!.getText(web) + ')', env)
   await callback({ target: { files: [f.file] } }); assert(result); assert.equal(pointBookReportKind(result.report), outcome); assert.equal(successes, 0)
+  assert.equal(confirmations, 1); assert.equal(pickerOpens, 1); assert.equal(bookOpeningRef.current, null, 'confirmed selection is consumed even when the write result is unknown')
   const html = renderToStaticMarkup(createElement(PointBookImportResult, { result, t: key => key, onDismiss() { assert.fail('no automatic dismissal') } })); assert(html.includes('data-import-outcome="' + outcome + '"'))
   assert.equal(result.report, null); assert(html.includes('pointBookUncertainHint')); assert(!html.includes('pointBookCounts')); assert(!html.includes('本次导入未执行')); assert.equal(refreshes, 0)
   if (reported) assert.match(html, /后台报告写入受阻.*结果待核实/)
