@@ -71,7 +71,7 @@ const focusAttribute = status?.attributes.properties.find(node => ts.isJsxAttrib
 assert(focusAttribute?.initializer && ts.isJsxExpression(focusAttribute.initializer), 'raw view must connect the local exception focus control')
 const focusExpression = (focusAttribute.initializer as ts.JsxExpression).expression!
 const map = nodes.find(node => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'map') as ts.CallExpression
-assert.equal((map.expression as ts.PropertyAccessExpression).expression.getText(appSource), 'visibleFrames', 'actual rendered rows must follow the focus, not merely its count')
+assert.equal((map.expression as ts.PropertyAccessExpression).expression.getText(appSource), 'pageFrames', 'actual rendered rows must follow the selected segment')
 assert(nodes.some(node => ts.isCallExpression(node) && node.expression.getText(appSource) === 'useEffect' && /setExceptionReader\(null\)/.test(node.arguments[0].getText(appSource)) && node.arguments[1]?.getText(appSource) === '[reader]'), 'release the old reader on source/limit change')
 const captures = new ModbusDiagnostics('tcp', 2000, { deviceId: 1, channelKey: 'tcp:1' })
 captures.recordFrame('tx', Buffer.from([0, 1, 0, 0, 0, 6, 1, 3, 0, 0, 0, 1]))
@@ -119,6 +119,32 @@ assert.equal(focus(reader, bounded).visibleFrames.length, 500)
 // Capture markers describe observed byte chunks, not validated protocol responses.
 const localFormatter = appSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'formatLocalTs')!
 const renderRow = evaluate(map.arguments[0], { React: { createElement }, formatLocalTs: evaluate(localFormatter, {}), dir: evaluate(variable('dir').initializer!, {}) })
+const currentPageOwner = {}, segment = (frames: readonly unknown[], capturePage: { owner: object; index: number } | null) => {
+  const visibleFrames = frames, pageOwner = currentPageOwner
+  const pageIndex = evaluate(variable('pageIndex').initializer!, { visibleFrames, capturePage, pageOwner })
+  const pageEnd = evaluate(variable('pageEnd').initializer!, { visibleFrames, pageIndex }), pageStart = evaluate(variable('pageStart').initializer!, { pageEnd })
+  const pageFrames = evaluate(variable('pageFrames').initializer!, { visibleFrames, pageStart, pageEnd })
+  return { pageFrames, pageStart, pageEnd, pageIndex }
+}
+for (const count of [0, 1, 19, 20, 21, 1999, 2000]) {
+  const frames = bounded.slice(0, count), blocks: unknown[][] = []
+  for (let index = 0; index < Math.max(1, Math.ceil(count / 20)); index++) {
+    const page = segment(frames, { owner: currentPageOwner, index })
+    assert(page.pageFrames.length <= 20); assert.equal(page.pageEnd - page.pageStart, page.pageFrames.length); blocks.push(page.pageFrames)
+  }
+  assert.deepEqual(blocks.reverse().flat(), frames, 'every record remains reachable exactly once in a paused snapshot, in returned order')
+  assert.deepEqual(segment(frames, null).pageFrames, frames.slice(-20))
+  assert.equal(segment(frames, { owner: currentPageOwner, index: -10 }).pageIndex, 0)
+  assert.equal(segment(frames, { owner: currentPageOwner, index: 99999 }).pageIndex, Math.max(0, Math.ceil(count / 20) - 1))
+  assert.equal(segment(frames, { owner: {}, index: 3 }).pageIndex, 0, 'source/limit/filter owner changes reset the segment')
+}
+let pageWrites: unknown[] = []
+const pageMounted = { current: true }, pageOwnerRef = { current: currentPageOwner }
+const turnPage = evaluate(variable('showPage').initializer!, { mounted: pageMounted, pageOwnerRef, pageOwner: currentPageOwner, setCapturePage: (value: unknown) => pageWrites.push(value) })
+turnPage(1); assert.deepEqual(pageWrites, [{ owner: currentPageOwner, index: 1 }])
+pageOwnerRef.current = {}; turnPage(2); assert.equal(pageWrites.length, 1, 'late old-source/filter callbacks cannot replace current segment selection')
+pageOwnerRef.current = currentPageOwner; pageMounted.current = false; turnPage(2); assert.equal(pageWrites.length, 1, 'unmounted controls cannot write state')
+console.log('RAW CAPTURE SEGMENT OK: 7 boundary counts through 2000, complete paused traversal, last20 default, clamped shrink, owner reset and stale/unmounted controls; snapshots unchanged')
 let longRows = 0, damagedReads = 0
 for (const transport of ['tcp', 'rtu'] as const) {
   const target = transport === 'tcp' ? device : serial, targetScope = communicationScope(target), key = engine.driverKey(target), previousDriver = engine.drivers.get(key)

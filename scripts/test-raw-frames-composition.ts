@@ -67,7 +67,37 @@ for(const english of [false,true])for(const lateError of [false,true]){
   h.requests[4].response.resolve(frames(device,0xA5));beforeLimit.response.resolve(frames(device,0xE7));await h.settle();assert(h.view().state.value.frames[0].hex.endsWith('A5'));h.focus(true);h.refresh();await h.settle();const pending=h.requests[5];h.driver.dispose();assert(pending.signal.aborted);pending.response.resolve(frames(device,0xE8));await tick();assert.equal(h.driver.lateWrites,0)
  }finally{await h.close()}})
 }
-console.log(`RAW COMPOSITION AUDIT OK: ${cases} bilingual delayed-response/refresh/pause/filter/source/limit/unmount combinations; actual extracted view callbacks, real reader, virtual intervals and mock GET only. React DOM, native event scheduling, backend physical identity and real devices not proven.`)
+for(const english of [false,true]) await check('segmented records retain full snapshot, pause, filter/source ownership and shrink '+english,async()=>{
+ const h=harness(english),walk=node=>Array.isArray(node)?node.flatMap(walk):React.isValidElement(node)?[node,...walk(node.props.children)]:[]
+ const rowIds=()=>walk(h.driver.tree).filter(node=>node.type==='div'&&Array.isArray(node.props.children)&&node.props.children[0]?.props?.title&&node.props.children.at(-1)?.type==='span').map(node=>Number(node.key))
+ const older=()=>h.driver.one('button',props=>props.children===(english?'Previous 20 records':'前20条')),newer=()=>h.driver.one('button',props=>props.children===(english?'Next 20 records':'后20条'))
+ const many=(target,count)=>{const sample=frames(target,0xA1,false)[0];return Array.from({length:count},(_,index)=>({...sample,id:index+1,isException:index%2===0}))}
+ let lateControl
+ try{
+  await h.settle();const raw=many(device,80),original=JSON.stringify(raw);h.requests[0].response.resolve(raw);await h.settle();h.pause()
+  const snapshot=h.view().state.value;assert.equal(snapshot.frames.length,80);assert.deepEqual(rowIds(),Array.from({length:20},(_,i)=>61+i));assert(h.html().includes('61–80 / 80'))
+  assert(h.html().includes(english?'not a fixed snapshot':'不是固定快照'));assert(h.html().includes(english?'pause page reads':'先暂停页面读取'))
+  assert.equal(older().props.type,'button');assert.equal(newer().props.type,'button');assert.equal(newer().props.disabled,true)
+  const blocks=[rowIds()]
+  while(!older().props.disabled){older().props.onClick();h.render();blocks.push(rowIds())}
+  assert.deepEqual(blocks.reverse().flat(),Array.from({length:80},(_,i)=>i+1));assert.equal(h.view().state.value,snapshot);assert.equal(h.requests.length,1)
+  newer().props.onClick();h.render();assert.deepEqual(rowIds(),Array.from({length:20},(_,i)=>21+i))
+  h.focus(true);assert.equal(h.view().exceptionFocus.shown,40);assert.deepEqual(rowIds(),Array.from({length:20},(_,i)=>41+i*2));const oldFiltered=older().props.onClick
+  h.focus(false);older().props.onClick();h.render();assert.deepEqual(rowIds(),Array.from({length:20},(_,i)=>41+i));oldFiltered();h.render();assert.deepEqual(rowIds(),Array.from({length:20},(_,i)=>41+i),'stale filtered-page control cannot reset current selection')
+  const oldSource=older().props.onClick,next={...device,ip:'next.mock.invalid'};h.update(next);assert.equal(h.view().state.value,undefined);assert.deepEqual(rowIds(),[]);oldSource();h.render();assert.deepEqual(rowIds(),[]);assert.equal(h.requests.length,1)
+  h.pause();await h.settle();h.requests[1].response.resolve(many(next,7));await h.settle();assert.deepEqual(rowIds(),[1,2,3,4,5,6,7]);assert(older().props.disabled&&newer().props.disabled)
+  h.refresh();await h.settle();h.requests[2].response.resolve(many(next,80));await h.settle();older().props.onClick();h.render();assert.equal(rowIds()[0],41)
+  h.refresh();await h.settle();h.requests[3].response.resolve(many(next,3));await h.settle();assert.deepEqual(rowIds(),[1,2,3]);assert(h.html().includes('1–3 / 3'));assert.equal(JSON.stringify(raw),original)
+  h.refresh();await h.settle();h.requests[4].response.resolve(many(next,80));await h.settle();assert.equal(rowIds()[0],61,'growth after a clamped segment must not resurrect the old out-of-range selection')
+  const retained=h.view().state.value;h.refresh();await h.settle();h.requests[5].response.reject(Error('PRIVATE synthetic read error'));await h.settle();assert.equal(h.view().state.value,retained);assert.equal(h.view().state.phase,'error');assert.equal(rowIds()[0],61);assert(h.html().includes(english?'Previous captures':'保留上次显示'));assert(!h.html().includes('PRIVATE'))
+  older().props.onClick();h.render();assert.equal(rowIds()[0],41);assert.equal(h.requests.length,6,'browsing retained data does not issue a read')
+  h.refresh();await h.settle();h.requests[6].response.resolve([]);await h.settle();assert.deepEqual(rowIds(),[]);assert(h.html().includes(english?'This read returned no captures':'本次读取没有返回捕获记录'))
+  h.refresh();await h.settle();h.requests[7].response.resolve(many(next,25));await h.settle();assert.equal(rowIds()[0],6);assert(h.html().includes('6–25 / 25'))
+  lateControl=older().props.onClick
+ }finally{await h.close()}
+ lateControl?.();assert.equal(h.driver.lateWrites,0)
+})
+console.log(`RAW COMPOSITION AUDIT OK: ${cases} bilingual delayed-response/refresh/pause/filter/source/limit/unmount/segment combinations; actual extracted view callbacks, real reader, virtual intervals and mock GET only. React DOM, native event scheduling, backend physical identity and real devices not proven.`)
 const {apply}=await load('packages/poller/src/index.ts')
 const apiSource=ts.createSourceFile('api.ts',readFileSync(new URL('../packages/api/src/index.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true)
 let frameRoute

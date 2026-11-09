@@ -1791,6 +1791,13 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
   const state = useSyncExternalStore(reader.subscribe, reader.snapshot, reader.snapshot)
   const frames = state.value?.frames ?? [], busy = state.phase === 'loading', readerRef = useRef(reader), mounted = useRef(false)
   const onlyExceptions = exceptionReader === reader, visibleFrames = onlyExceptions ? frames.filter(frame => frame.isException) : frames
+  const [capturePage, setCapturePage] = useState<{ owner: object; index: number } | null>(null)
+  const pageOwner = useMemo(() => ({}), [reader, onlyExceptions]), pageOwnerRef = useRef(pageOwner)
+  pageOwnerRef.current = pageOwner
+  const pageIndex = Math.max(0, Math.min(capturePage?.owner === pageOwner ? capturePage.index : 0, Math.max(0, Math.ceil(visibleFrames.length / 20) - 1)))
+  const pageEnd = Math.max(0, visibleFrames.length - pageIndex * 20), pageStart = Math.max(0, pageEnd - 20), pageFrames = visibleFrames.slice(pageStart, pageEnd)
+  useEffect(() => { if (capturePage?.owner === pageOwner && capturePage.index !== pageIndex) setCapturePage({ owner: pageOwner, index: pageIndex }) }, [capturePage, pageOwner, pageIndex])
+  const showPage = (index: number) => { if (mounted.current && pageOwnerRef.current === pageOwner) setCapturePage({ owner: pageOwner, index }) }
   useEffect(() => setExceptionReader(null), [reader])
   readerRef.current = reader
   const load = useCallback(() => pausedRef.current ? Promise.resolve() : reader.refresh(fetchRawFrames), [reader])
@@ -1829,9 +1836,15 @@ function RawDataView({ t, device }: { t: T; device: Device | null }) {
         <DiagnosticsCleanupButton device={device} disabled={paused} english={t('cancel') === 'Cancel'} onCleared={result => { setClearedToken(result.token); if (mounted.current && readerRef.current === reader) { reader.invalidate(); void load() } }} />
       </div>
       <RawFramesStatus state={state} paused={paused} english={t('cancel') === 'Cancel'} sharedSerial={device.transport === 'rtu'} exceptionFocus={{ active: onlyExceptions, shown: visibleFrames.length, change: active => setExceptionReader(active ? reader : null) }} />
+      {visibleFrames.length > 0 && <div className="toolbar" aria-label={t('cancel') === 'Cancel' ? 'Capture pages' : '捕获分页'}>
+        <span role="status">{t('cancel') === 'Cancel' ? 'Showing records' : '显示记录'} {pageStart + 1}–{pageEnd} / {visibleFrames.length}</span>
+        <button className="btn" type="button" disabled={pageStart === 0} onClick={() => showPage(pageIndex + 1)}>{t('cancel') === 'Cancel' ? 'Previous 20 records' : '前20条'}</button>
+        <button className="btn" type="button" disabled={pageIndex === 0} onClick={() => showPage(pageIndex - 1)}>{t('cancel') === 'Cancel' ? 'Next 20 records' : '后20条'}</button>
+      </div>}
+      {visibleFrames.length > 20 && <p className="chart-hint">{t('cancel') === 'Cancel' ? '20 records per segment in returned order, starting at the end. Full capture bytes remain viewable. Refreshes may move records; pause page reads for inspection. This is not a fixed snapshot across segments.' : '按返回顺序每段20条，默认显示末段；可逐段查看完整捕获字节。刷新会移动记录，逐条核对请先暂停页面读取；跨段不是固定快照。'}</p>}
       <div style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12, maxHeight: '60vh', overflow: 'auto', background: 'var(--surface)', color: 'var(--text-1, #eee)', borderRadius: 6, padding: 8 }}>
         {visibleFrames.length === 0 ? null : (
-          visibleFrames.map((f) => (
+          pageFrames.map((f) => (
             <div key={f.id} style={{ display: 'flex', gap: 10, padding: '1px 0', borderBottom: '1px solid var(--border-1, #222)' }}>
               <span title={f.timestamp} style={{ color: 'var(--text-3, #888)', whiteSpace: 'nowrap', flexShrink: 0 }}>{f.timestamp}</span>
               <span style={{ color: f.direction === 'tx' ? 'var(--accent)' : 'var(--success)', minWidth: 28, fontWeight: 600 }}>{dir(f.direction)}</span>
