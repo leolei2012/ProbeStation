@@ -14,6 +14,7 @@ apply({ on() {}, provide(_name: string, value: any) { engine = value }, config: 
 const tcpStats = new ModbusDiagnostics('tcp', 3, { deviceId: 1, channelKey: 'tcp:1' }), serialStats = new ModbusDiagnostics('rtu', 3, { channelKey: 'rtu:COM_MOCK' })
 const driver = (stats: ModbusDiagnostics) => ({ isConnected: () => true, getDiagnostics: () => stats.snapshot(), connect() { sideEffects++ }, readHoldingRegisters() { sideEffects++ }, clearDiagnostics() { sideEffects++ }, getFrames() { sideEffects++ } })
 engine.drivers.set('tcp:1', driver(tcpStats)); engine.drivers.set('rtu:COM_MOCK', driver(serialStats))
+for (const device of [tcp, rtu]) engine.driverBindings.set(engine.drivers.get(engine.driverKey(device)), engine.connectionSignature(device))
 tcpStats.recordFrame('tx', Buffer.from([0, 1, 0, 0, 0, 6, 1, 3, 0, 0, 0, 1])); tcpStats.recordFrame('rx', Buffer.from([0, 1, 0, 0, 0, 3, 1, 0x83, 2]))
 tcpStats.recordSuccess(0); tcpStats.recordError(new Error('Timeout'), 20); tcpStats.recordError({ message: '<script>synthetic exception</script>', exceptionCode: 2 }, 40); tcpStats.recordSuccess(24)
 serialStats.recordSuccess(12); serialStats.recordError(new Error('Timeout'), 30)
@@ -55,4 +56,5 @@ for (const english of [false, true]) {
 }
 const hidden = renderToStaticMarkup(createElement(CommunicationSummary, { device: tcp, get: async () => { callbacks++; throw new Error('SSR must not read') } })); assert(hidden.includes('aria-expanded="false"')); assert.equal(callbacks, 0)
 const unsupported = renderToStaticMarkup(createElement(CommunicationSummary, { device: { id: 1, transport: 'future' }, get: async () => { callbacks++; throw new Error('must not read unknown scope') } })); assert(unsupported.includes('role="alert"')); assert(unsupported.includes('未请求统计')); assert.equal(callbacks, 0)
+await import('./test-communication-binding.ts')
 console.log('COMMUNICATION SUMMARY OK: real in-memory diagnostics producer + poller getter, TCP and shared RTU scope, unavailable/zero/recovered errors, strict counters/times/identity, immutable projection, single-flight timeout/recovery/cancel/stale/unsubscribe and bilingual SSR; no real DB, files, hardware, network, model or DOM automation')

@@ -22,6 +22,8 @@ export class DiagnosticsCleanup {
     const current = this.current(objectId)
     if (!current || typeof current.configurationScope !== 'symbol') throw new DiagnosticsCleanupRefused()
     const value = counts(current), expires = this.now() + (this.options.ttlMs ?? 600000), token = (this.options.token ?? randomUUID)()
+    const after = this.current(objectId)
+    if (!after || after.driver !== current.driver || after.identity !== current.identity || after.configurationScope !== current.configurationScope || after.target.targetKey !== current.target.targetKey) throw new DiagnosticsCleanupRefused()
     if (!diagnosticToken(token) || this.entries.has(token)) throw new DiagnosticsCleanupRefused()
     const preview = Object.freeze({ ...current.target, version: 1 as const, token, expiresAt: new Date(expires).toISOString(), bufferedFrames: value.bufferedFrames, successCount: value.successCount, errorCount: value.errorCount })
     this.entries.set(token, { current: { target: Object.freeze({ ...current.target }), identity: current.identity, configurationScope: current.configurationScope, driver: current.driver }, preview, expires, phase: 'ready' }); return preview

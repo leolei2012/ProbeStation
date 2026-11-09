@@ -39,6 +39,7 @@ class PollingEngine {
     if (!object || typeof scope !== 'symbol') return null
     const driver = this.drivers.get(this.driverKey(object))
     if (!driver || typeof driver.getDiagnostics !== 'function' || typeof driver.clearDiagnostics !== 'function') return null
+    if (this.driverBindings.get(driver) !== this.connectionSignature(object)) return null
     let target
     try { target = diagnosticsCleanupTarget(object) } catch { return null }
     return { target, identity: this.connectionSignature(object), configurationScope: scope, driver }
@@ -287,7 +288,9 @@ class PollingEngine {
     const obj = this.ctx.config.getObject(objectId)
     if (!obj) return false
     const d = this.drivers.get(this.driverKey(obj))
-    return !!d && d.isConnected()
+    if (!d || this.driverBindings.get(d) !== this.connectionSignature(obj)) return false
+    const connected = d.isConnected(), current = this.ctx.config.getObject(objectId)
+    return !!connected && !!current && this.drivers.get(this.driverKey(current)) === d && this.driverBindings.get(d) === this.connectionSignature(current)
   }
 
   listConnectionStates(): Array<{ objectId: number; connected: boolean }> {
@@ -308,7 +311,7 @@ class PollingEngine {
   /** 连接状态变化时发 device/status（仅在状态翻转时发，避免刷屏）。 */
   private updateDeviceStatus(d: any): void {
     const driver = this.drivers.get(this.driverKey(d))
-    const connected = d.isActive === 1 && !!driver && driver.isConnected()
+    const connected = d.isActive === 1 && !!driver && this.driverBindings.get(driver) === this.connectionSignature(d) && driver.isConnected()
     const prev = this.deviceConnected.get(d.id)
     if (prev === connected) return
     this.deviceConnected.set(d.id, connected)
@@ -319,12 +322,16 @@ class PollingEngine {
     const obj = this.ctx.config.getObject(objectId)
     if (!obj) throw new Error('object ' + objectId + ' not found')
     const driver = this.drivers.get(this.driverKey(obj))
+    if (driver) assertCurrent(() => this.driverBindings.get(driver) === this.connectionSignature(obj))
+    const connected = !!driver && driver.isConnected(), metrics = driver?.getDiagnostics?.() ?? null
+    const current = this.ctx.config.getObject(objectId)
+    assertCurrent(() => !!current && this.connectionSignature(current) === this.connectionSignature(obj) && this.drivers.get(this.driverKey(current)) === driver && (!driver || this.driverBindings.get(driver) === this.connectionSignature(current)))
     return {
       objectId,
-      connected: !!driver && driver.isConnected(),
+      connected,
       scope: obj.transport === 'rtu' ? 'channel' : 'device',
       channelKey: this.driverKey(obj),
-      metrics: driver?.getDiagnostics?.() ?? null,
+      metrics,
     }
   }
 
