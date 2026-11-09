@@ -50,11 +50,40 @@ for (const english of [false, true]) {
   const serial = parseCommunicationSummary(engine.getDeviceDiagnostics(2), serialScope); assert(render({ phase: 'ready', value: serial }).includes(english ? 'cannot be attributed' : '不能归因'))
   assert(render({ phase: 'error', error: 'timeout', value: parsed }).includes(english ? 'previous result' : '上次结果'))
   assert(render({ phase: 'ready', value: unavailable }).includes(english ? 'No diagnostic counters' : '没有提供诊断计数'))
-  const zero = render({ phase: 'ready', value: empty }); assert(zero.includes(english ? 'No completed requests' : '尚无完成请求')); assert(!zero.includes('0.00%'))
+  const zero = render({ phase: 'ready', value: empty }); assert(zero.includes(english ? 'No completed requests' : '尚无完成请求')); assert(!zero.includes('0.00%')); assert(!zero.includes(english ? 'Backend time text' : '后台时间原文'), 'absent times do not acquire fabricated timestamp text')
   assert(render({ phase: 'ready', value: instant }).includes('0 / 0 / 0'))
   assert(render({ phase: 'loading' }).includes('disabled=""'))
 }
+const previousZone = process.env.TZ
+let timeCases = 0
+try {
+  for (const zone of ['UTC', 'America/New_York', 'Europe/Berlin', 'Asia/Shanghai']) {
+    process.env.TZ = zone
+    for (const timestamp of ['2026-02-30T12:00:00.123Z', '2026-01-01T24:00:00Z', '03/08/2026 02:30:00', '2026-03-08T02:30:00.123', '2026-11-01T01:30:00.1-04:00', '2026-11-01T01:30:00.123456789-05:00', '2026-10-25T02:30:00.123+02:00', '2026-10-25T02:30:00.123+01:00']) {
+      const source = { ...raw, metrics: { ...raw.metrics, lastSuccessTime: timestamp, lastErrorTime: timestamp } }, original = JSON.stringify(source)
+      const value = parseCommunicationSummary(source, scope)
+      assert.equal(value.metrics!.lastSuccessTime, timestamp); assert.equal(value.metrics!.lastErrorTime, timestamp)
+      for (const english of [false, true]) for (const phase of ['ready', 'error'] as const) {
+        const html = renderToStaticMarkup(createElement(CommunicationSummaryView, { state: { phase, value, ...(phase === 'error' ? { error: 'request' as const } : {}) }, english, refresh() { callbacks++ } }))
+        assert(html.includes(timestamp), 'diagnostic time keeps its raw text and precision, including legacy tolerated formats')
+        assert(html.includes(english ? 'Backend time text' : '后台时间原文'), 'tolerated calendar strings must not appear to be verified timestamps')
+        assert(html.includes(english ? 'calendar, zone and clock accuracy are unverified' : '日历、时区和时钟准确性未核实'))
+        assert(html.includes(english ? 'A missing zone is not inferred' : '未标时区不推断'))
+        if (phase === 'error') assert(html.includes(english ? 'previous result' : '上次结果'))
+      }
+      assert.equal(JSON.stringify(source), original); timeCases++
+    }
+    const read = new CommunicationSummaryRead(scope)
+    await read.refresh(async () => raw); const previous = read.snapshot().value
+    await read.refresh(async () => ({ ...raw, metrics: { ...raw.metrics, lastErrorTime: 'not-a-date PRIVATE' } }))
+    assert.equal(read.snapshot().phase, 'error'); assert.equal(read.snapshot().error, 'invalid'); assert.equal(read.snapshot().value, previous)
+    for (const english of [false, true]) { const html = renderToStaticMarkup(createElement(CommunicationSummaryView, { state: read.snapshot(), english, refresh() { callbacks++ } })); assert(!html.includes('PRIVATE')); assert(html.includes(english ? 'previous result' : '上次结果')) }
+    await read.refresh(async () => raw); assert.equal(read.snapshot().phase, 'ready'); read.cancel()
+  }
+} finally { if (previousZone === undefined) delete process.env.TZ; else process.env.TZ = previousZone }
+assert.equal(process.env.TZ, previousZone); assert.equal(sideEffects, 0); assert.equal(callbacks, 0)
+console.log(`DIAGNOSTIC TIME TEXT OK: ${timeCases} raw/legacy/DST cases across 4 zones, bilingual current/retained uncertainty labels, invalid response/recovery, TZ restored; no hardware`)
 const hidden = renderToStaticMarkup(createElement(CommunicationSummary, { device: tcp, get: async () => { callbacks++; throw new Error('SSR must not read') } })); assert(hidden.includes('aria-expanded="false"')); assert.equal(callbacks, 0)
 const unsupported = renderToStaticMarkup(createElement(CommunicationSummary, { device: { id: 1, transport: 'future' }, get: async () => { callbacks++; throw new Error('must not read unknown scope') } })); assert(unsupported.includes('role="alert"')); assert(unsupported.includes('未请求统计')); assert.equal(callbacks, 0)
 await import('./test-communication-binding.ts')
-console.log('COMMUNICATION SUMMARY OK: real in-memory diagnostics producer + poller getter, TCP and shared RTU scope, unavailable/zero/recovered errors, strict counters/times/identity, immutable projection, single-flight timeout/recovery/cancel/stale/unsubscribe and bilingual SSR; no real DB, files, hardware, network, model or DOM automation')
+console.log('COMMUNICATION SUMMARY OK: real in-memory diagnostics producer + poller getter, TCP and shared RTU scope, unavailable/zero/recovered errors, counter/parseable-time/identity checks, immutable projection, single-flight timeout/recovery/cancel/stale/unsubscribe and bilingual SSR; no real DB, files, hardware, network, model or DOM automation')
