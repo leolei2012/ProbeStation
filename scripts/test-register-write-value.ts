@@ -96,19 +96,36 @@ for (const english of [false, true]) for (const local of [false, true]) for (con
   const element = evaluate(modalNode, { ...env, writeReg }) as React.ReactElement<Record<string, unknown>>, props = element.props
   const driver = hookDriver('App.tsx', 'WriteModal', { registerWidth, isHexType, isBinType, registerWritePayloadValue, api: { async post(url: string, payload: unknown) { calls++; const response = await apiApp.inject({ method: 'POST', url, payload: JSON.stringify(payload), headers: { 'content-type': 'application/json' } }); if (response.statusCode >= 400) throw Error(response.body); return response.json() } } }, props)
   try {
+    assert.equal(props.onSaved, undefined, 'blocked modal must not retain a late success confirmation callback')
     const warning = english ? /Direct writes blocked: source binding unavailable/ : /直接写入已阻止：缺少来源绑定/
     assert.match(renderToStaticMarkup(driver.tree), warning)
     const send = driver.one('button', p => p.className === 'btn primary')
     assert.equal(send.props.disabled, true, 'unbound UI must never offer an enabled sender')
     assert.equal(send.props.onClick, undefined, 'blocking must remove the sender, not just its visual state')
+    assert.equal(send.props.type, 'button')
+    const reason = driver.one('p', p => p.role === 'status'), input = driver.one('input'), label = driver.one('label'), dialog = driver.one('div', p => p.role === 'dialog')
+    assert(reason.props.id && input.props.id); assert.equal(label.props.htmlFor, input.props.id)
+    assert.equal(input.props['aria-describedby'], reason.props.id); assert.equal(send.props['aria-describedby'], reason.props.id)
+    assert.equal(dialog.props['aria-describedby'], reason.props.id); assert.equal(dialog.props['aria-labelledby'], driver.one('h3').props.id)
+    const oldOpening = evaluate((opening.initializer as ts.JsxExpression).expression!, env)
+    for (const key of ['Enter', ' ', 'Escape']) for (const control of [input, send, dialog]) {
+      for (const handler of ['onKeyDown', 'onKeyPress', 'onKeyUp', 'onSubmit']) control.props[handler]?.({ key, preventDefault() {}, stopPropagation() {} })
+    }
+    const modalFunction = find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === 'WriteModal')!
+    assert(!find(modalFunction, node => ts.isJsxOpeningElement(node) && node.tagName.getText(source) === 'form'), 'blocked dialog must not have an implicit submit path')
+    assert(!find(source, node => ts.isFunctionDeclaration(node) && node.name?.text === 'WriteModal' && /api\.post|setTimeout|window\.confirm/.test(node.getText(source))))
     for (const value of ['0', '42', '18446744073709551615', 'bad-number']) {
       driver.one('input').props.onChange({ target: { value } }); driver.render()
       memory.updateGroup(group.id, { slaveId: 9 }); memory.updateObject(device.id, { mode: 'master', ip: 'changed.mock.invalid' })
       driver.render({ ...props, deviceName: 'Changed source', local: false, currentValue: '99' })
       assert.equal(driver.one('input').props.value, value); assert.match(renderToStaticMarkup(driver.tree), warning)
       assert.equal(driver.one('button', p => p.className === 'btn primary').props.onClick, undefined)
+      for (let repeat = 0; repeat < 20; repeat++) { oldOpening(); driver.render({ ...props, deviceName: 'Changed source', local: false, currentValue: '99' }) }
+      assert.equal(driver.one('input').props.value, value, 'repeat or late entry callbacks must not clear the retained input')
+      assert.equal(driver.one('input').props.id, input.props.id); assert.equal(driver.one('p', p => p.role === 'status').props.id, reason.props.id)
     }
     assert.equal(calls, 0); assert.equal(emitted.length, 0); assert.equal(saved, 0)
+    assert.equal(driver.one('button', p => p.className === 'btn').props.type, 'button', 'close is not a form submit action')
     // The real legacy route is still operational against a spy, independently of UI blocking.
     const legacy = await apiApp.inject({ method: 'POST', url: '/api/registers/' + reg.id + '/write', payload: { value: 42 } })
     assert.equal(legacy.statusCode, 200); assert.equal(emitted.length, 1); assert.equal(emitted[0][4], 9); assert.equal(calls, 0)
@@ -116,3 +133,24 @@ for (const english of [false, true]) for (const local of [false, true]) for (con
   } finally { driver.dispose(); await apiApp.close(); await memory.close() }
 }
 console.log('WRITE UI BLOCK OK: actual click/double-click entry and modal props, bilingual remote/local source changes, zero UI API/spy writes, input preservation and close; real legacy route unchanged. Risk mitigation only; old APIs and old loaded clients remain unguarded.')
+
+// A previously admitted legacy request is not cancelled by rendering the new blocked component.
+{
+  const memory = new ConfigStore({ dbPath: ':memory:' }), apiApp = Fastify()
+  const device = memory.createObject('Mock in-flight', 'before.mock.invalid', 502), group = memory.createGroup(device.id, 'Mock', 3, 0, 1, 'read', 7), reg = memory.createRegister(group.id, device.id, 'Mock', 3, 0, 'uint16')
+  let entered!: () => void, release!: () => void, uiCalls = 0
+  const admitted = new Promise<void>(done => { entered = done }), pendingTarget = new Promise<void>(done => { release = done })
+  registerRegisterWrite(apiApp, memory, { async write() { entered(); await pendingTarget } })
+  const pending = apiApp.inject({ method: 'POST', url: '/api/registers/' + reg.id + '/write', payload: { value: 42 } })
+  await admitted
+  const driver = hookDriver('App.tsx', 'WriteModal', { registerWidth, isHexType, isBinType, api: { post() { uiCalls++; throw Error('new UI must not send') } } }, { t: (key: string) => key === 'cancel' ? 'Cancel' : key, reg, deviceName: device.name, currentValue: '0', onClose() {} })
+  try {
+    driver.one('input').props.onChange({ target: { value: 'KEEP WHILE LEGACY PENDING' } }); driver.render()
+    memory.updateGroup(group.id, { slaveId: 9 }); release()
+    assert.equal((await pending).statusCode, 200); driver.render()
+    assert.equal(uiCalls, 0); assert.equal(driver.one('input').props.value, 'KEEP WHILE LEGACY PENDING')
+    assert.equal(driver.one('button', p => p.className === 'btn primary').props.disabled, true)
+    assert.doesNotMatch(renderToStaticMarkup(driver.tree), /class="write-msg ok"/)
+  } finally { release(); await pending; driver.dispose(); await apiApp.close(); await memory.close() }
+}
+console.log('WRITE UI INTERACTION OK: semantic label/reason links, simulated Enter/Space/Escape handlers, repeat/late entry and no success callback; admitted legacy request still completes. No real DOM, keyboard, focus or screen-reader proof.')

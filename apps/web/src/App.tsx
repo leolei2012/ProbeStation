@@ -1170,7 +1170,7 @@ function LiveTable({ draftScope, t, device, groups, latest, groupErrors, now, th
         const warnings = await saveGuardedPointSettings(settingsReg.editBaseline, fields, api.put)
         onRefresh(); operation.setNotice({ error: false, text: [t('operationOk'), ...warnings].join(' · ') })
       }} />}
-      {writeReg && <WriteModal t={t} deviceName={device.name} local={device.mode === 'slave'} currentValue={views.get(writeReg.id)?.value ?? '—'} reg={writeReg} onClose={() => setWriteReg(null)} onSaved={() => { setWriteReg(null); operation.setNotice({ error: false, text: t('writeOk') }) }} />}
+      {writeReg && <WriteModal t={t} deviceName={device.name} local={device.mode === 'slave'} currentValue={views.get(writeReg.id)?.value ?? '—'} reg={writeReg} onClose={() => setWriteReg(null)} />}
     </div>
   )
 }
@@ -1192,24 +1192,25 @@ function GroupFold({ collapsed, children }: { collapsed: boolean; children: () =
 }
 
 
-function WriteModal({ t, reg, deviceName, currentValue, local, onClose }: { t: T; reg: Register; deviceName: string; currentValue: string; local?: boolean; onClose: () => void; onSaved: () => void }) {
+function WriteModal({ t, reg, deviceName, currentValue, local, onClose }: { t: T; reg: Register; deviceName: string; currentValue: string; local?: boolean; onClose: () => void }) {
   const [value, setValue] = useState('')
+  const id = useId()
   const width = registerWidth(reg.dataType)
   const isRaw = isHexType(reg.dataType) || isBinType(reg.dataType)
   const english = t('cancel') === 'Cancel'
   return (
     <div className="modal-mask">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{local ? '设置从站点位值' : t('writeReg')}</h3>
+      <div className="modal" role="dialog" aria-labelledby={id + '-title'} aria-describedby={id + '-reason'} onClick={(e) => e.stopPropagation()}>
+        <h3 id={id + '-title'}>{local ? '设置从站点位值' : t('writeReg')}</h3>
         <div className="write-context"><strong>{deviceName}</strong><span>{t('currentValue')}: {currentValue}</span></div>
-        <p className="write-msg error" role="status">{english ? 'Direct writes blocked: source binding unavailable. Legacy APIs unaffected.' : '直接写入已阻止：缺少来源绑定。旧接口不受此限制。'}</p>
+        <p id={id + '-reason'} className="write-msg error" role="status">{english ? 'Direct writes blocked: source binding unavailable. Legacy APIs unaffected.' : '直接写入已阻止：缺少来源绑定。旧接口不受此限制。'}</p>
         <div className="kv" style={{ marginBottom: 10 }}>{reg.alias ?? reg.id} · {t('colAddr')} {reg.startAddress} · {reg.dataType}{width > 1 ? '（' + width + ' 寄存器）' : ''}</div>
-        <label>{t('valuePh')}</label>
-        <input value={value} onChange={(e) => setValue(e.target.value)} autoFocus placeholder={isHexType(reg.dataType) ? '0x1234' : isBinType(reg.dataType) ? '0b1010' : t('valuePh')} />
+        <label htmlFor={id + '-value'}>{t('valuePh')}</label>
+        <input id={id + '-value'} aria-describedby={id + '-reason'} value={value} onChange={(e) => setValue(e.target.value)} autoFocus placeholder={isHexType(reg.dataType) ? '0x1234' : isBinType(reg.dataType) ? '0b1010' : t('valuePh')} />
         {isRaw && <div className="kv">{isHexType(reg.dataType) ? '输入十六进制整数，可带 0x 前缀。' : '输入二进制整数，可带 0b 前缀。'} {width * 16} 位无符号值；直接写入原始数据，不应用系数或偏移。</div>}
         <div className="modal-actions">
-          <button className="btn" onClick={onClose}>{t('cancel')}</button>
-          <button className="btn primary" disabled>{english ? 'Write blocked' : '写入已阻止'}</button>
+          <button className="btn" type="button" onClick={onClose}>{t('cancel')}</button>
+          <button className="btn primary" type="button" aria-describedby={id + '-reason'} disabled>{english ? 'Write blocked' : '写入已阻止'}</button>
         </div>
       </div>
     </div>
