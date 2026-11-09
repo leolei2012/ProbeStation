@@ -30,12 +30,12 @@ const chosenFor = (slaveId: number) => withRegisterSources([register], [{ ...gro
 const values = (slaveId: number, value: number, time = now, objectId = 1) => ({ [sourceKey(objectId, 'holding-register', 0, slaveId)]: { rawValue: value, slaveId, quality: 'good', timestamp: new Date(time).toISOString(), batchId: 'batch-' + slaveId + '-' + time } })
 const initial = curve.sampleCurve({}, chosenFor(1), values(1, 111), 1, now, 5000, new Set())
 type Frame = { buffer: curve.CurveBuffer; now: number }
-function render(visible: Frame, chosen = chosenFor(1), objectId = 1) {
+function render(visible: Frame, chosen = chosenFor(1), objectId = 1, cursorTime: number | null = null) {
   const env: Record<string, unknown> = { visible, chosen, device: { ...device, id: objectId }, startTime: visible.now - 60000, endTime: visible.now, curveValue, displayNumber, valueMode: 'raw', CHART_COLORS: ['red'], curveTrackFor: (curve as any).curveTrackFor }
   // The optional declarations are introduced by the fix; before-fix uses raw visible.buffer.
   for (const name of ['visibleBuffer', 'sourceChanged']) { const node = find(component, node => ts.isVariableDeclaration(node) && node.name.getText(source) === name) as ts.VariableDeclaration | undefined; if (node) env[name] = evaluate(node.initializer!, env) }
   const series = evaluate(declaration('series'), env)
-  const readings = evaluate(declaration('liveReadings'), { ...env, series, cursorTime: null, threshold: 5000, pointLabels: new Map([[7, { name: 'current source' }]]) })
+  const readings = evaluate(declaration('liveReadings'), { ...env, series, cursorTime, threshold: 5000, pointLabels: new Map([[7, { name: 'current source' }]]) })
   return { series, readings, sourceChanged: env.sourceChanged }
 }
 let count = 0
@@ -142,5 +142,38 @@ check('isolated valid zero before and after a quality gap has a visible SVG mark
   const denseSvg = renderToStaticMarkup(React.createElement('svg', null, evaluate(drawn, { ...env, series: [{ ...view.series[0], points: dense }], markerPathFor, pathFor: evaluate(declaration('pathFor'), env) })))
   assert.equal((denseSvg.match(/<path/g) ?? []).length, 2, 'marker DOM remains bounded even with 1200 isolated points')
   assert.equal((markerPathFor(dense).match(/Z/g) ?? []).length, 1200)
+})
+check('hover preserves zero, never bridges quality gaps or stale/source-mismatched readings', () => {
+  const chosen = chosenFor(1), first = curve.sampleCurve({}, chosen, values(1, 0), 1, now, 5000, new Set())
+  const bad = Object.fromEntries(Object.entries(values(1, 0, now + 250)).map(([key, value]) => [key, { ...value, quality: 'bad' }]))
+  const gap = curve.sampleCurve(first, chosen, bad, 1, now + 250, 5000, new Set()), recovered = curve.sampleCurve(gap, chosen, values(1, 2, now + 500), 1, now + 500, 5000, new Set())
+  for (const [time, value] of [[now - 1, '—'], [now, '0'], [now + 100, '0'], [now + 250, '—'], [now + 400, '—'], [now + 500, '2']] as const) {
+    const reading = render({ buffer: recovered, now: now + 500 }, chosen, 1, time).readings[0]
+    assert.equal(reading.value, value); assert.equal(reading.point === null, value === '—'); if (value === '0') assert.deepEqual(reading.point, [now, 0])
+  }
+  assert.equal(render({ buffer: recovered, now: now + 6000 }, chosen, 1, now + 6000).readings[0].value, '—')
+  const switched = render({ buffer: recovered, now: now + 500 }, chosenFor(2), 1, now)
+  assert.equal(switched.readings[0].value, '—'); assert.deepEqual(switched.series[0].points, []); assert.equal(curve.isolatedCurvePoints(switched.series[0].points, 5000).length, 0)
+})
+check('distinct batches at identical zero coordinates still have one visible marker', () => {
+  const chosen = chosenFor(1), first = curve.sampleCurve({}, chosen, values(1, 0), 1, now, 5000, new Set())
+  const later = Object.fromEntries(Object.entries(values(1, 0)).map(([key, value]) => [key, { ...value, batchId: 'distinct-coincident-response' }]))
+  const buffer = curve.sampleCurve(first, chosen, later, 1, now + 250, 5000, new Set())
+  assert.deepEqual(buffer[7].points, [[now, 0], [now, 0]], 'both response observations are retained')
+  assert.equal(render({ buffer, now: now + 250 }).readings[0].value, '0')
+  assert.deepEqual(curve.isolatedCurvePoints(buffer[7].points, 5000), [[now, 0]], 'a zero-length connected run needs a marker, without duplicating coincident dots')
+})
+check('maximum selected series keep marker nodes bounded and construction measurable', () => {
+  const zero = curve.sampleCurve({}, chosenFor(1), values(1, 0), 1, now, 5000, new Set()), view = render({ buffer: zero, now: now + 2400 })
+  const dense = Array.from({ length: 2400 }, (_, i) => [now + i, i % 2 ? null : 0] as [number, number | null])
+  const series = Array.from({ length: 8 }, (_, i) => ({ ...view.series[0], r: { ...view.series[0].r, id: 7 + i }, points: dense }))
+  const env = { React, series, threshold: 5000, x: (time: number) => time - now, y: (value: number) => value, isolatedCurvePoints: curve.isolatedCurvePoints }
+  const markerPathFor = evaluate(declaration('markerPathFor'), env), elapsed: number[] = []; let encoded: string[] = []
+  for (let i = 0; i < 3; i++) { const start = performance.now(); encoded = series.map(s => markerPathFor(s.points)); elapsed.push(Number((performance.now() - start).toFixed(2))) }
+  const drawn = find(component, node => ts.isCallExpression(node) && node.expression.getText(source) === 'series.map' && node.getText(source).includes('data-live-series'))!
+  const svg = renderToStaticMarkup(React.createElement('svg', null, evaluate(drawn, { ...env, markerPathFor, pathFor: evaluate(declaration('pathFor'), env) })))
+  assert.equal((svg.match(/<path/g) ?? []).length, 16); assert.equal(encoded.reduce((n, path) => n + (path.match(/Z/g) ?? []).length, 0), 9600)
+  assert.deepEqual(curve.isolatedCurvePoints(Array.from({ length: 2400 }, () => [now, 0] as const), 5000), [[now, 0]], 'coincident runs do not create 2400 overlapping markers')
+  console.log('LIVE CURVE MARKER COST:', JSON.stringify({ points: 19200, markerShapes: 9600, seriesPaths: 16, markerBytes: encoded.reduce((n, path) => n + Buffer.byteLength(path), 0), constructionMs: elapsed, scope: 'synthetic Node path construction, not browser paint or peak memory' }))
 })
 console.log('LIVE CURVE CONTEXT OK: ' + count + ' actual-render/synthetic-event groups; no browser or hardware')

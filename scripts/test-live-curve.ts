@@ -49,7 +49,10 @@ for (const [points, expected] of [
   [[], []], [[[0, null]], []], [[[0, 0]], [[0, 0]]],
   [[[0, 0], [1, null], [2, -1]], [[0, 0], [2, -1]]],
   [[[0, 0], [5000, 1]], []], [[[0, 0], [5001, 1]], [[0, 0], [5001, 1]]],
-  [[[0, null], [1, 0], [2, 1], [3, null], [4, 2]], [[4, 2]]]
+  [[[0, null], [1, 0], [2, 1], [3, null], [4, 2]], [[4, 2]]],
+  [[[0, 0], [0, 0]], [[0, 0]]], [[[0, 0], [0, 0], [1, 1]], []],
+  [[[0, 0], [0, 0], [1, null], [2, 0], [2, 0]], [[0, 0], [2, 0]]],
+  [[[0, 0], [0, 1]], []], [[[0, 0], [0, 0], [5001, 0], [5001, 0]], [[0, 0], [5001, 0]]]
 ] as Array<[Array<[number, number | null]>, Array<[number, number]>]>) {
   const before = JSON.stringify(points); assert.deepEqual(isolatedCurvePoints(points, 5000), expected); assert.equal(JSON.stringify(points), before)
 }

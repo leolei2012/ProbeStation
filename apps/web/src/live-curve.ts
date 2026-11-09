@@ -8,13 +8,18 @@ export interface CurveTrack { signature: string; times: number[]; points: Array<
 export type CurveBuffer = Record<number, CurveTrack>
 export const CURVE_LIMIT = 2400
 
-/** Points with no drawable neighbour need a marker: a move-only SVG path is invisible. */
+/** Connected runs collapsed to one coordinate need a marker, including repeated identical points. */
 export function isolatedCurvePoints(points: ReadonlyArray<readonly [number, number | null]>, gapMs: number): Array<[number, number]> {
   const isolated: Array<[number, number]> = []
-  for (let i = 0; i < points.length; i++) {
-    const [time, value] = points[i], before = points[i - 1], after = points[i + 1]
-    if (value !== null && (!before || before[1] === null || time - before[0] > gapMs) && (!after || after[1] === null || after[0] - time > gapMs)) isolated.push([time, value])
+  let first: [number, number] | null = null, lastTime = 0, hasExtent = false
+  const finish = () => { if (first && !hasExtent) isolated.push(first); first = null; hasExtent = false }
+  for (const [time, value] of points) {
+    if (value === null) { finish(); continue }
+    if (first === null || time - lastTime > gapMs) { finish(); first = [time, value] }
+    else if (time !== first[0] || value !== first[1]) hasExtent = true
+    lastTime = time
   }
+  finish()
   return isolated
 }
 
