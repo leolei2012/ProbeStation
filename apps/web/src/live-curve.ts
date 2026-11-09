@@ -8,6 +8,22 @@ export interface CurveTrack { signature: string; times: number[]; points: Array<
 export type CurveBuffer = Record<number, CurveTrack>
 export const CURVE_LIMIT = 2400
 
+/** Display order only; keep arrival records and same-time observations unchanged. */
+export function curveDisplayPoints(points: ReadonlyArray<readonly [number, number | null]>): { points: Array<[number, number | null]>; reordered: boolean } {
+  const reordered = points.some((point, i) => i > 0 && point[0] < points[i - 1][0])
+  if (!reordered) return { points: points.map(([time, value]): [number, number | null] => [time, value]), reordered }
+  let segment = 0
+  const records = points.map(([time, value], index) => { const record = { time, value, index, segment }; if (value === null) segment++; return record }).sort((a, b) => a.time - b.time || a.index - b.index)
+  const ordered: Array<[number, number | null]> = []
+  let previousValid = false, previousSegment = -1
+  for (const record of records) {
+    // Sorting must not remove a break that separated these observations on arrival.
+    if (record.value !== null && previousValid && record.segment !== previousSegment) ordered.push([record.time, null])
+    ordered.push([record.time, record.value]); previousValid = record.value !== null; previousSegment = record.segment
+  }
+  return { points: ordered, reordered }
+}
+
 /** Connected runs collapsed to one coordinate need a marker, including repeated identical points. */
 export function isolatedCurvePoints(points: ReadonlyArray<readonly [number, number | null]>, gapMs: number): Array<[number, number]> {
   const isolated: Array<[number, number]> = []

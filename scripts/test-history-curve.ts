@@ -39,6 +39,11 @@ assert.deepEqual(historySampleStats([[t, 0]]), { min: 0, max: 0, last: 0 })
 assert.equal(historySampleStats([[t, null], [t + 1000, -5]]).last, -5, 'a later valid sample recovers the last reading')
 const r = { id: 1, groupId: 1, startAddress: 0, dataType: 'uint16', functionCode: 3 }
 const p = (offset: number, address: number, rawValue: number, area = 'holding-register'): HistoryPoint => ({ ts: new Date(t + offset).toISOString(), area, address, rawValue })
+const arrivalRows = [p(2000, 0, 2), p(0, 0, 0), p(1000, 0, 1)], savedRows = structuredClone(arrivalRows)
+assert.deepEqual(decodeHistorySeries([r], arrivalRows, new Set([1]))[0].samples, [[t, 0], [t + 1000, 1], [t + 2000, 2]]); assert.deepEqual(arrivalRows, savedRows, 'historical decode sorts a view, not the input records')
+const duplicateRows = [p(0, 0, 1), p(0, 0, 2)], savedDuplicates = structuredClone(duplicateRows)
+assert.deepEqual(decodeHistorySeries([r], duplicateRows, new Set([1]))[0].samples, [[t, null]], 'conflicting same-time words stay unknown instead of selecting an arbitrary value'); assert.deepEqual(duplicateRows, savedDuplicates)
+for (const badTime of [{ ts: 'not-a-time' }, { timestampMs: NaN }, { timestampMs: Infinity }, { timestampMs: -Infinity }]) assert.equal(decodeHistorySeries([r], [{ ...p(0, 0, 1), ...badTime }], new Set([1])).length, 0, 'invalid historical timestamps do not acquire a fabricated time')
 for (const raw of [NaN, Infinity, -Infinity, -1, 65536, .5, null, '0']) {
   const invalid = decodeHistorySeries([r], [p(0, 0, raw as number), p(1000, 0, 0)], new Set([1]))[0]
   assert.deepEqual(invalid.samples, [[t, null], [t + 1000, 0]], 'history keeps illegal words unknown and a subsequent genuine zero valid')

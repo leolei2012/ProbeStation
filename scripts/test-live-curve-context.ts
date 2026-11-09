@@ -36,12 +36,12 @@ const values = (slaveId: number, value: number, time = now, objectId = 1) => ({ 
 const initial = curve.sampleCurve({}, chosenFor(1), values(1, 111), 1, now, 5000, new Set())
 type Frame = { buffer: curve.CurveBuffer; now: number }
 function render(visible: Frame, chosen = chosenFor(1), objectId = 1, cursorTime: number | null = null) {
-  const env: Record<string, unknown> = { visible, chosen, device: { ...device, id: objectId }, startTime: visible.now - 60000, endTime: visible.now, curveValue, displayNumber, valueMode: 'raw', CHART_COLORS: ['red'], curveTrackFor: (curve as any).curveTrackFor }
+  const env: Record<string, unknown> = { visible, chosen, device: { ...device, id: objectId }, startTime: visible.now - 60000, endTime: visible.now, curveValue, displayNumber, valueMode: 'raw', CHART_COLORS: ['red'], curveTrackFor: (curve as any).curveTrackFor, curveDisplayPoints: curve.curveDisplayPoints }
   // The optional declarations are introduced by the fix; before-fix uses raw visible.buffer.
-  for (const name of ['visibleBuffer', 'sourceChanged']) { const node = find(component, node => ts.isVariableDeclaration(node) && node.name.getText(source) === name) as ts.VariableDeclaration | undefined; if (node) env[name] = evaluate(node.initializer!, env) }
+  for (const name of ['visibleBuffer', 'displayTracks', 'timeReordered', 'sourceChanged']) { const node = find(component, node => ts.isVariableDeclaration(node) && node.name.getText(source) === name) as ts.VariableDeclaration | undefined; if (node) env[name] = evaluate(node.initializer!, env) }
   const series = evaluate(declaration('series'), env)
   const readings = evaluate(declaration('liveReadings'), { ...env, series, cursorTime, threshold: 5000, pointLabels: new Map([[7, { name: 'current source' }]]) })
-  return { series, readings, sourceChanged: env.sourceChanged }
+  return { series, readings, sourceChanged: env.sourceChanged, timeReordered: env.timeReordered }
 }
 let count = 0
 function check(name: string, fn: () => void) { fn(); count++; console.log('OK ' + name) }
@@ -246,5 +246,24 @@ check('overflowing live/history scales fail visibly without emitting invalid SVG
     const gate = find(owner, node => ts.isConditionalExpression(node) && node.condition.getText(source) === 'scaleValid' && node.getText(source).includes("t('curveScaleUnavailable')")); assert(gate)
     for (const lang of ['zh', 'en']) { const html = renderToStaticMarkup(evaluate(gate, { scaleValid: false, React, t: (key: string) => dictionary[lang][key] })); assert(html.includes('role="status"')); assert(!/<svg|<path|<circle/.test(html)); assert(html.includes(dictionary[lang].curveScaleUnavailable)) }
   }
+})
+check('delayed recovery keeps a later unknown marker effective for hover and line breaks', () => {
+  const chosen = chosenFor(1), first = curve.sampleCurve({}, chosen, values(1, 0), 1, now, 5000, new Set())
+  const bad = Object.fromEntries(Object.entries(values(1, 0, now + 1000)).map(([key, value]) => [key, { ...value, quality: 'bad' }]))
+  const gap = curve.sampleCurve(first, chosen, bad, 1, now + 2000, 5000, new Set())
+  const delayed = curve.sampleCurve(gap, chosen, values(1, 2, now + 1500), 1, now + 2250, 5000, new Set())
+  const recovered = curve.sampleCurve(delayed, chosen, values(1, 3, now + 2500), 1, now + 2500, 5000, new Set()), original = structuredClone(recovered)
+  assert.deepEqual(recovered[7].points, [[now, 0], [now + 2000, null], [now + 1500, 2], [now + 2500, 3]], 'arrival records retain their original timestamps/order')
+  const view = render({ buffer: recovered, now: now + 2500 }, chosen, 1, now + 2100)
+  assert.equal(view.readings[0].value, '—', 'a late older sample must not overwrite the later-in-time unknown interval')
+  assert.deepEqual(view.series[0].points, [[now, 0], [now + 1500, null], [now + 1500, 2], [now + 2000, null], [now + 2500, 3]], 'chronological view retains both original quality breaks and later unknown markers')
+  const path = evaluate(declaration('pathFor'), { threshold: 5000, x: (time: number) => time - now, y: (value: number) => value })(view.series[0].points)
+  assert(!path.includes('L'), 'sorting must not reconnect observations separated by the original quality break')
+  assert.equal(render({ buffer: recovered, now: now + 2500 }, chosen, 1, now + 1750).readings[0].value, '2')
+  assert.equal(render({ buffer: recovered, now: now + 2500 }, chosen, 1, now + 2500).readings[0].value, '3'); assert.deepEqual(recovered, original)
+  assert.equal(view.timeReordered, true)
+  const notice = find(component, node => ts.isBinaryExpression(node) && node.left.getText(source) === 'timeReordered' && node.getText(source).includes("t('curveTimeReordered')"))!
+  const dictionary = evaluate((find(source, node => ts.isVariableDeclaration(node) && node.name.getText(source) === 'I18N') as ts.VariableDeclaration).initializer!, {})
+  for (const language of ['zh', 'en']) { const html = renderToStaticMarkup(evaluate(notice, { React, timeReordered: true, t: (key: string) => dictionary[language][key] })); assert(html.includes('role="status"')); assert(/不等同设备故障|does not establish a device fault/.test(html)) }
 })
 console.log('LIVE CURVE CONTEXT OK: ' + count + ' actual-render/synthetic-event groups; no browser or hardware')

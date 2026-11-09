@@ -1,15 +1,21 @@
 import assert from 'node:assert/strict'
-import { isolatedCurvePoints, sampleCurve, CURVE_LIMIT, type CurveBuffer } from '../apps/web/src/live-curve.ts'
+import { curveDisplayPoints, isolatedCurvePoints, sampleCurve, CURVE_LIMIT, type CurveBuffer } from '../apps/web/src/live-curve.ts'
 
 const now = Date.parse('2026-09-23T04:00:00Z')
 const reg = { id: 1, startAddress: 0, dataType: 'uint16', functionCode: 3 }
 const point = (rawValue: number, ms = now) => ({ rawValue, timestamp: new Date(ms).toISOString(), quality: 'good' })
 const key = '1:holding-register:0'
+for (const clock of [{ timestamp: 'not-a-time' }, { timestampMs: NaN }, { timestampMs: Infinity }, { timestampMs: -Infinity }]) assert.deepEqual(sampleCurve({}, [reg], { [key]: { ...point(7), ...clock } }, 1, now, 5000, new Set())[1].points, [], 'invalid incoming times do not become a zero or drawable point')
+const arrival: Array<[number, number | null]> = [[20, 2], [10, 1], [10, 3]], arrivalCopy = structuredClone(arrival), ordered = curveDisplayPoints(arrival)
+assert.deepEqual(ordered.points, [[10, 1], [10, 3], [20, 2]]); assert.equal(ordered.reordered, true); assert.deepEqual(arrival, arrivalCopy)
+ordered.points[0][1] = 99; assert.deepEqual(arrival, arrivalCopy, 'display tuples are independent, duplicate observations remain in arrival order')
+assert.equal(curveDisplayPoints([[10, 1], [10, 3], [20, 2]]).reordered, false)
 for (const raw of [NaN, Infinity, -Infinity, -1, 65536, .5, null, '0']) {
   const invalid = { ...point(0), rawValue: raw as number }
   assert(sampleCurve({}, [reg], { [key]: invalid }, 1, now, 5000, new Set())[1].points.every(([, value]) => value === null), 'invalid raw words must remain unknown, never valid numbers: ' + String(raw))
 }
 const beforeInvalid = sampleCurve({}, [reg], { [key]: point(5) }, 1, now, 5000, new Set())
+assert.deepEqual(sampleCurve(beforeInvalid, [reg], { [key]: { ...point(7), timestamp: 'not-a-time' } }, 1, now + 250, 5000, new Set())[1].points, [[now, 5], [now + 250, null]], 'invalid times stop an existing line without fabricating a zero or event timestamp')
 const invalidMiddle = sampleCurve(beforeInvalid, [reg], { [key]: { ...point(0, now + 250), rawValue: null as unknown as number } }, 1, now + 250, 5000, new Set())
 assert.deepEqual(invalidMiddle[1].points, [[now, 5], [now + 250, null]], 'illegal words break the line instead of creating zero')
 assert.equal(sampleCurve(invalidMiddle, [reg], { [key]: point(0, now + 500) }, 1, now + 500, 5000, new Set())[1].points.at(-1)![1], 0, 'a genuine zero recovers normally')

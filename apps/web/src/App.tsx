@@ -72,7 +72,7 @@ import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
 import { DeferredSettingsModal } from './DeferredSettingsModal'
 import { decodeHistorySeries, historySampleStats, historyLineStarts, historyQueryRange, isolatedHistoryPoints, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
-import { curveTrackFor, isolatedCurvePoints, sampleCurve, type CurveBuffer } from './live-curve'
+import { curveDisplayPoints, curveTrackFor, isolatedCurvePoints, sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, sampleAgeSeconds, staleAfterMs, type Sample } from './observation'
 import { sameResponseBatch } from '../../../packages/core/src/sample-batch.ts'
 import { decodeRawByAddr, decodeRegister, formatNumber, formatRegisterValue, isBinType, isHexType, parseEnum, registerWidth } from '../../../packages/core/src/codec.ts'
@@ -108,6 +108,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointBookTargetSnapshot: '发起时页面目标（仅作记录，不核验当前配置）',
     pointBookPagingHint: '分页只改变显示，全部回报条目仍保留。可用页码跳转，在列表内滚动查看长文本。', pointBookMessageRange: '显示 {start}–{end} / {total} 条 · 第 {page}/{pages} 页', pointBookPage: '页码', pointBookPrevious: '上一页', pointBookNext: '下一页',
     curveScaleUnavailable: '当前数值超出可安全绘制的量程。图形已隐藏，请核对读数和倍率，或调整显示范围。',
+    curveTimeReordered: '显示缓存出现倒序时间，图形与读数已按时间戳排列；原记录未改写。这不等同设备故障，请核对采样时间。',
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
     connectionUnverified: '设备连接状态未核实',
@@ -193,6 +194,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointBookTargetSnapshot: 'Page target when sent (record only, not current configuration verification)',
     pointBookPagingHint: 'Paging changes display only; all received entries are retained. Jump by page number and scroll the list to read long text.', pointBookMessageRange: 'Showing {start}–{end} of {total} · Page {page}/{pages}', pointBookPage: 'Page', pointBookPrevious: 'Previous', pointBookNext: 'Next',
     curveScaleUnavailable: 'This numeric range cannot be drawn safely. The plot is hidden; check the readings and scale, or adjust the display range.',
+    curveTimeReordered: 'Out-of-order times were observed in this view. Curves and readouts are ordered by timestamp; original records are unchanged. This does not establish a device fault. Check sampling times.',
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
     connectionUnverified: 'Device connection unverified',
@@ -1513,6 +1515,8 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
   }, [])
   const visible = frozen ?? frame
   const visibleBuffer = Object.fromEntries(chosen.map(r => [r.id, curveTrackFor(visible.buffer, r, device.id)]))
+  const displayTracks = Object.fromEntries(chosen.map(r => [r.id, curveDisplayPoints(visibleBuffer[r.id]?.points ?? [])]))
+  const timeReordered = chosen.some(r => displayTracks[r.id].reordered)
   const sourceChanged = chosen.some(r => visible.buffer[r.id] && !visibleBuffer[r.id])
   const endTime = visible.now, startTime = endTime - seconds * 1000
   const [size, setSize] = useState({ w: 800, h: 360 })
@@ -1526,7 +1530,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
   useEffect(() => () => observer.current?.disconnect(), [])
   const [hover, setHover] = useState<number | null>(null)
   const mixedUnits = valueMode === 'physical' && new Set(chosen.map(r => r.unit?.trim() || '')).size > 1
-  const series = chosen.map(r => ({ r, color: CHART_COLORS[Math.abs(r.id) % CHART_COLORS.length], points: (visibleBuffer[r.id]?.points ?? []).filter(p => p[0] >= startTime && p[0] <= endTime).map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) }))
+  const series = chosen.map(r => ({ r, color: CHART_COLORS[Math.abs(r.id) % CHART_COLORS.length], points: displayTracks[r.id].points.filter(p => p[0] >= startTime && p[0] <= endTime).map(([time, value]): [number, number | null] => [time, curveValue(value, r, valueMode)]) }))
   let low = Infinity, high = -Infinity
   for (const s of series) for (const [, v] of s.points) if (v !== null) { low = Math.min(low, v); high = Math.max(high, v) }
   const hasData = Number.isFinite(low) && Number.isFinite(high)
@@ -1552,7 +1556,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
   const liveReadings = series.map(s => {
     const at = cursorTime ?? endTime
     let sample: [number, number | null] | undefined
-    for (const p of visibleBuffer[s.r.id]?.points ?? []) if (p[0] <= at) sample = p
+    for (const p of displayTracks[s.r.id]?.points ?? []) if (p[0] <= at) sample = p
     const value = sample && at - sample[0] <= threshold ? curveValue(sample[1], s.r, valueMode) : null
     return { id: s.r.id, label: pointLabels.get(s.r.id)!, color: s.color, value: value === null ? '—' : displayNumber(value, valueMode === 'physical' ? s.r : undefined) + (valueMode === 'physical' && s.r.unit ? ' ' + s.r.unit : ''), time: value !== null && sample ? sample[0] : null, point: sample && value !== null ? [sample[0], value] as [number, number] : null }
   })
@@ -1572,6 +1576,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
     </div>
     <p className="chart-hint">{t('liveCurveHint')}</p>
     {sourceChanged && <p className="chart-hint" role="status">{t('curveSourceChanged')}</p>}
+    {timeReordered && <p className="chart-hint" role="status">{t('curveTimeReordered')}</p>}
     <div className="chart-wrap">
       <ChartReadout t={t} time={cursorTime} rows={liveReadings} />
       <div className="live-curve-plot" ref={setPlot}>
