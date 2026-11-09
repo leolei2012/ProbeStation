@@ -5,6 +5,7 @@ import { hookDriver } from './fixtures/component-hook-driver.ts'
 import { AlarmPendingContext, type AlarmPendingContextProps } from '../apps/web/src/AlarmPendingContext.tsx'
 import { DeferredAlarmPendingContext, alarmPendingResource } from '../apps/web/src/DeferredAlarmPendingContext.tsx'
 import { AlarmPanel } from '../apps/web/src/AlarmPanel.tsx'
+import { AlarmRulesReader } from '../apps/web/src/alarm-rule-read.ts'
 import { DeferredResource } from '../apps/web/src/deferred-resource.ts'
 import { AlarmWriteGate, alarmOpeningState } from '../apps/web/src/alarm-settings-save.ts'
 import { AlarmRuleReadStatus, alarmRuleSummaryKey } from '../apps/web/src/AlarmRuleReadStatus.tsx'
@@ -121,5 +122,52 @@ await check('timed-out code cannot overwrite explicit retry', async () => {
   const driver = wrapper(resource); await resource.load(); driver.render(); assert(driver.one('p').props.role === 'alert')
   driver.one('button').props.onClick(); await resource.load(); driver.render(); const accepted = resource.snapshot(); late.resolve(AlarmPendingContext); await tick(); driver.render(); assert.equal(resource.snapshot(), accepted)
   assert.equal(driver.one(AlarmPendingContext).props.rows, props.rows); driver.dispose()
+})
+await check('real reader and panel retain pagination safely across source edits, failed reads, invalid rules, deletion and late success', async () => {
+  const points = Array.from({ length: 41 }, (_, i) => ({ ...reg, id: 101 + i, startAddress: i, alias: 'SOURCE-A-' + i }))
+  const rules = points.map((point, i) => ({ ...rule, id: i + 1, registerId: point.id }))
+  let response: () => Promise<unknown> = async () => rules, reads = 0, writes = 0
+  const reader = new AlarmRulesReader(() => { reads++; return response() }, 10000)
+  await reader.refresh()
+  const latest = Object.fromEntries(points.map(point => [sourceKey(1, 'holding-register', point.startAddress, 1), { rawValue: 200, quality: 'good', timestamp: new Date(now).toISOString(), slaveId: 1, batchId: 'A' }]))
+  let current = { t, device: { id: 1, isActive: 1, mode: 'master', slaveId: 9 }, groups: [{ ...group, slaveId: 2, registers: points }], latest, groupErrors: {}, now, threshold: 5000, configurationReady: true, api: async () => { writes++; throw Error('no extra I/O') } }
+  const panel = hookDriver('AlarmPanel.tsx', 'AlarmPanel', scope({ AlarmWriteGate, alarmOpeningState, readPointAlarmObservation, alarmMatches, alarmRuleSummaryKey, AlarmRuleReadStatus, DeferredAlarmPendingContext, symbols: { '>': '>' }, useAlarmRules: () => { const state = reader.snapshot(); return { rules: state.rules, ready: state.status === 'ready', reading: state.reading, state, lock: { current: false } } } }), current)
+  panel.one('button', p => p.children === '查看待定规则').props.onClick(); panel.render()
+  const details = () => panel.one(DeferredAlarmPendingContext).props as AlarmPendingContextProps
+  const view = hookDriver('AlarmPendingContext.tsx', 'AlarmPendingContext', { validSlaveId }, details())
+  const sync = () => { panel.render(current); view.render(details()); return renderToStaticMarkup(view.tree) }
+  const next = () => { view.one('button', p => p.children === '下一页').props.onClick(); view.render() }
+  next(); next(); assert.equal(view.one('ol').props.start, 41)
+  assert.equal(details().rows.length, 41, 'fresh values from source A cannot fill source B')
+  current = { ...current, groups: [{ ...current.groups[0], slaveId: 3, registers: points.map(point => ({ ...point, alias: 'SOURCE-C-' + point.id })) }] }
+  let markup = sync(); assert(markup.includes('SOURCE-C-141') && markup.includes('配置从站 3')); assert(!markup.includes('SOURCE-A-'))
+  current = { ...current, configurationReady: false }; markup = sync(); assert(markup.includes('尚未核实') && !markup.includes('SOURCE-C-') && !markup.includes('id:141'))
+  current = { ...current, configurationReady: true }
+  response = async () => { throw Error('PRIVATE-read-error') }; await reader.refresh(); markup = sync()
+  assert(markup.includes('尚未核实') && !markup.includes('SOURCE-C-') && !markup.includes('PRIVATE-')); assert.equal(reader.snapshot().rules.length, 41)
+  response = async () => [...rules, { ...rule, id: 99, operator: '?' }]; await reader.refresh(); markup = sync()
+  assert(markup.includes('尚未核实') && !markup.includes('<li>'), 'invalid tail hides the entire retained page')
+  response = async () => rules.slice(0, 21); await reader.refresh(); markup = sync()
+  assert.equal(view.one('ol').props.start, 21); assert(markup.includes('SOURCE-C-121') && !markup.includes('SOURCE-C-141'))
+  const obsolete = deferred<unknown>(); response = () => obsolete.promise; const old = reader.refresh(); await tick(); markup = sync()
+  assert(markup.includes('尚未核实') && !markup.includes('SOURCE-C-'), 'in-flight refresh hides even a previously verified page')
+  response = async () => []; await reader.refresh(true); markup = sync(); assert(markup.includes('不等同无告警或设备恢复')); assert(!markup.includes('<li>'))
+  obsolete.resolve(rules); await old; await tick(); markup = sync(); assert(!markup.includes('SOURCE-C-') && !markup.includes('<li>'), 'late success cannot resurrect deleted rules')
+  assert.equal(writes, 0); assert.equal(reads, 6); assert.equal(alarmPendingResource.snapshot().status, 'idle')
+  reader.stop(); view.dispose(); panel.dispose()
+})
+await check('loaded paginated context never substitutes mixed-batch or missing-source words and recovers only with complete matching words', () => {
+  const point = { ...reg, dataType: 'uint32' }, selectedGroup = { ...group, slaveId: 2, registers: [point] }
+  const sample = (slaveId: number, batchId: string, rawValue: number) => ({ rawValue, quality: 'good', timestamp: new Date(now).toISOString(), slaveId, batchId })
+  let latest: Record<string, ReturnType<typeof sample>> = { [sourceKey(1, 'holding-register', 0, 2)]: sample(2, 'B', 1), [sourceKey(1, 'holding-register', 1, 1)]: sample(1, 'A', 0) }
+  const evaluate = () => readPointAlarmObservation(point, latest, { id: 1, isActive: 1 }, selectedGroup, now, 5000, false)
+  const view = hookDriver('AlarmPendingContext.tsx', 'AlarmPendingContext', { validSlaveId }, { ...props, rows: [{ rule, reg: point, group: selectedGroup }] })
+  const refresh = () => { const observation = evaluate(); view.render({ ...props, rows: observation ? [] : [{ rule, reg: point, group: selectedGroup }] }); return observation }
+  assert.equal(refresh(), null); assert(renderToStaticMarkup(view.tree).includes('配置从站 2'))
+  latest = { ...latest, [sourceKey(1, 'holding-register', 1, 2)]: sample(2, 'C', 0) }; assert.equal(refresh(), null)
+  latest[sourceKey(1, 'holding-register', 1, 2)] = sample(2, 'B', 0); assert.equal(refresh()?.value, 65536)
+  assert(renderToStaticMarkup(view.tree).includes('不等同无告警或设备恢复'))
+  delete latest[sourceKey(1, 'holding-register', 0, 2)]; assert.equal(refresh(), null); assert(renderToStaticMarkup(view.tree).includes('id:101'))
+  view.dispose()
 })
 console.log(`ALARM PENDING TEST OK: ${passed} groups; production panel, source-scoped pending evaluations, neutral bilingual context, pagination and deferred error/lifecycle; component mocks only, no API/device/database/model/browser.`)
