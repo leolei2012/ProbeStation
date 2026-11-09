@@ -72,7 +72,7 @@ import './styles.css'
 import { AssistantPanel } from './AssistantPanel'
 import { DeferredSettingsModal } from './DeferredSettingsModal'
 import { decodeHistorySeries, historySampleStats, historyLineStarts, historyQueryRange, nearestHistorySample, type HistoryPoint, type HistorySeries } from './history-curve'
-import { curveTrackFor, sampleCurve, type CurveBuffer } from './live-curve'
+import { curveTrackFor, isolatedCurvePoints, sampleCurve, type CurveBuffer } from './live-curve'
 import { pointHealth, sampleTime, sampleAgeSeconds, staleAfterMs, type Sample } from './observation'
 import { sameResponseBatch } from '../../../packages/core/src/sample-batch.ts'
 import { decodeRawByAddr, decodeRegister, formatNumber, formatRegisterValue, isBinType, isHexType, parseEnum, registerWidth } from '../../../packages/core/src/codec.ts'
@@ -1539,6 +1539,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
     return path
   }
   const cursorTime = hover
+  const markerPathFor = (points: Array<[number, number | null]>) => isolatedCurvePoints(points, threshold).map(([time, value]) => `M${(x(time) - 3).toFixed(2)},${y(value).toFixed(2)}a3,3 0 1,0 6,0a3,3 0 1,0 -6,0Z`).join(' ')
   const liveReadings = series.map(s => {
     const at = cursorTime ?? endTime
     let sample: [number, number | null] | undefined
@@ -1571,7 +1572,7 @@ const LiveCurve = memo(function LiveCurve({ active, t, device, groups, latest, g
           onPointerMove={e => { const rect = e.currentTarget.getBoundingClientRect(); setHover(startTime + Math.max(0, Math.min(1, (e.clientX - rect.left - left) / plotWidth)) * (endTime - startTime)) }}>
           {yTicks(low, high, 5).map(v => <g key={v}><line x1={left} x2={size.w - right} y1={y(v)} y2={y(v)} stroke="var(--border-1)" /><text x={left - 9} y={y(v) + 4} textAnchor="end" fill="var(--text-3)" fontSize={11}>{tickNum(v)}</text></g>)}
           {timeTicks(startTime, endTime, Math.max(2, Math.floor(plotWidth / 110))).map(time => <text key={time} x={x(time)} y={size.h - bottom + 20} textAnchor="middle" fill="var(--text-3)" fontSize={11}>{tickTime(time, endTime - startTime)}</text>)}
-          {series.map(s => <g key={s.r.id}><path data-live-series={s.r.id} d={pathFor(s.points)} fill="none" stroke={s.color} strokeWidth={1.8} strokeLinejoin="round" />{s.points.length === 1 && s.points[0][1] !== null && <circle cx={x(s.points[0][0])} cy={y(s.points[0][1])} r={3} fill={s.color} />}</g>)}
+          {series.map(s => <g key={s.r.id}><path data-live-series={s.r.id} d={pathFor(s.points)} fill="none" stroke={s.color} strokeWidth={1.8} strokeLinejoin="round" /><path data-live-markers={s.r.id} d={markerPathFor(s.points)} fill={s.color} /></g>)}
           {cursorTime !== null && cursorTime >= startTime && cursorTime <= endTime && <>
             <line x1={x(cursorTime)} x2={x(cursorTime)} y1={top} y2={size.h - bottom} stroke="var(--text-3)" strokeDasharray="4 4" />
             {liveReadings.filter(r => r.point && r.point[0] >= startTime && r.point[0] <= endTime).map(r => <circle key={r.id} cx={x(r.point![0])} cy={y(r.point![1])} r={3.5} fill={r.color} stroke="var(--surface)" strokeWidth={1.5} />)}

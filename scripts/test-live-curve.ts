@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { sampleCurve, CURVE_LIMIT, type CurveBuffer } from '../apps/web/src/live-curve.ts'
+import { isolatedCurvePoints, sampleCurve, CURVE_LIMIT, type CurveBuffer } from '../apps/web/src/live-curve.ts'
 
 const now = Date.parse('2026-09-23T04:00:00Z')
 const reg = { id: 1, startAddress: 0, dataType: 'uint16', functionCode: 3 }
@@ -45,4 +45,12 @@ const sameMillisecond = { [key]: response(1, 'D', now + 100), '1:holding-registe
 tracked = sampleCurve(tracked, [wide], sameMillisecond, 1, now + 100, 5000, new Set())
 assert.equal(tracked[1].points.at(-1)![1], 65537, 'distinct responses in the same millisecond are sampled')
 assert.equal(sampleCurve(tracked, [wide], JSON.parse(JSON.stringify(sameMillisecond)), 1, now + 100, 5000, new Set())[1].points.length, tracked[1].points.length, 'serialized unchanged response is not replayed')
+for (const [points, expected] of [
+  [[], []], [[[0, null]], []], [[[0, 0]], [[0, 0]]],
+  [[[0, 0], [1, null], [2, -1]], [[0, 0], [2, -1]]],
+  [[[0, 0], [5000, 1]], []], [[[0, 0], [5001, 1]], [[0, 0], [5001, 1]]],
+  [[[0, null], [1, 0], [2, 1], [3, null], [4, 2]], [[4, 2]]]
+] as Array<[Array<[number, number | null]>, Array<[number, number]>]>) {
+  const before = JSON.stringify(points); assert.deepEqual(isolatedCurvePoints(points, 5000), expected); assert.equal(JSON.stringify(points), before)
+}
 console.log('LIVE CURVE TEST OK: deduplication, freeze, gaps, freshness, area isolation, multiword decoding, limits and clear')

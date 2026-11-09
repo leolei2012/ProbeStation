@@ -110,4 +110,37 @@ check('actual bilingual status explains hidden frozen tracks without claiming re
     assert(/暂停|frozen/.test(text)); assert(/隐藏|hidden/.test(text))
   }
 })
+check('missing, bad quality, stale data and valid zero remain distinct from a fabricated zero', () => {
+  const chosen = chosenFor(1), zero = curve.sampleCurve({}, chosen, values(1, 0), 1, now, 5000, new Set())
+  assert.equal(render({ buffer: zero, now }).readings[0].value, '0')
+  for (const [label, latest, at] of [
+    ['missing', {}, now],
+    ['bad quality', Object.fromEntries(Object.entries(values(1, 0)).map(([key, value]) => [key, { ...value, quality: 'bad' }])), now],
+    ['stale', values(1, 0), now + 5001]
+  ] as const) {
+    const buffer = curve.sampleCurve({}, chosen, latest, 1, at, 5000, new Set())
+    assert.deepEqual(buffer[7].points, [], label); assert.equal(render({ buffer, now: at }).readings[0].value, '—', label)
+  }
+  const blocked = curve.sampleCurve(zero, chosen, values(1, 0, now + 250), 1, now + 250, 5000, new Set([7]))
+  assert.deepEqual(blocked[7].points, [[now, 0], [now + 250, null]]); assert.equal(render({ buffer: blocked, now: now + 250 }).readings[0].value, '—')
+})
+check('isolated valid zero before and after a quality gap has a visible SVG marker', () => {
+  const chosen = chosenFor(1), first = curve.sampleCurve({}, chosen, values(1, 0), 1, now, 5000, new Set())
+  const bad = Object.fromEntries(Object.entries(values(1, 0, now + 250)).map(([key, value]) => [key, { ...value, quality: 'bad' }]))
+  const gap = curve.sampleCurve(first, chosen, bad, 1, now + 250, 5000, new Set()), recovered = curve.sampleCurve(gap, chosen, values(1, 0, now + 500), 1, now + 500, 5000, new Set())
+  assert.deepEqual(recovered[7].points, [[now, 0], [now + 250, null], [now + 500, 0]])
+  const view = render({ buffer: recovered, now: now + 500 }); assert.equal(view.readings[0].value, '0')
+  const drawn = find(component, node => ts.isCallExpression(node) && node.expression.getText(source) === 'series.map' && node.getText(source).includes('data-live-series'))!
+  const env = { React, series: view.series, threshold: 5000, x: (time: number) => time - now, y: (value: number) => value, isolatedCurvePoints: (curve as any).isolatedCurvePoints }
+  const markerPathFor = evaluate(declaration('markerPathFor'), env)
+  const svg = renderToStaticMarkup(React.createElement('svg', null, evaluate(drawn, { ...env, markerPathFor, pathFor: evaluate(declaration('pathFor'), env) })))
+  assert(!/d="[^"]*L/.test(svg), 'null gaps stay unconnected')
+  const markerPath = /data-live-markers="7" d="([^"]*)"/.exec(svg)?.[1]; assert(markerPath)
+  assert.equal((markerPath.match(/M/g) ?? []).length, 2, 'each isolated zero must have its own visible marker shape')
+  assert.equal((markerPath.match(/a3,3/g) ?? []).length, 4, 'two semicircles per marker, without connecting the gap')
+  const dense = Array.from({ length: 2400 }, (_, i) => [now + i, i % 2 ? null : 0] as [number, number | null])
+  const denseSvg = renderToStaticMarkup(React.createElement('svg', null, evaluate(drawn, { ...env, series: [{ ...view.series[0], points: dense }], markerPathFor, pathFor: evaluate(declaration('pathFor'), env) })))
+  assert.equal((denseSvg.match(/<path/g) ?? []).length, 2, 'marker DOM remains bounded even with 1200 isolated points')
+  assert.equal((markerPathFor(dense).match(/Z/g) ?? []).length, 1200)
+})
 console.log('LIVE CURVE CONTEXT OK: ' + count + ' actual-render/synthetic-event groups; no browser or hardware')
