@@ -196,6 +196,59 @@ await check('closed point loader and late code cannot resurrect old point or byp
     } finally { editor.driver.dispose() }
   } finally { old.driver.dispose(); fresh.driver.dispose() }
 })
+function pointHost(page: ReturnType<typeof draftSurface>, resource: DeferredResource<typeof PointSettingsEditor>, save: (ownerId: number) => Promise<void> = async () => { assert.fail('no automatic point write') }) {
+  const opening = page.render(), ownerId = opening.props.device.id, draftScope = page.registration()
+  let active = true, editor: ReturnType<typeof draftEditor> | null = null
+  const view = wrapper(resource, { ...pointProps, name: 'OWNER-' + ownerId, draftScope, async onSave() { await save(ownerId) } })
+  const dispose = () => { if (!active) return; active = false; editor?.driver.dispose(); view.surface.isConnected = false; view.driver.dispose() }
+  const reconcile = () => {
+    if (!active) return
+    const current = page.render()
+    if (current.type !== opening.type || current.key !== opening.key || page.state().tab !== 0 || editor?.calls.close) { dispose(); return }
+    view.update()
+    if (!editor && resource.snapshot().status === 'ready') { const forwarded = view.driver.one(PointSettingsEditor).props; editor = draftEditor('point', forwarded.draftScope, forwarded.onSave) }
+    editor?.driver.render()
+  }
+  return { view, reconcile, dispose, active: () => active, editor: () => { assert(editor); return editor } }
+}
+await check('cold point loading follows owner unmount on device, page, reference and local-tab navigation', async () => {
+  const app = fs.readFileSync(new URL('../apps/web/src/App.tsx', import.meta.url), 'utf8')
+  assert(app.includes('{tab === 0 && <LiveTable') && app.includes('{settingsReg && <PointSettingsEditor'), 'simulated point owner lifetime must match the actual App conditions')
+  for (const route of ['device', 'database', 'reference', 'tab'] as const) {
+    const page = draftSurface(), code = deferred<typeof PointSettingsEditor>(), resource = new DeferredResource<typeof PointSettingsEditor>(() => code.promise), host = pointHost(page, resource)
+    try {
+      assertDraftWiring(page); await tick()
+      if (route === 'device') page.select(2); else if (route === 'database') page.global('database'); else if (route === 'reference') page.reference(2); else page.localTab(2)
+      host.reconcile(); assert(!host.active()); assert.equal(page.prompts.length, 0); assert.equal(page.drafts.retained().length, 0)
+      const destination = page.state(); code.resolve(PointSettingsEditor); await resource.load(); host.reconcile()
+      assert.deepEqual(page.state(), destination); assert.equal(host.view.driver.lateWrites, 0)
+    } finally { code.resolve(PointSettingsEditor); await resource.load(); host.dispose() }
+  }
+})
+await check('loaded point dirty and pending-save guards survive all navigation routes and success or uncertain completion', async () => {
+  for (const outcome of ['success', 'unknown'] as const) {
+    const page = draftSurface(), pending = deferred<void>(), resource = new DeferredResource<typeof PointSettingsEditor>(async () => PointSettingsEditor); let writes = 0
+    const host = pointHost(page, resource, async ownerId => { assert.equal(ownerId, 1); writes++; return pending.promise })
+    try {
+      await resource.load(); host.reconcile(); const editor = host.editor(); editor.change('UNSAVED POINT UNIT')
+      const before = page.state(), routes = [() => page.select(2), () => page.global('database'), () => page.reference(2), () => page.localTab(2)]
+      for (const route of routes) { route(); host.reconcile(); assert.deepEqual(page.state(), before); assert(host.active()); assert.equal(editor.value(), 'UNSAVED POINT UNIT') }
+      assert.equal(page.prompts.length, 4); assert.equal(writes, 0)
+      editor.submit(); editor.submit(); assert.equal(writes, 1)
+      for (const route of routes) { route(); host.reconcile(); assert.deepEqual(page.state(), before); assert(host.active()) }
+      assert.equal(page.prompts.length, 4, 'save-in-progress blocks without offering to discard it')
+      if (outcome === 'success') pending.resolve(); else pending.reject(Error('synthetic response lost; inspect configuration before another write'))
+      await tick(); host.reconcile()
+      if (outcome === 'success') { assert(!host.active()); assert.equal(editor.calls.close, 1); page.select(2); assert.equal(page.state().selectedId, 2); assert.equal(page.prompts.length, 4) }
+      else {
+        assert(host.active()); assert.equal(editor.calls.close, 0); assert.equal(editor.value(), 'UNSAVED POINT UNIT')
+        for (const route of routes) { route(); host.reconcile(); assert.deepEqual(page.state(), before) }
+        assert.equal(page.prompts.length, 8); page.setAnswer(true); page.select(2); host.reconcile(); assert(!host.active()); assert.equal(page.state().selectedId, 2)
+      }
+      assert.equal(writes, 1); assert.equal(editor.calls.save, 1); assert.equal(page.drafts.retained().length, 0)
+    } finally { host.dispose() }
+  }
+})
 await pointSettingsResource.load(); assert.equal(pointSettingsResource.snapshot().value, PointSettingsEditor)
 await deviceModalResource.load(); await groupModalResource.load(); assert.equal(deviceModalResource.snapshot().value, DeviceModal); assert.equal(groupModalResource.snapshot().value, GroupModal)
 console.log('CONFIG MODAL LOADING TEST OK: ' + passed + ' source/SSR and controlled loader/device/group/keyboard/focus lifecycle groups; no actual browser, network, storage, serial enumeration, model or hardware')
