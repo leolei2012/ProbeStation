@@ -190,3 +190,5 @@ console.log('REGISTER PICKER OK: explicit source/point identity, exact source an
   }
   console.log('REGISTER PICKER UNSEEN LIMIT: unchanged page options still permit local ID selection after unseen backend edits; explicit bilingual limitation, not backend protection.')
 }
+
+await import('./test-register-picker-loading.ts')

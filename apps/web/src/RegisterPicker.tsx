@@ -3,15 +3,15 @@ import { addVisiblePickerPoints, filterPickerGroups, pickerContext, pickerSource
 export type { PickerGroup } from './register-picker'
 
 type T = (key: string) => string
-export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max, deviceSlaveId }: {
-  t: T; groups: PickerGroup[]; initial: Set<number>; onClose: () => void; onApply: (s: Set<number>) => void; max?: number; deviceSlaveId?: number
+export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max, deviceSlaveId, openingContext, contextCurrent = true, restoreFocus = true }: {
+  t: T; groups: PickerGroup[]; initial: Set<number>; onClose: () => void; onApply: (s: Set<number>) => void; max?: number; deviceSlaveId?: number; openingContext?: string; contextCurrent?: boolean; restoreFocus?: boolean
 }) {
   const [draft, setDraft] = useState<Set<number>>(() => new Set(initial))
   const [search, setSearch] = useState('')
   const [source, setSource] = useState('')
   const [selectedOnly, setSelectedOnly] = useState(false)
-  const context = pickerContext(groups, deviceSlaveId, max), [openedContext] = useState(context), invalidated = useRef(false)
-  if (context !== openedContext) invalidated.current = true
+  const context = pickerContext(groups, deviceSlaveId, max), [openedContext] = useState(openingContext ?? context), invalidated = useRef(false)
+  if (!contextCurrent || context !== openedContext) invalidated.current = true
   const blocked = invalidated.current
   const titleId = useId(), countId = titleId + '-count', limitId = titleId + '-limit', contextId = titleId + '-context'
   const description = countId + ' ' + contextId + (max === undefined ? '' : ' ' + limitId), atLimit = max !== undefined && draft.size >= max
@@ -27,7 +27,7 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
   useEffect(() => { if (source && !sources.includes(source)) setSource('') }, [sourceKey, source])
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null
-    return () => previous?.focus()
+    return () => { if (restoreFocus) previous?.focus() }
   }, [])
   return (
     <div className="modal-mask">
@@ -85,15 +85,4 @@ export function RegisterSelectModal({ t, groups, initial, onClose, onApply, max,
   )
 }
 
-export function RegisterSelectButton({ t, groups, selected, onApply, max, deviceSlaveId }: {
-  t: T; groups: PickerGroup[]; selected: Set<number>; onApply: (s: Set<number>) => void; max?: number; deviceSlaveId?: number
-}) {
-  const [show, setShow] = useState(false)
-  const total = groups.reduce((n, g) => n + g.registers.length, 0)
-  return (
-    <>
-      <button className="btn reg-picker-trigger" onClick={() => setShow(true)}>{t('selectRegisters')} <span>{selected.size}/{total}</span></button>
-      {show && <RegisterSelectModal t={t} groups={groups} max={max} deviceSlaveId={deviceSlaveId} initial={selected} onClose={() => setShow(false)} onApply={(s) => { onApply(s); setShow(false) }} />}
-    </>
-  )
-}
+export { RegisterSelectButton } from './DeferredRegisterPicker'

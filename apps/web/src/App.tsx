@@ -35,7 +35,7 @@ import { PointBookImportResult, type PointBookResult } from './PointBookImportRe
 import { capturePointBookOpening, pointBookOpeningMatches, pointBookReplacementPrompt } from './pointbook-confirmation'
 import { InvalidPointBookReportError, pointBookReportKind, uploadPointBook as sendPointBook, type PointBookReport } from './pointbook-result'
 import { PointLabel, buildPointLabels, type PointLabelData } from './PointLabel'
-import { RegisterSelectButton } from './RegisterPicker'
+import { RegisterSelectButton } from './DeferredRegisterPicker'
 import { sourceKey, sourceSample, withRegisterSources } from '../../../packages/core/src/sample-source.ts'
 import { decodeHistoricalSample, historyVerificationLabel } from '../../../packages/core/src/history-integrity.ts'
 import type { DeviceFields } from './DeviceModal'

@@ -1,5 +1,6 @@
 import React, { useId, useRef, useState } from 'react'
-import { RegisterSelectModal, type PickerGroup } from './RegisterPicker'
+import { DeferredRegisterSelectModal as RegisterSelectModal } from './DeferredRegisterPicker'
+import type { PickerGroup } from './register-picker'
 import { LIVE_WATCH_LIMIT, liveWatchResult, type LiveWatchSelection } from './live-watch-list'
 
 export function LiveWatchList({ selection, scope, only, matches, groups, deviceSlaveId, t, onSelect, onOnly, onClear, english = false }: {
