@@ -6,6 +6,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import * as curve from '../apps/web/src/live-curve.ts'
 import { curveValue, displayNumber } from '../apps/web/src/physical-value.ts'
 import { sourceKey, withRegisterSources } from '../packages/core/src/sample-source.ts'
+import { decodeRegister, encodeRegister } from '../packages/core/src/codec.ts'
+import { historyVerificationLabel } from '../packages/core/src/history-integrity.ts'
+import { nearestHistorySample } from '../apps/web/src/history-curve.ts'
+import { evaluateLivePoints } from '../apps/web/src/live-point-filter.ts'
+import { captureLiveSnapshot, liveSnapshotJson } from '../apps/web/src/live-snapshot.ts'
 
 // Execute actual LiveCurve render expressions and interval/button callbacks with local inputs.
 // No browser, network, timers, storage, driver or hardware is created.
@@ -206,6 +211,36 @@ check('overflowing live/history scales fail visibly without emitting invalid SVG
   const manual = { ...env, yView: { min: -1, max: 1 } }; assert.equal(math(historical.body!, 'minimum', 'displayValue', manual, 'yMin, yMax, y').renderable, false)
   const safeHistory = { ...env, visibleSeries: [{ id: 1, min: 0, max: 1e-12 }] }; assert.equal(math(historical.body!, 'minimum', 'displayValue', safeHistory, 'yMin, yMax, y').renderable, true)
   const constantRelative = { ...env, relative: true, visibleSeries: [{ id: 1, min: Number.MAX_VALUE, max: Number.MAX_VALUE }] }; assert.equal(math(historical.body!, 'minimum', 'displayValue', constantRelative, 'yMin, yMax, y').renderable, true)
+  const combined = [
+    { id: 7, samples: [[now, 0], [now + 1, 1e-12]], min: 0, max: 1e-12, gapMs: 5000, color: 'red', verification: [[now, 'verified'], [now + 1, 'verified']] },
+    { id: 8, samples: [[now, Number.MAX_VALUE], [now + 1, Number.MAX_VALUE]], min: Number.MAX_VALUE, max: Number.MAX_VALUE, gapMs: 5000, color: 'blue', verification: [[now, 'verified'], [now + 1, 'verified']] }
+  ], original = structuredClone(combined)
+  let relative = false, currentYView: { min: number; max: number } | null = { min: -1, max: 1 }
+  const toggle = find(historical, node => ts.isArrowFunction(node) && node.getText(source).includes('setRelative(e.target.checked)'))!
+  const press = evaluate(toggle, { setRelative(value: boolean) { relative = value }, setYView(value: typeof currentYView) { currentYView = value } })
+  const historicalValue = (name: string) => (find(historical, node => ts.isVariableDeclaration(node) && node.name.getText(source) === name) as ts.VariableDeclaration).initializer!
+  const reading = evaluate(historicalValue('reading'), { displayNumber, valueMode: 'raw' })
+  const rowsFor = (hidden: Set<number>) => evaluate(historicalValue('readoutRows'), { visibleSeries: combined, hidden, registers: [{ id: 7 }, { id: 8 }], hover: null, reading, pointLabels: new Map([[7, { name: 'tiny' }], [8, { name: 'extreme' }]]), historyVerificationLabel, nearestHistorySample })
+  for (const value of [false, true, false]) {
+    press({ target: { checked: value } }); assert.equal(currentYView, null, 'actual relative toggle clears a prior manual Y viewport')
+    assert.equal(math(historical.body!, 'minimum', 'displayValue', { ...env, visibleSeries: combined, relative, yView: currentYView }, 'yMin, yMax, y').renderable, value)
+    const rows = rowsFor(new Set()); assert(rows[0].value.startsWith(displayNumber(1e-12) + ' [')); assert(rows[1].value.startsWith(displayNumber(Number.MAX_VALUE) + ' ['))
+  }
+  const hidden = new Set([8]); assert.equal(math(historical.body!, 'minimum', 'displayValue', { ...env, visibleSeries: combined, hidden }, 'yMin, yMax, y').renderable, true); assert.equal(rowsFor(hidden).length, 1)
+  assert.deepEqual(combined, original, 'range protection/toggle/legend exclusion never rewrites source samples or verification')
+  const floating = { ...register, alias: 'extreme snapshot', dataType: 'float64' }, floatGroups = [{ ...group, name: 'synthetic float', isActive: 1, quantity: 4, registers: [floating] }]
+  const floatChosen = (slaveId: number) => withRegisterSources([floating], floatGroups.map(g => ({ ...g, slaveId })), device)
+  const floatLatest = (value: number, slaveId: number, at: number) => Object.fromEntries(encodeRegister('float64', value).map((rawValue, i) => [sourceKey(1, 'holding-register', i, slaveId), { rawValue, slaveId, quality: 'good', timestamp: new Date(at).toISOString(), batchId: 'float-' + slaveId }]))
+  const latest = floatLatest(Number.MAX_VALUE, 1, now), buffer = curve.sampleCurve({}, floatChosen(1), latest, 1, now, 5000, new Set()), saved = structuredClone(buffer), displayed = render({ buffer, now }, floatChosen(1))
+  assert.equal(math((component as ts.FunctionExpression).body, 'low', 'y', { series: displayed.series, size: { w: 800, h: 360 }, startTime: now - 60000, endTime: now }, 'low, high, y').renderable, false)
+  assert.equal(displayed.readings[0].value, displayNumber(Number.MAX_VALUE))
+  const snapshotDevice = { ...device, isActive: 1, name: 'synthetic numeric snapshot' }, views = new Map([[7, { value: displayed.readings[0].value as string, label: null, covered: false, invalid: false }]])
+  const capture = captureLiveSnapshot({ device: snapshotDevice, groups: floatGroups, latest, views, states: evaluateLivePoints(floatGroups, views, latest, snapshotDevice, [], {}, now, 5000), visibleIds: new Set([7]), filters: { search: '', source: '', mode: 'all' }, rulesReady: false, observedAt: now, capturedAt: now, thresholdMs: 5000 })
+  const json = JSON.parse(liveSnapshotJson(capture)); assert.equal(json.points[0].display.raw, displayNumber(Number.MAX_VALUE)); assert.equal(decodeRegister('float64', json.points[0].words.map((word: any) => word.sample.rawValue)), Number.MAX_VALUE); assert.equal(json.automaticEligible, false)
+  const switched = render({ buffer, now }, floatChosen(2)); assert.deepEqual(switched.series[0].points, []); assert.equal(switched.readings[0].value, '—')
+  const switchedScale = math((component as ts.FunctionExpression).body, 'low', 'y', { series: switched.series, size: { w: 800, h: 360 }, startTime: now - 60000, endTime: now }, 'hasData, y'); assert.equal(switchedScale.renderable, true); assert.equal(switchedScale.hasData, false, 'new source without samples must not retain the old extreme-range failure')
+  const recovered = curve.sampleCurve(buffer, floatChosen(2), floatLatest(0, 2, now + 250), 1, now + 250, 5000, new Set()); assert.equal(render({ buffer: recovered, now: now + 250 }, floatChosen(2)).readings[0].value, '0'); assert.deepEqual(buffer, saved)
+  console.log('CURVE SCALE COMPOSITION OK: absolute/relative/manual reset, hidden extreme with zero/tiny data, preserved readouts/JSON words, source switch and valid-zero recovery; synthetic callbacks only.')
   const dictionary = evaluate((find(source, node => ts.isVariableDeclaration(node) && node.name.getText(source) === 'I18N') as ts.VariableDeclaration).initializer!, {})
   for (const owner of [component, historical]) {
     const gate = find(owner, node => ts.isConditionalExpression(node) && node.condition.getText(source) === 'scaleValid' && node.getText(source).includes("t('curveScaleUnavailable')")); assert(gate)

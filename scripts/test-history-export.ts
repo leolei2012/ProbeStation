@@ -6,6 +6,7 @@ import { captureHistoryExport, historyExportRangeLabel, historyExportUrl } from 
 import { HistoryExportModal } from '../apps/web/src/HistoryExportModal.tsx'
 import { createOfflineTestApp } from './offline-test-app.ts'
 import { Sink } from '../packages/sink/src/index.ts'
+import { encodeRegister } from '../packages/core/src/codec.ts'
 
 const t = Date.parse('2026-11-06T00:00:00.123Z'), selection = [3, 1, 3]
 const snapshot = captureHistoryExport(2, { start: t + .5, end: t + 1000.75 }, selection, 480, 'viewport')
@@ -102,5 +103,25 @@ for (const format of ['csv', 'xlsx'] as const) {
   store.queryObjectForExport = async (_id, _start, _end, selected) => { reads++; ranges = structuredClone(selected); return rowsFor(selected) }
   assert.deepEqual(await cells(await run()), ['after', '65536', '批次/来源已验证', eligible], 'a new export uses the new definition, not the prior request snapshot')
   assert.deepEqual(ranges, [{ area: 'holding-register', startAddress: 0, endAddress: 1, slaveId: 2 }]); assert.equal(reads, 2)
+}
+// Plot-only unavailable/relative/legend states must never trim or normalize exported source values.
+{
+  const device = { id: 7, mode: 'master' }, group = { id: 10, slaveId: 1, functionCode: 3, startAddress: 0, quantity: 8 }
+  const points = [0, 4].map((startAddress, i) => ({ id: 101 + i, objectId: 7, groupId: 10, alias: i ? 'extreme' : 'zero and tiny', functionCode: 3, startAddress, dataType: 'float64' }))
+  const data = [1, 2].flatMap(slaveId => [0, 1, 2].flatMap(i => points.flatMap((point, index) => encodeRegister('float64', index ? (slaveId === 1 ? Number.MAX_VALUE : -Number.MAX_VALUE) : i === 1 ? (slaveId === 1 ? 1e-12 : -1e-12) : 0).map((rawValue, offset) => ({ objectId: 7, area: 'holding-register', address: point.startAddress + offset, slaveId, rawValue, quality: 'good', ts: new Date(t + i * 100).toISOString(), timestampMs: t + i * 100, batchId: slaveId + '-' + i + '-' + point.id })))))
+  const before = structuredClone(data); let reads = 0
+  const sink = new Sink({ config: { getObject: () => device, listGroups: () => [group], listRegistersByObject: () => points }, store: { async queryObjectForExport(_id: number, _start: string, _end: string, ranges: any[]) { reads++; assert(ranges.every(range => range.slaveId === group.slaveId)); return data.filter(row => ranges.some(range => range.area === row.area && range.slaveId === row.slaveId && row.address >= range.startAddress && row.address <= range.endAddress)) } } })
+  for (const slaveId of [1, 2]) {
+    group.slaveId = slaveId
+    const request = captureHistoryExport(7, { start: t, end: t + 200 }, [101, 102], 0, 'full'), url = new URL(historyExportUrl('csv', request), 'http://test.invalid')
+    for (const flag of ['relative', 'hidden', 'scaleValid', 'max_points']) assert.equal(url.searchParams.has(flag), false, 'export is selected raw history, not the plot presentation')
+    const expected = ['0', slaveId === 1 ? '1e-12' : '-1e-12', '0'], extreme = String(slaveId === 1 ? Number.MAX_VALUE : -Number.MAX_VALUE)
+    const csv = (await sink.exportCsv(7, request.start, request.end, request.registerIds)).split('\n').map(row => row.split(',')); assert.equal(csv.length, 4)
+    assert.deepEqual(csv.slice(1).map(row => row[1]), expected); assert.deepEqual(csv.slice(1).map(row => row[4]), [extreme, extreme, extreme]); assert(csv.slice(1).every(row => row[2] === '批次/来源已验证' && row[3] === 'true' && row[5] === '批次/来源已验证' && row[6] === 'true'))
+    const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(await sink.exportXlsx(7, request.start, request.end, request.registerIds) as any); const sheet = workbook.getWorksheet('data')!
+    assert.deepEqual([2, 3, 4].map(row => sheet.getCell('B' + row).value), expected); assert.deepEqual([2, 3, 4].map(row => sheet.getCell('E' + row).value), [extreme, extreme, extreme])
+  }
+  assert.equal(reads, 4); assert.deepEqual(data, before, 'export source changes do not rewrite either source data')
+  console.log('HISTORY NUMERIC EXPORT OK: actual CSV/XLSX retain zero, tiny and +/-MAX strings, source identity/eligibility and all selected raw rows; plot flags absent; synthetic query only.')
 }
 console.log('HISTORY EXPORT OK: exact range/selection/milliseconds/timezones, real CSV/XLSX, batch status/empty/failure/retry, and actual Sink in-flight mutable definition/source/width isolation versus fresh export; isolated temporary or pure mock data only, no production service/device/model I/O')
