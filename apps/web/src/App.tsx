@@ -111,6 +111,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointSource: '配置从站', pointSourceUnknown: '配置来源未知',
     pickerSource: '从站', pickerAllSources: '全部从站', pickerSourceUnknown: '来源未知', pickerSearch: '搜索名称、地址或点位编号（id:编号）', pickerClearFilters: '清除筛选', pickerSelectVisible: '选择筛选结果', pickerClearSelection: '清空全部选择',
     connectionUnverified: '设备连接状态未核实',
+    diagnosticSourceNote: '后台报告未绑定本页配置版本；通知可能延迟或遗漏，需核对来源。',
     sampleTimeUnverified: '采样时间超前，年龄未核实',
     histExportTooLarge: '超过 {n} 条原始行，导出会被截断，已停止生成文件。请取消并减少点位或缩小时间范围后重试。', histExportPreparing: '正在生成导出，可取消本页等待…', histExportTimeout: '导出等待超过 30 秒，本页已停止等待，后台可能继续生成。请缩小时间范围后重试。',
     histExportFull: '导出完整时间范围', histExportViewport: '导出当前缩放区间', histExportSelected: '{n} 个已选点位 · 原始历史（含批次状态）', histExportHint: '按所示时间范围导出，不受图例显隐、Y 轴范围或降采样影响。只读取已选点位所需的数据区和原始字，每次最多 20 万条；超过时请减少点位或缩小时间范围。上限不是导出表格的行数。文件按时间戳解码归组，非逐批原始记录；同时间重复字等无法核实值留空且标未知。未知不等于零或设备故障。',
@@ -199,6 +200,7 @@ const I18N: Record<Lang, Record<string, string>> = {
     pointSource: 'Configured slave', pointSourceUnknown: 'Configured source unknown',
     pickerSource: 'Slave', pickerAllSources: 'All slaves', pickerSourceUnknown: 'Unknown source', pickerSearch: 'Search name, address or point ID (id:number)', pickerClearFilters: 'Clear filters', pickerSelectVisible: 'Select results', pickerClearSelection: 'Clear selection',
     connectionUnverified: 'Device connection unverified',
+    diagnosticSourceNote: 'Reports are not bound to this page’s config version; delayed/missed updates require source checks.',
     sampleTimeUnverified: 'Sample time ahead; age unverified',
     histExportTooLarge: 'More than {n} raw rows: exporting would truncate the data, so no file was generated. Cancel, select fewer points or narrow the time range and retry.', histExportPreparing: 'Preparing an export. You can stop waiting…', histExportTimeout: 'This page stopped waiting after 30 seconds. Backend generation may continue. Narrow the range before retrying.',
     histExportFull: 'Export full time range', histExportViewport: 'Export zoomed time range', histExportSelected: '{n} selected points · Raw history with batch status', histExportHint: 'Export the stated time range regardless of legend visibility, Y-axis limits or downsampling. Read only the raw words required by selected points, up to 200,000 rows. Select fewer points or narrow the range if exceeded. This is not the number of spreadsheet rows. Files group decoded values by timestamp, not individual batches; duplicate words at the same time and other unverifiable values are blank and unknown. Unknown does not mean zero or a device fault.',
@@ -770,6 +772,7 @@ export default function App() {
             <input className="device-search" disabled={sortingDevices} aria-label={t('searchDevices')} placeholder={t('searchDevices')} value={deviceSearch} onChange={(e) => setDeviceSearch(e.target.value)} />
             <div className="sidebar-section">{t('devices')} · {devices.length.toString().padStart(2, '0')}<button className="sort-devices-btn" aria-pressed={sortingDevices} onClick={() => { setSortingDevices(!sortingDevices); setDraggedDevice(null); setDropTarget(null) }}>{t(sortingDevices ? 'finishSorting' : 'sortDevices')}</button></div>
             {sortingDevices && <p className="device-sort-hint">{t('sortingHint')}</p>}
+            <p className="chart-hint diagnostic-source-note" style={{ padding: '0 8px' }}>{t('diagnosticSourceNote')}</p>
             <div className="device-list">
               {visibleDevices.map((d, index) => (
                 <div key={d.id} data-device-id={d.id} className={'device-item' + (selectedId === d.id ? ' active' : '') + (draggedDevice === d.id ? ' dragging' : '') + (dropTarget === d.id ? ' drop-target' : '')}>
@@ -792,7 +795,7 @@ export default function App() {
                   onPointerCancel={() => { setDraggedDevice(null); setDropTarget(null) }}
                   onLostPointerCapture={() => { setDraggedDevice(null); setDropTarget(null) }}>⠿</span>}
                 <button className="device-select" aria-current={selectedId === d.id ? 'page' : undefined} onClick={() => { if (!canNavigate('monitor', d.id)) return; setDataTarget(null); setSelectedId(d.id); setView('monitor'); if (window.innerWidth <= 768) setCollapsed(true) }}>
-                  <span className={'device-dot' + (realtime.status === 'connected' && deviceConnected[d.id] === true ? ' on' : '')} title={realtime.status !== 'connected' || deviceConnected[d.id] === undefined ? t('connectionUnverified') : undefined} />
+                  <span className={'device-dot' + (realtime.status === 'connected' && deviceConnected[d.id] === true ? ' on' : '')} title={realtime.status !== 'connected' || deviceConnected[d.id] === undefined ? t('connectionUnverified') : t('diagnosticSourceNote')} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="device-name">{d.name}</div>
                     <div className="device-sub">{d.transport === 'rtu' ? (d.serialPath || 'RTU') : (d.ip + ':' + d.port)}</div>
@@ -954,12 +957,13 @@ function DeviceView({ drafts, onLeaveDrafts, onNavigate, configurationReady, dev
       <div className="section-eyebrow">{t('overview')}</div>
       <div className="device-head">
         <span className="name">{device.name}</span>
-        <span className={'status-badge' + (device.isActive && connected ? ' on' : '')}>{device.mode === 'slave' ? !device.isActive ? '从站已停止' : connected === undefined ? t('connectionUnverified') : connected ? '从站运行中' : '从站未启动' : !device.isActive ? t('pausedData') : !groups.some(g => g.isActive) ? t('noActiveGroups') : connected === undefined ? t('connectionUnverified') : connected ? t('sampling') : t('connectionPending')}</span>
+        <span className={'status-badge' + (device.isActive && connected ? ' on' : '')} title={t('diagnosticSourceNote')}>{device.mode === 'slave' ? !device.isActive ? '从站已停止' : connected === undefined ? t('connectionUnverified') : connected ? '从站运行中' : '从站未启动' : !device.isActive ? t('pausedData') : !groups.some(g => g.isActive) ? t('noActiveGroups') : connected === undefined ? t('connectionUnverified') : connected ? t('sampling') : t('connectionPending')}</span>
         <div style={{ flex: 1 }} />
         <button className="btn" disabled={busy} onClick={() => onToggle(device.id)}>{device.mode === 'slave' ? device.isActive ? '停止从站' : '启动从站' : device.isActive ? t('disconnect') : t('connect')}</button>
         <button className="btn" onClick={() => setShowEdit(true)}>{t('edit')}</button>
         <button className="btn danger" disabled={busy} onClick={() => onDelete(device.id)}>{t('deleteDevice')}</button>
       </div>
+      <p className="chart-hint diagnostic-source-note">{t('diagnosticSourceNote')}</p>
       <div className="main-sub">{device.mode === 'slave' ? '从站 / Slave' : '主站 / Master'} · Modbus {device.transport.toUpperCase()} · {device.transport === 'rtu' ? (device.serialPath || 'RTU') : (device.ip + ':' + device.port)} · {t('groupCount').replace('{n}', String(groups.length))} · {t('regCount').replace('{n}', String(registers.length))}</div>
       {realtime.status !== 'connected' && <div className="connection-notice" role="status">{t(fallbackOk === true ? 'pageConnection' : fallbackOk === false ? 'pageUpdateFailed' : 'pageUpdateTrying')}</div>}
       <div className="sampling-summary" title={t('ageHint').replace('{n}', String(Math.round(threshold / 1000)))}>
