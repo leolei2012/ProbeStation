@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import ts from 'typescript'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { captureLiveSnapshot, liveSnapshotJson } from '../apps/web/src/live-snapshot.ts'
+import { captureLiveSnapshot, liveSnapshotJson, downloadLiveSnapshot, liveSnapshotFilename } from '../apps/web/src/live-snapshot.ts'
 import { compareLiveSnapshots, liveSnapshotComparisonKey, type FrozenLiveObservation } from '../apps/web/src/live-snapshot-comparison.ts'
 import { LiveSnapshotComparison } from '../apps/web/src/LiveSnapshotComparison.tsx'
 import { encodeRegister, decodeRegister } from '../packages/core/src/codec.ts'
@@ -156,5 +156,74 @@ await check('actual page channel reconnect cannot validate cached or partial wor
     f.advance(1000); next.message({ type: 'latest', data: input([65538], 2000, 'uint32').latest }); assert.equal(liveSnapshotJson(a.snapshot), jsonA); assert.equal(liveSnapshotJson(b.snapshot), jsonB); assert.equal(model.html(), html); assert.equal(changed(a, b).rows[0].after.display.raw, '65537'); assert.equal(observe().snapshot.points[0].display.raw, '65538')
     f.advance(6000); model.update(observe()); assert.equal(changed(a, observe()).rows[0].state, 'unknown'); assert(model.html().includes('样本缺失、异常、过期或批次未核实')); assert(!model.html().includes('<td>原始字未变化'))
   } finally { model?.driver.dispose(); f.close() }
+})
+for (const english of [false, true]) for (const kind of ['normal', 'one-future', 'observed-backward', 'captured-backward', 'same-ms', 'unchanged'] as const) await check('frozen age/clock/baseline/export ' + english + '/' + kind, async () => {
+  const baseInput = input([10], 0, 'uint32'), nextInput = input([kind === 'unchanged' ? 10 : 11], kind === 'same-ms' ? 0 : 1000, 'uint32', 'current-batch')
+  baseInput.observedAt = origin + 2000; baseInput.capturedAt = origin + 3000
+  nextInput.observedAt = origin + 3000; nextInput.capturedAt = origin + 4000
+  if (kind === 'one-future') Object.values(nextInput.latest)[0].timestampMs = origin + 120000
+  if (kind === 'observed-backward') nextInput.observedAt = origin - 2000
+  if (kind === 'captured-backward') nextInput.capturedAt = origin - 1000
+  if (kind === 'same-ms') { baseInput.observedAt = baseInput.capturedAt = nextInput.observedAt = nextInput.capturedAt = origin }
+  for (const data of [baseInput, nextInput]) {
+    for (const [index, sample] of Object.values(data.latest).entries()) {
+      const time = sample.timestampMs!
+      sample.timestamp = index === 0 ? new Date(time + 8 * 3600000).toISOString().slice(0, -1).replace(/(\.\d{3})$/, part => part + '000456') + '+08:00' : new Date(time).toISOString()
+      assert.equal(Date.parse(sample.timestamp), time)
+    }
+    data.states = evaluateLivePoints(data.groups, data.views, data.latest, data.device, [], {}, data.observedAt, data.thresholdMs)
+  }
+  const base = freeze(baseInput), current = freeze(nextInput), jsonA = liveSnapshotJson(base.snapshot), jsonB = liveSnapshotJson(current.snapshot)
+  const times = (snapshot: typeof current.snapshot) => snapshot.points.flatMap(point => point.words.map(word => [word.sample?.timestamp, word.sample?.timestampMs]))
+  const originalTimes = JSON.stringify([times(base.snapshot), times(current.snapshot)]), expectedAge = kind === 'same-ms' ? 0 : kind === 'one-future' || kind === 'observed-backward' ? null : 2
+  assert.equal(current.snapshot.points[0].health.ageSeconds, expectedAge)
+  const comparison = changed(base, current)
+  if (kind === 'captured-backward') assert.equal(comparison.status, 'time')
+  else { assert.equal(comparison.status, 'ready'); assert.equal(comparison.rows[0].state, expectedAge === null ? 'unknown' : kind === 'unchanged' ? 'unchanged' : 'changed'); if (expectedAge === null) assert.equal(comparison.rows[0].reason, 'samples') }
+  const model = ui(base, english); model.baseline(); model.update(current)
+  if (kind === 'captured-backward') assert(model.html().includes(english ? 'Snapshot times are invalid or reversed' : '快照时间倒退或无效'))
+  if (expectedAge === null) assert(model.html().includes(english ? 'Missing, invalid, stale or unverified-batch samples' : '样本缺失、异常、过期或批次未核实'))
+  let blob: Blob | undefined, attempts = 0, removed = 0, failed = false, filename = ''
+  const queued: Array<() => void> = [], revoked: string[] = []
+  const urls = { createObjectURL(value: Blob) { blob = value; return 'blob:age-export-' + ++attempts }, revokeObjectURL(value: string) { revoked.push(value) } }
+  const doc = { createElement() { const link = { href: '', download: '', click() { filename = link.download; if (failed) throw new Error('synthetic local failure') }, remove() { removed++ } }; return link }, body: { appendChild() {} } } as any
+  const exportCurrent = (snapshot: typeof current.snapshot) => downloadLiveSnapshot(snapshot, doc, urls, fn => queued.push(fn))
+  const panel = hookDriver('LiveSnapshotPanel.tsx', 'LiveSnapshotPanel', { downloadLiveSnapshot: exportCurrent }, { snapshot: current.snapshot, english, close() {} })
+  const readAge = () => { const html = renderToStaticMarkup(panel.tree), row = html.match(/<tbody><tr>([\s\S]*?)<\/tr><\/tbody>/)![1], cells = [...row.matchAll(/<td(?: [^>]*)?>([\s\S]*?)<\/td>/g)]; assert(html.includes(english ? 'Age at freeze (s)' : '冻结时年龄（秒）')); assert(html.includes(english ? 'does not increase after freezing' : '冻结后不会递增')); assert.equal(cells[3][1].split('<')[0], expectedAge === null ? english ? 'Unknown' : '未知' : String(expectedAge)); return html }
+  const download = () => { panel.one('button', props => props.children === (english ? 'Download JSON' : '下载 JSON')).props.onClick(); panel.render() }
+  const clock = Date.now
+  const exportedNames = new Set<string>()
+  try {
+    Date.now = () => origin + 86400000; const html = readAge(), compared = model.html()
+    Date.now = () => origin - 86400000; panel.render(); model.driver.render(); assert.equal(readAge(), html); assert.equal(model.html(), compared); assert.deepEqual(changed(base, current), comparison)
+    for (const [attempt, fail] of [false, true, false].entries()) {
+      Date.now = () => origin + (attempt % 2 ? -86400000 : 86400000)
+      failed = fail; download(); readAge(); exportedNames.add(filename); assert.equal(filename, liveSnapshotFilename(current.snapshot)); assert.deepEqual(JSON.parse(await blob!.text()), current.snapshot)
+      if (fail) assert(renderToStaticMarkup(panel.tree).includes(english ? 'Local download could not be completed or confirmed' : '本地下载未完成'))
+      else assert(!renderToStaticMarkup(panel.tree).includes(english ? 'Local download could not be completed or confirmed' : '本地下载未完成'))
+      queued.shift()!(); assert.equal(revoked.length, attempts); assert.equal(removed, attempts)
+      assert.equal(liveSnapshotJson(base.snapshot), jsonA); assert.equal(liveSnapshotJson(current.snapshot), jsonB); assert.equal(JSON.stringify([times(base.snapshot), times(current.snapshot)]), originalTimes)
+      assert.equal(model.html(), compared, 'export, including a failed download, cannot replace or clear the baseline')
+    }
+    assert.equal(attempts, 3); assert.equal(exportedNames.size, 1, 'forward/backward wall clocks cannot rename the frozen export'); assert.equal(queued.length, 0); assert.equal(current.snapshot.automaticEligible, false)
+  } finally { Date.now = clock; panel.dispose(); model.driver.dispose() }
+})
+for (const english of [false, true]) await check('post-click cleanup failure retains age/baseline and reports uncertain download ' + english, () => {
+  const base = freeze(input([10], 0, 'uint32')), current = freeze(input([11], 1000, 'uint32')), jsonA = liveSnapshotJson(base.snapshot), jsonB = liveSnapshotJson(current.snapshot)
+  const model = ui(base, english); model.baseline(); model.update(current); const compared = model.html()
+  let clicks = 0, removed = 0, revoked = 0
+  const queued: Array<() => void> = [], doc = { createElement() { return { href: '', download: '', click() { clicks++ }, remove() { removed++; throw new Error('synthetic cleanup after accepted click') } } }, body: { appendChild() {} } } as any
+  const adapter = (snapshot: typeof current.snapshot) => downloadLiveSnapshot(snapshot, doc, { createObjectURL: () => 'blob:cleanup-test', revokeObjectURL() { revoked++ } }, fn => queued.push(fn))
+  const panel = hookDriver('LiveSnapshotPanel.tsx', 'LiveSnapshotPanel', { downloadLiveSnapshot: adapter }, { snapshot: current.snapshot, english, close() {} })
+  try {
+    panel.one('button', props => props.children === (english ? 'Download JSON' : '下载 JSON')).props.onClick(); panel.render()
+    assert.equal(clicks, 1); assert.equal(removed, 1); const html = renderToStaticMarkup(panel.tree)
+    const cells = [...html.match(/<tbody><tr>([\s\S]*?)<\/tr><\/tbody>/)![1].matchAll(/<td(?: [^>]*)?>([\s\S]*?)<\/td>/g)]; assert.equal(cells[3][1], '0', 'post-click cleanup failure cannot change frozen age')
+    assert(html.includes(english ? 'could not be completed or confirmed' : '未完成或无法确认'), 'an accepted download click followed by cleanup failure cannot be called definitely incomplete')
+    assert(html.includes(english ? 'check browser downloads before retrying' : '先核对浏览器下载记录再重试'))
+    assert(html.includes(english ? 'Age at freeze (s)' : '冻结时年龄（秒）')); assert.equal(model.html(), compared)
+    assert.equal(liveSnapshotJson(base.snapshot), jsonA); assert.equal(liveSnapshotJson(current.snapshot), jsonB)
+    assert.equal(queued.length, 1); queued.shift()!(); assert.equal(revoked, 1)
+  } finally { panel.dispose(); model.driver.dispose() }
 })
 console.log('SNAPSHOT COMPARE TEST OK: ' + passed + ' pure/source/UI groups; synthetic snapshots only, no requests, writes, browser storage, downloaded files, database, hardware or models')
