@@ -43,6 +43,36 @@ try {
   await flow.preview('mock.json', async () => text)
   assert.equal(flow.snapshot().phase, 'ready'); assert.equal(flow.snapshot().preview!.devices[0].sameName, true)
   assert.equal(target.listObjects().length, 1, 'a new preview is read-only, even after an uncertain restore')
+  // A proxy can replace a committed response with the same refusal status as a pre-write rejection.
+  // A response status is not proof that the target configuration remained unchanged.
+  for (const status of [400, 403, 413, 415]) for (const committed of [true, false]) {
+    const before = target.listObjects().length; let sent = 0
+    const file = new Blob([text], { type: 'application/json' })
+    const replay = new ConfigBackupFlow(async (url, options) => {
+      const restoring = String(url).endsWith('/restore')
+      if (restoring) sent++
+      if (!restoring || committed) {
+        const res = await api.inject({ method: 'POST', url: String(url), headers: options!.headers as Record<string, string>, payload: options!.body as string })
+        assert.equal(res.statusCode, 200)
+        if (!restoring) return new Response(res.body, { status: res.statusCode })
+      }
+      return response({ error: 'synthetic refusal response' }, status)
+    })
+    await replay.preview('synthetic-refusal-' + status + '.json', () => file.text())
+    assert.equal(replay.snapshot().phase, 'ready'); assert.equal(target.listObjects().length, before, 'preview stays read-only')
+    await replay.restore(); assert.equal(replay.snapshot().phase, 'rejected', 'existing response classification remains compatible')
+    assert.equal(target.listObjects().length, before + Number(committed))
+    console.log(`BACKUP REFUSAL PROOF: status=${status}, actualAdditions=${Number(committed)}`)
+    for (const zh of [true, false]) {
+      const markup = renderToStaticMarkup(createElement(ConfigBackupView, { state: replay.snapshot(), zh, onChoose() {}, onCancel() {}, onRestore() {} }))
+      assert(!markup.includes(zh ? '服务端未接受本次恢复' : 'The server did not accept this restore'), 'a refusal response cannot prove the restore did not apply')
+      assert(markup.includes(zh ? '仅凭响应不能确认' : 'response alone does not confirm'))
+      assert(markup.includes(zh ? '先刷新设备列表' : 'Refresh the device list'))
+      assert(!markup.includes(zh ? '确认新增并恢复' : 'Confirm restore'))
+    }
+    replay.cancelPreview(); await replay.restore(); await replay.restore(); assert.equal(sent, 1, 'single-use preview is never automatically retried')
+    assert.equal(target.listObjects().length, before + Number(committed))
+  }
 } finally { await api.close(); (source as any).db.close(); (target as any).db.close() }
 
 let restoreCalls = 0, previewCalls = 0
