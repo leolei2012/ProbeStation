@@ -5,6 +5,9 @@ import { hookDriver } from './fixtures/component-hook-driver.ts'
 import { AlarmPendingContext, type AlarmPendingContextProps } from '../apps/web/src/AlarmPendingContext.tsx'
 import { DeferredAlarmPendingContext, alarmPendingResource } from '../apps/web/src/DeferredAlarmPendingContext.tsx'
 import { AlarmPanel } from '../apps/web/src/AlarmPanel.tsx'
+import { AlarmHistoryAction } from '../apps/web/src/AlarmHistoryAction.tsx'
+import { alarmHistoryState } from '../apps/web/src/alarm-history.ts'
+import { openAlarmHistory } from '../apps/web/src/alarm-history.ts'
 import { AlarmRulesReader } from '../apps/web/src/alarm-rule-read.ts'
 import { DeferredResource } from '../apps/web/src/deferred-resource.ts'
 import { AlarmWriteGate, alarmOpeningState } from '../apps/web/src/alarm-settings-save.ts'
@@ -238,5 +241,52 @@ await check('synthetic large-rule refresh separates full-panel evaluation from b
     view.dispose(); panel.dispose()
   }
   console.log('PENDING SCALE MEASURE: ' + JSON.stringify(measurements) + '; synthetic Node component refresh / SSR, not browser latency or a capacity guarantee')
+})
+await check('matching cards are bounded without hiding rule totals, and paged history follows the displayed source and current verification', () => {
+  const points = Array.from({ length: 41 }, (_, i) => ({ ...reg, id: 101 + i, startAddress: i, alias: 'MATCH-' + i }))
+  let rules = points.map(point => ({ ...rule, id: point.id, registerId: point.id })), ready = true, reading = false, clock = now
+  const groups = [{ ...group, slaveId: 2, registers: points }], latest = Object.fromEntries(points.map(point => [sourceKey(1, 'holding-register', point.startAddress, 2), { rawValue: 200, quality: 'good', timestamp: new Date(now).toISOString(), slaveId: 2, batchId: 'B' }]))
+  const targets: any[] = [], value = { t, device: { id: 1, ...props.device }, groups, latest, groupErrors: {}, now, threshold: 5000, configurationReady: true, api: async () => { assert.fail('no I/O') }, onHistory(target: unknown) { targets.push(target) } }
+  const panel = hookDriver('AlarmPanel.tsx', 'AlarmPanel', scope({ AlarmWriteGate, alarmOpeningState, readPointAlarmObservation, alarmMatches, alarmRuleSummaryKey, AlarmRuleReadStatus, DeferredAlarmPendingContext, AlarmHistoryAction, alarmHistoryState, Date: { now: () => clock }, symbols: { '>': '>' }, useAlarmRules: () => ({ rules, ready, reading, state: { status: ready ? 'ready' : 'error', reading, rules, updatedAt: now }, lock: { current: false } }) }), value)
+  const cards = () => elements(panel.tree).filter(node => node.type === AlarmHistoryAction)
+  const pager = () => panel.one('div', p => p.role === 'group' && p.className === 'toolbar')
+  const next = () => { const button = elements(pager()).find(node => node.type === 'button' && node.props.children === '下一页')!; button.props.onClick(); panel.render() }
+  try {
+    for (const size of [1, 20, 21, 40, 41]) { rules = points.slice(0, size).map(point => ({ ...rule, id: point.id, registerId: point.id })); panel.render(); assert.equal(cards().length, Math.min(size, 20), 'only the displayed card page should be constructed') }
+    assert(renderToStaticMarkup(pager()).includes('41'))
+    const jump = (page: number) => { panel.one('input', p => p.type === 'number').props.onChange({ currentTarget: { valueAsNumber: page } }); panel.render() }
+    for (const invalid of [NaN, 0, -1, 1.5, 4, Infinity]) { jump(invalid); assert.equal(cards()[0].props.state.registerId, 101) }
+    jump(3); assert.equal(cards()[0].props.state.registerId, 141); jump(1)
+    const seen = [...cards().map(node => node.props.state.registerId)]; next(); seen.push(...cards().map(node => node.props.state.registerId)); next(); seen.push(...cards().map(node => node.props.state.registerId))
+    assert.deepEqual(seen, points.map(point => point.id)); assert.equal(cards().length, 1)
+    const action = cards()[0].props; assert.equal(action.state.registerId, 141); assert.equal(action.state.slaveId, 2)
+    assert.equal(openAlarmHistory(action.resolve, value.onHistory).kind, 'ready'); assert.equal(targets.length, 1); assert.equal(targets[0].registerId, 141)
+    reading = true; panel.render(); assert.equal(cards()[0].props.state.kind, 'rules')
+    reading = false; ready = false; panel.render(); assert.equal(cards()[0].props.state.kind, 'rules')
+    ready = true; panel.render({ ...value, configurationReady: false }); assert.equal(cards()[0].props.state.kind, 'waiting')
+    panel.render(value); clock = now + 6000; assert.equal(openAlarmHistory(cards()[0].props.resolve, value.onHistory).kind, 'time'); assert.equal(targets.length, 1)
+    clock = now; panel.render({ ...value, t: (key: string) => key === 'cancel' ? 'Cancel' : key }); assert(renderToStaticMarkup(pager()).includes('Cached matching rules')); assert(renderToStaticMarkup(panel.tree).includes('browser Find covers only the displayed page'))
+    rules = rules.slice(0, 1); panel.render(value); assert.equal(cards().length, 1); assert.equal(cards()[0].props.state.registerId, 101)
+    rules = []; panel.render(); assert.equal(cards().length, 0); assert.throws(() => pager()); assert.equal(targets.length, 1)
+  } finally { panel.dispose() }
+})
+await check('synthetic matching-rule cards measure render work with history actions without opening history', () => {
+  const measurements: unknown[] = []
+  for (const size of [1000, 5000, 10000]) {
+    const points = Array.from({ length: size }, (_, i) => ({ ...reg, id: i + 1, alias: 'SYNTHETIC-' + (i + 1), startAddress: i })), groups = [{ ...group, registers: points }]
+    const rules = points.map(point => ({ ...rule, id: point.id, registerId: point.id }))
+    const latest = Object.fromEntries(points.map(point => [sourceKey(1, 'holding-register', point.startAddress, 1), { rawValue: 200, quality: 'good', timestamp: new Date(now).toISOString(), slaveId: 1, batchId: 'synthetic' }]))
+    let opens = 0
+    const value = { t, device: { id: 1, ...props.device }, groups, latest, groupErrors: {}, now, threshold: 5000, configurationReady: true, api: async () => { assert.fail('no I/O') }, onHistory() { opens++ } }
+    const panel = hookDriver('AlarmPanel.tsx', 'AlarmPanel', scope({ AlarmWriteGate, alarmOpeningState, readPointAlarmObservation, alarmMatches, alarmRuleSummaryKey, AlarmRuleReadStatus, DeferredAlarmPendingContext, AlarmHistoryAction, alarmHistoryState, symbols: { '>': '>' }, useAlarmRules: () => ({ rules, ready: true, reading: false, state: { status: 'ready', reading: false, rules, updatedAt: now }, lock: { current: false } }) }), value)
+    try {
+      const samples: number[] = [], ssr: number[] = []; let markup = ''
+      for (let i = 0; i < 5; i++) { let start = performance.now(); panel.render({ ...value, now: now + i }); samples.push(performance.now() - start); start = performance.now(); markup = renderToStaticMarkup(panel.tree); ssr.push(performance.now() - start) }
+      const cards = elements(panel.one('div', p => p.className === 'alarm-active-list')).filter(node => node.type === AlarmHistoryAction).length
+      assert.equal(opens, 0)
+      measurements.push({ matchingRules: size, historyActionsRendered: cards, panelMedianMs: samples.sort((a, b) => a - b)[2], ssrMedianMs: ssr.sort((a, b) => a - b)[2], markupBytes: Buffer.byteLength(markup) })
+    } finally { panel.dispose() }
+  }
+  console.log('ACTIVE SCALE MEASURE: ' + JSON.stringify(measurements) + '; Node component/SSR with synthetic valid samples, not browser/network/capacity evidence')
 })
 console.log(`ALARM PENDING TEST OK: ${passed} groups; production panel, source-scoped pending evaluations, neutral bilingual context, pagination and deferred error/lifecycle; component mocks only, no API/device/database/model/browser.`)
