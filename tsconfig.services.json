@@ -127,6 +127,7 @@
     "scripts/audit-write-send-boundary.ts",
     "scripts/test-config-generation-contract.ts",
     "scripts/test-snapshot-loading.ts",
-    "scripts/test-config-multiwriter.ts"
+    "scripts/test-config-multiwriter.ts",
+    "scripts/test-controlled-send-adapter.ts"
   ]
 }

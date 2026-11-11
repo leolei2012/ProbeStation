@@ -26,6 +26,7 @@ tests.push('alarm-pending-context')
 tests.push('config-generation-contract')
 tests.push('snapshot-loading')
 tests.push('config-multiwriter')
+tests.push('controlled-send-adapter')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {
