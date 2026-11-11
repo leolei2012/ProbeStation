@@ -129,6 +129,8 @@
     "scripts/test-snapshot-loading.ts",
     "scripts/test-config-multiwriter.ts",
     "scripts/test-controlled-send-adapter.ts",
-    "scripts/audit-response-routing.ts"
+    "scripts/audit-response-routing.ts",
+    "scripts/test-device-write-block.ts",
+    "scripts/fixtures/device-write-restart.ts"
   ]
 }

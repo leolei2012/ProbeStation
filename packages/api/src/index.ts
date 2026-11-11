@@ -2,12 +2,13 @@ import { registerRecordingAttention } from './recording-attention.ts'
 import { registerAlarmSettings } from './alarm-settings.ts'
 import { registerPersistenceStatus } from './persistence-status.ts'
 import { registerRegisterWrite } from './register-write.ts'
+import { deviceWriteRefusal } from '../../core/src/device-write-policy.ts'
 import { registerLogCleanup } from './log-cleanup.ts'
 import { validSlaveId } from '../../core/src/sample-source.ts'
 import type { Context } from 'cordis'
 import type {} from './events.ts'
 import z from 'schemastery'
-import Fastify, { type FastifyInstance } from 'fastify'
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
 import compress from '@fastify/compress'
@@ -115,7 +116,7 @@ export function apply(ctx: Context, config: Config): void {
       return ota.uploadFirmware(name, version, content)
     })
     fastify.get('/api/ota/status', async (req: any) => ota.getStatus(Number((req.query as any).device_id)))
-    fastify.post('/api/ota/upgrade', async (req: any) => ota.startUpgrade((req.body as any).device_id, (req.body as any).firmware_id, (req.body as any).chunk_size))
+    fastify.post('/api/ota/upgrade', async (_req: FastifyRequest, reply: FastifyReply) => reply.code(503).header('Cache-Control', 'no-store').send(deviceWriteRefusal()))
     fastify.post('/api/ota/abort', async (req: any) => ota.abort((req.body as any).device_id))
 
     // ── Objects ─────────────────────────────────────────────

@@ -193,14 +193,17 @@ for (const transport of ['tcp', 'rtu']) await scenario(async ({ cfg, device, gro
   const point = cfg.createRegister(group.id, device.id, 'mock write', 3, 0, 'uint16'), app = Fastify()
   registerRegisterWrite(app, cfg, engine)
   try {
-    const checked = cfg.getObject(device.id)!, pending = app.inject({ method: 'POST', url: '/api/registers/' + point.id + '/write', payload: { value: 42, method: 'single' } })
+    const response = await app.inject({ method: 'POST', url: '/api/registers/' + point.id + '/write', payload: { value: 42, method: 'single' } })
+    assert.equal(response.statusCode, 503); assert.equal(response.json().code, 'DEVICE_WRITE_BLOCKED'); assert.equal(writes.length, 0)
+    // Internal service callers remain outside the REST/MCP fence; preserve this explicit counterexample.
+    const checked = cfg.getObject(device.id)!, pending = engine.write(device.id, 0, [42], 'single', 7, 'holding-register')
     await entered.promise
     cfg.updateObject(device.id, transport === 'tcp' ? { ip: 'after-write-wait.mock.invalid' } : { serialPath: 'MOCK-NEW-ONLY' })
     assert.notDeepEqual(cfg.getObject(device.id), checked)
-    release.resolve(); assert.equal((await pending).statusCode, 200)
+    release.resolve(); await pending
     assert.equal(writes.length, 1); assert.equal(writes[0].args[2], 7)
     assert.equal(transport === 'tcp' ? writes[0].target.ip : writes[0].target.serialPath, transport === 'tcp' ? 'after-write-wait.mock.invalid' : 'MOCK-NEW-ONLY')
-    console.log('POLLER WRITE SOURCE GAP: ' + transport + ' target changed after admission/precheck during mock wait; actual API/poller selects new spy driver. Not a safety pass.')
+    console.log('POLLER WRITE SOURCE GAP: ' + transport + ' REST refused; a direct internal service call still selects a changed spy driver after waiting. Internal bypass unprotected, not a safety pass.')
   } finally { release.resolve(); await app.close() }
 }, transport === 'rtu' ? { transport: 'rtu', serialPath: 'MOCK-OLD-ONLY' } : {})
 console.log('POLLER ORIGIN OK: old/new recording repro, TCP cache binding, RTU queue, source ABA/reopen/delete/role/disable, stop/reconnect/pending-connect ownership, stale errors/finalizers, chunk cancellation, one-off collision, reentrant dispatch and slave reconciliation; memory/mock only, no sockets')

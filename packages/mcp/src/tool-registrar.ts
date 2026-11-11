@@ -2,6 +2,7 @@ import type { McpServer, RegisteredTool, ToolCallback } from '@modelcontextproto
 import type { AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import type { z } from 'zod'
+import { deviceWriteRefusal } from '../../core/src/device-write-policy.ts'
 
 type SdkV3Input = Record<string, Extract<AnySchema, { _def: unknown }>>
 type Options<Shape> = { title?: string; description?: string; annotations?: ToolAnnotations; inputSchema: Shape }
@@ -10,7 +11,10 @@ type Options<Shape> = { title?: string; description?: string; annotations?: Tool
 export function toolRegistrar(server: McpServer) {
   return { registerTool<Shape extends z.ZodRawShape>(name: string, options: Options<Shape>, callback: (args: z.output<z.ZodObject<Shape>>) => CallToolResult | Promise<CallToolResult>): RegisteredTool {
     // The SDK resolves a different Zod 3 declaration copy. Adapt only this nominal boundary.
-    // The original schema/options/callback objects are forwarded; SDK runtime validation stays enabled.
-    return server.registerTool<Record<string, never>, SdkV3Input>(name, options as unknown as Options<SdkV3Input>, callback as unknown as ToolCallback<SdkV3Input>)
+    // Schemas stay intact. Unsafe direct-send callbacks are never registered.
+    const handler = name === 'write_register' || name === 'ota_upgrade'
+      ? () => ({ isError: true as const, content: [{ type: 'text' as const, text: JSON.stringify(deviceWriteRefusal()) }] })
+      : callback
+    return server.registerTool<Record<string, never>, SdkV3Input>(name, options as unknown as Options<SdkV3Input>, handler as unknown as ToolCallback<SdkV3Input>)
   } }
 }

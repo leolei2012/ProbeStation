@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ModbusSlave, Transport } from '../../slave/src/index.ts'
 import { SLAVE_AREAS, type SlaveArea } from '../../slave/src/protocol.ts'
+import { deviceWriteRefusal } from '../../core/src/device-write-policy.ts'
 export function registerSlave(app: FastifyInstance, slave?: ModbusSlave) {
   const service = () => { if (!slave) throw Object.assign(new Error('从站服务未启用'), { statusCode: 503 }); return slave }
   const transport = (value: unknown): Transport => { if (value !== 'tcp' && value !== 'rtu') throw Object.assign(new Error('请选择 TCP 或 RTU'), { statusCode: 400 }); return value }
@@ -17,10 +18,5 @@ export function registerSlave(app: FastifyInstance, slave?: ModbusSlave) {
     if (!Number.isInteger(count) || count < 1 || count > 200) throw Object.assign(new Error('每次读取 1–200 个值'), { statusCode: 400 })
     return { values: service().read(area(req.query.area), Number(req.query.address ?? 0), count) }
   })
-  app.put('/api/slave/values', async (req: any) => {
-    const b = req.body ?? {}
-    if (!Array.isArray(b.values) || !b.values.length || b.values.length > 200) throw Object.assign(new Error('每次写入 1–200 个值'), { statusCode: 400 })
-    const a = area(b.area); service().write(a, b.address, b.values)
-    return { values: service().read(a, b.address, b.values.length) }
-  })
+  app.put('/api/slave/values', async (_req, reply) => reply.code(503).header('Cache-Control', 'no-store').send(deviceWriteRefusal()))
 }

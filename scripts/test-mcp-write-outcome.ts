@@ -40,26 +40,13 @@ try {
       const factory = (ctx.get('mcp', false) as { createServer(): McpServer }).createServer
       const open = async () => { const sdk = factory(), client = new Client({ name: 'synthetic outcome', version: '1' }), [local, remote] = InMemoryTransport.createLinkedPair(); peers.push({ sdk, client, remote }); await Promise.all([sdk.connect(remote), client.connect(local)]); return peers.at(-1)! }
       const first = await open(), writeArgs = { device_id: device.id, address: 0, value: 42, area: 'holding-register' }
-      if (mode === 'log-failure' || mode === 'warning-failure') {
-        cfg.log = () => { throw Error('synthetic private log failure') }
+      if (['log-failure', 'warning-failure', 'write-ack-loss', 'write-response-loss'].includes(mode)) {
+        cfg.log = () => { throw Error('synthetic log failure must not run') }
         const result = await within(first.client.callTool({ name: 'write_register', arguments: writeArgs }))
-        assert.equal(writeCalls.length, 1, 'only the inert mock write ran')
-        assert.equal(result.isError, undefined, 'logging failure after a resolved write must not misreport the write as failed')
-        assert.deepEqual(body(result), { register_id: register.id, address: 0, area: 'holding-register', value: 42, method: 'multiple' })
-        assert.equal(warnings.length, 1); assert(warnings[0].includes('日志') && !warnings[0].includes('synthetic private'))
-      } else if (mode === 'write-ack-loss') {
-        assert.equal((await within(first.client.callTool({ name: 'write_register', arguments: writeArgs }))).isError, true)
-        assert.equal(writeCalls.length, 1); await tick(); assert.equal(writeCalls.length, 1, 'server does not replay a failed acknowledgement')
-        const second = await open(); assert.equal((await within(second.client.callTool({ name: 'write_register', arguments: writeArgs }))).isError, true); assert.equal(writeCalls.length, 2)
-        console.log('MCP OUTCOME KNOWN LIMIT: mock effect can precede acknowledgement failure; explicit retry invokes write twice, isError is not proof of no effect')
-      } else if (mode === 'write-response-loss') {
-        const pending = outcome(first.client.callTool({ name: 'write_register', arguments: writeArgs })); await within(writeEntered.promise)
-        assert.equal(writeCalls.length, 1); assert.equal(writeEffects, 0, 'the accepted mock write is still waiting')
-        await first.client.close(); assert((await within(pending)).error instanceof Error); assert.equal(writeEffects, 0)
-        finishWrite.resolve(); await within(writeDone.promise); await tick(); assert.equal(writeEffects, 1); assert.equal(writeCalls.length, 1, 'disconnect does not replay the accepted operation')
-        const second = await open(); assert.equal((await within(second.client.callTool({ name: 'write_register', arguments: writeArgs }))).isError, undefined)
-        assert.equal(writeCalls.length, 2); assert.equal(writeEffects, 2)
-        console.log('MCP OUTCOME KNOWN LIMIT: accepted mock write completes after client disconnect; only explicit new-session retry invokes a second effect')
+        assert.equal(result.isError, true); assert.equal(body(result).code, 'DEVICE_WRITE_BLOCKED'); assert.equal(body(result).retryable, false)
+        await first.client.close(); const second = await open()
+        const retry = await within(second.client.callTool({ name: 'write_register', arguments: writeArgs }))
+        assert.equal(body(retry).code, 'DEVICE_WRITE_BLOCKED'); assert.equal(writeCalls.length, 0); assert.equal(writeEffects, 0); assert.equal(warnings.length, 0)
       } else {
         const send = first.remote.send.bind(first.remote), responseReady = gate(), release = gate(), sendDone = gate(); releases.push(release.resolve)
         let armed = false
