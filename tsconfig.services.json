@@ -131,6 +131,7 @@
     "scripts/test-controlled-send-adapter.ts",
     "scripts/audit-response-routing.ts",
     "scripts/test-device-write-block.ts",
-    "scripts/fixtures/device-write-restart.ts"
+    "scripts/fixtures/device-write-restart.ts",
+    "scripts/test-rtu-lifecycle.ts"
   ]
 }

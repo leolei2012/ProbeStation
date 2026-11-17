@@ -412,12 +412,14 @@ export class SerialDriver implements ModbusDriver {
     return new Promise<any>((resolve, reject) => {
       let sp: any = null
       let settled = false
+      // Failed opens are never assigned to serialPort, so disconnect() cannot clean them up.
+      const cleanupFailedOpen = () => { if (sp) { try { sp.close(() => {}) } catch { /* best effort; preserve the original open error */ } } }
       const timer = setTimeout(() => {
         if (settled) return
         settled = true
         // 超时：open 回调始终没来。此刻 sp 可能还没 open，close() 对未 open 的端口是 no-op，尽力而为；
         // 若回调晚到会在下方二次 close。
-        if (sp) { try { sp.close() } catch { /* ignore */ } }
+        cleanupFailedOpen()
         reject(new Error(`Serial port ${options.path} open timed out after ${timeoutMs}ms`))
       }, timeoutMs)
 
@@ -426,11 +428,11 @@ export class SerialDriver implements ModbusDriver {
           clearTimeout(timer)
           if (settled) {
             // 超时之后回调才到：若此刻才打开成功，需关掉，避免句柄泄漏
-            if (!err && sp) { try { sp.close() } catch { /* ignore */ } }
+            if (!err) cleanupFailedOpen()
             return
           }
           settled = true
-          if (err) reject(err)
+          if (err) { cleanupFailedOpen(); reject(err) }
           else resolve(sp)
         })
         // 打开成功后的运行期错误（如拔出）：标记断开 + 告警；读/写路径会各自再向上抛错
@@ -438,6 +440,7 @@ export class SerialDriver implements ModbusDriver {
           if (!settled) {
             settled = true
             clearTimeout(timer)
+            cleanupFailedOpen()
             reject(err)
           } else {
             if (this.serialPort === sp) this.ready = false
@@ -451,6 +454,7 @@ export class SerialDriver implements ModbusDriver {
         if (!settled) {
           settled = true
           clearTimeout(timer)
+          cleanupFailedOpen()
           reject(e)
         }
       }

@@ -23,8 +23,8 @@ interface ModbusService {
 
 ```ts
 interface ModbusDriver {
-  connect(host: string, port: number): Promise<void>      // 建立 TCP 连接
-  disconnect(): void                                       // 关闭连接
+  connect(opts: ConnectOptions): Promise<void>               // TCP/RTU 连接参数
+  disconnect(): Promise<void>                               // 等待关闭回调或兜底期限
   isConnected(): boolean                                    // 连接是否可用
   readCoils(address: number, count: number): Promise<boolean[]>             // FC01
   readDiscreteInputs(address: number, count: number): Promise<boolean[]>    // FC02
@@ -46,7 +46,7 @@ interface ModbusDriver {
 
 ```ts
 const driver = ctx.modbus.createDriver()
-await driver.connect('192.168.90.32', 8899)
+await driver.connect({ ip: '192.168.90.32', port: 8899 })
 const regs = await driver.readHoldingRegisters(0, 47)
 await driver.disconnect()
 ```
@@ -65,11 +65,14 @@ await driver.disconnect()
 
 ## 踩坑：RTU 串口 open 静默卡死
 
+历史反馈中的原生binding挂起及USB串口掉线原因仍属推断，未用本轮模拟测试确认实机根因。新常规回归覆盖打开、失败清理、轮询错误与共享端口生命周期，见[历史反馈对照和验证边界](../../docs/develop/212-RTU历史反馈对照与打开失败清理.md)。
+
 - **症状**：CH340/CP2102 等 USB 转串口驱动可能出现「原生已占用串口，但 serialport 的
   `binding.open()` Promise 永不 settle」→ open 回调不来 → `connect()` 永久 pending →
   轮询「无数据、无错误、通信灯不闪」地静默卡死。
 - **修复**：`SerialDriver.connect()` 用 `connectTimeoutMs` 兜底——超时即 reject，并尽力
-  `close()` 半开句柄；open 失败不再被 `sp.on('error', () => {})` 吞掉，而是冒出来。
+  `close()` 半开句柄；打开阶段的事件错误、构造回调错误也统一尝试close并保留原始错误。
+  这只是清理尝试，不保证原生半开句柄确已释放。
 - **验证**：`npx tsx scripts/test-rtu-timeout.ts`（超时/失败/成功三条路径）。
 
 ## 踩坑：disconnect() 未真正关串口
@@ -79,3 +82,5 @@ await driver.disconnect()
 - **修复**：`disconnect()` 改为 `async`，用回调把 `close()` 包成 Promise 再 `await`（带 2s 超时兜底）；
   `connect()` 开头也改为 `await this.disconnect()`，避免旧口未关就开新口。
 - **验证**：`npx tsx scripts/test-rtu-release.ts`（Part 1：disconnect 真正 await close）。
+
+常规安全清单现包含 `test-rtu-lifecycle.ts` 的7组构造器注入/模拟采集器回归；旧独立脚本使用强制process.exit和较粗定时等待，不能替代新清理与错误事件断言。所有手动运行也应在已准备的隔离checkout使用现有依赖，不运行真实采集入口。
