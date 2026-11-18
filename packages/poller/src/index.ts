@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto'
 import { captureAcquisitionOrigin } from '../../core/src/acquisition-origin.ts'
 import { diagnosticsCleanupTarget } from '../../core/src/diagnostics-cleanup.ts'
 import { DiagnosticsCleanup } from './diagnostics-cleanup.ts'
+import type { GuardedWritePlan } from '../../core/src/guarded-register-write.ts'
+import type { BoundWriteOutcome } from '../../modbus/src/bound-write.ts'
 
 export const name = 'poller'
 export const inject = ['config', 'modbus', 'store']
@@ -34,6 +36,49 @@ export const Config: z<Config> = z.object({
  * - 写操作走独立通道：写期间暂停该通道（设备/串口）的读取，避免半双工总线冲突。
  */
 class PollingEngine {
+  private boundWrites = new Map<string, Promise<BoundWriteOutcome>>()
+  private boundEpoch = new Map<string, symbol>()
+  private boundChannel(obj: any): string { return obj.transport === 'rtu' ? 'rtu:' + String(obj.serialPath).toLowerCase().replace(/^\\\\\.\\/, '') : `tcp:${String(obj.ip).toLowerCase()}:${obj.port}` }
+  canWriteBoundRegisters() { return !this.closing && typeof this.ctx.modbus.executeBoundWrite === 'function' }
+  writeBoundRegisters(plan: GuardedWritePlan, accept: (send: () => void) => void): Promise<BoundWriteOutcome> {
+    const channel = plan.channel
+    if (!this.canWriteBoundRegisters() || this.boundWrites.has(channel)) return Promise.resolve({ state: 'not-sent', message: '写入通道不可用或正在执行其他写入；未发送。' })
+    const lifecycle = this.lifecycle, epoch = Symbol(); this.boundEpoch.set(channel, epoch)
+    const valid = () => !this.closing && lifecycle === this.lifecycle && this.boundEpoch.get(channel) === epoch
+    const objects = this.ctx.config.listObjects().filter((o: any) => this.boundChannel(o) === channel)
+    const keys = [...new Set<string>(objects.map((o: any) => this.driverKey(o)))]
+    if (keys.some(key => this.writeLocks.has(key))) return Promise.resolve({ state: 'not-sent', message: '通道已有写入，未发送。' })
+    for (const key of keys) this.writeLocks.add(key)
+    const run = async (): Promise<BoundWriteOutcome> => {
+      try {
+        const deadline = Date.now() + plan.timeoutMs
+        while (keys.some(key => (this.inflight.get(key) ?? 0) > 0)) {
+          if (!valid() || Date.now() > deadline) return { state: 'not-sent', message: '等待在途读取结束超时或来源失效，未发送。' }
+          await new Promise(resolve => setTimeout(resolve, 2))
+        }
+        if (!valid()) return { state: 'not-sent', message: '通道生命周期已变化，未发送。' }
+        const execute = async () => {
+          if (!valid()) return { state: 'not-sent' as const, message: '等待串口期间来源已失效，未发送。' }
+          // Release polling connections first, including single-client TCP devices and endpoint aliases.
+          for (const key of keys) {
+            const driver = this.drivers.get(key)
+            this.drivers.delete(key); this.driverSlots.delete(key)
+            if (driver) await driver.disconnect()
+          }
+          if (plan.source.device.transport === 'rtu') {
+            // At least 3.5 characters of silence; timeout of a previous read is already awaited above.
+            await new Promise(resolve => setTimeout(resolve, Math.max(4, Math.ceil(38500 / plan.source.device.baudRate))))
+          }
+          return await this.ctx.modbus.executeBoundWrite(plan, accept, valid)
+        }
+        return plan.source.device.transport === 'rtu' ? await this.enqueueRtu(plan.source.device.serialPath!, execute) : await execute()
+      } catch (error) { return { state: 'unknown', message: '通道异常，无法确认写入结果：' + String(error) } }
+      finally { for (const key of keys) this.writeLocks.delete(key); this.boundWrites.delete(channel); if (this.running) this.schedule() }
+    }
+    // Begin after publishing ownership; even a synchronous failure cannot delete a newer operation.
+    const task = Promise.resolve().then(run); this.boundWrites.set(channel, task)
+    return task
+  }
   private readonly diagnosticsCleanup = new DiagnosticsCleanup(id => {
     const object = this.ctx.config.getObject(id), scope = this.ctx.config.getRecordingIntervalScope?.()
     if (!object || typeof scope !== 'symbol') return null
@@ -80,6 +125,8 @@ class PollingEngine {
   /** 一次性轮询（测试/手动）：忽略扫描间隔，读所有组。 */
   async pollOnce(device: Device): Promise<void> {
     if (this.closing) throw new Error('Poller is closing or closed')
+    const existing = this.ctx.config.getObject(device.id)
+    if (existing && this.boundWrites.has(this.boundChannel(existing))) throw new Error('该通道正在执行确认写入')
     const lifecycle = this.lifecycle, scope = this.ctx.config.getRecordingIntervalScope()
     const row = this.ctx.config.getObject(device.id)
     const readOrigin = row ? this.ctx.config.captureRecordingSource(device.id) : undefined
@@ -132,6 +179,7 @@ class PollingEngine {
   beginShutdown(): void { this.closing = true; this.quiesce() }
   async stopAll(): Promise<void> {
     this.quiesce()
+    await Promise.allSettled(this.boundWrites.values())
     const drivers = [...this.drivers.values()]
     this.drivers.clear()
     const results = await Promise.allSettled(drivers.map(d => Promise.resolve().then(() => d.disconnect())))
@@ -368,6 +416,7 @@ class PollingEngine {
   async getRawSocket(objectId: number): Promise<any> {
     const obj = this.ctx.config.getObject(objectId)
     if (!obj) throw new Error('object ' + objectId + ' not found')
+    if (this.boundWrites.has(this.boundChannel(obj))) throw new Error('该通道正在执行确认写入')
     const driver = await this.getDriver(obj)
     return await driver.getRawSocket(obj.slaveId ?? 1)
   }
@@ -376,6 +425,7 @@ class PollingEngine {
   async write(objectId: number, address: number, values: number[], method: 'single' | 'multiple' = 'multiple', slaveId = 1, area: ModbusArea = 'holding-register'): Promise<void> {
     const obj = this.ctx.config.getObject(objectId)
     if (!obj) throw new Error('object ' + objectId + ' not found')
+    if (this.boundWrites.has(this.boundChannel(obj))) throw new Error('该通道正在执行确认写入')
     if (obj.mode === 'slave') {
       const service = (this.ctx.get ? this.ctx.get('deviceSlaves', false) : this.ctx.deviceSlaves)
       if (!service) throw new Error('从站服务未启用')
@@ -499,6 +549,7 @@ class PollingEngine {
   async reconnectDevice(id: number): Promise<void> {
     const obj = this.ctx.config.getObject(id)
     if (!obj) return
+    this.boundEpoch.set(this.boundChannel(obj), Symbol())
     const key = this.driverKey(obj)
     this.driverSlots.delete(key)
     this.connectCooldown.delete(key)

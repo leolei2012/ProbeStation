@@ -1,9 +1,11 @@
 ---
 name: probestation-operator
-description: 使用 ProbeStation 操作 Modbus TCP/RTU 主站和从站，通过 MCP、REST 或 Web UI 配置设备角色、点位和告警，读取快照、查询历史、设置从站内存值和诊断通信。适用于操作本软件，不用于一般前端开发。
+description: 使用 ProbeStation 操作 Modbus TCP/RTU 主站和从站，通过 MCP、REST 或 Web UI 配置设备角色、点位和告警，读取快照、查询历史、使用来源绑定协议写主站保持寄存器和诊断通信。适用于操作本软件，不用于一般前端开发。
 ---
 
 # ProbeStation 操作指南
+
+主站保持寄存器 GUI 已恢复来源绑定写入（TCP/RTU，FC06/FC16）：先准备并核对设备、从站、地址、类型和原始字，再确认单次发送。`0x1000` 开关原始值 `0/1` 不需要改成写分组。新 REST 使用 `/api/registers/:id/write/prepare` 与 `/api/register-writes/:id/execute`，不得回退到仍禁用的旧 `/write` 或旧 MCP `write_register`。结果丢失先 GET 原操作，不重发；现场核实未知结果后才能准备新指令。完整请求和边界见[来源绑定写入](../develop/213-寄存器来源绑定写入.md)。
 
 本指南按 2026-10-27 仓库源码核对。先确认用户要操作的服务地址和设备；优先复用运行中的服务。工具自动化优先使用 MCP，缺少 MCP 时使用 REST；界面操作或曲线交互使用 Web UI。
 
@@ -89,7 +91,7 @@ npm run start
 
 写入、OTA、删除配置、缩短历史保留时间都不是观测所必需的步骤。只在用户已授权的范围执行；目标或写值单位不清楚时先补齐信息，不重复索要已明确给予的授权。
 
-`write_register` 参数包括 device_id、address、value、可选 area 和 method。value 是工程值，反向应用 factor/offset 后编码；主站只写 holding-register / coil，并会控制外部设备。从站支持四区，修改本机内存供外部主站读取，不发起远端连接；多字类型仍按类型编码。写入后检查响应与快照，真实协议读回需另行验证。不要因超时盲目重复写入或升级。OTA 使用 list_firmwares / ota_upgrade / ota_status 等工具，仅用于适配的主站设备；无关任务不触发升级。
+旧 MCP `write_register`、`ota_upgrade` 及无条件 REST 写值/从站内存/升级启动入口仍返回 DEVICE_WRITE_BLOCKED，不能用来绕过新写入确认。需要写入时，使用开头说明的新准备/执行协议或 GUI；新协议的 value 为原始值，不应用 factor/offset，仅支持主站保持寄存器 FC06/FC16。先准备、展示固定目标及编码字，再在用户授权范围确认执行；查询响应与快照，真实协议读回及设备实际动作需另行核实。不要因超时盲目重复写入，OTA 也不在此次恢复范围。
 
 ### 点位表和告警
 

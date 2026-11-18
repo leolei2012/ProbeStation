@@ -25,6 +25,8 @@ import { captureAlarmContext, alarmContextMatches, parseAlarmContext, type Alarm
 import { parseLogCleanupPreview, parseLogCleanupRequest, type LogCleanupPreview, type LogCleanupResult } from '../../core/src/log-cleanup.ts'
 import { activationMatches, activationTarget, captureActivation, parseActivationRequest, type ActivationKind, type ActivationSnapshot } from '../../core/src/activation-settings.ts'
 import { closeResourceDependents, registerResourceCleanup, throwCleanupErrors } from '../../core/src/resource-close.ts'
+import { installRegisterWriteSchema, RegisterWrites } from './register-writes.ts'
+import type { GuardedWritePlan } from '../../core/src/guarded-register-write.ts'
 
 export const name = 'config'
 
@@ -63,6 +65,20 @@ const GROUP_MAP: Record<string, string> = { name: 'name', slaveId: 'slave_id', f
 const REGISTER_MAP: Record<string, string> = { alias: 'alias', functionCode: 'function_code', startAddress: 'start_address', dataType: 'data_type', unit: 'unit', factor: 'factor', offset: 'offset', enumJson: 'enum_json', decimalPlaces: 'decimal_places' }
 
 export class ConfigStore {
+  private registerWriteScope = randomUUID()
+  private registerWrites = new RegisterWrites(() => {
+    if (this.closing || !this.connection.isOpen) throw new Error('配置已关闭。')
+    return this.db
+  }, () => this.registerWriteScope, id => {
+    const register = this.getRegister(id), group = register && this.getGroup(register.groupId), device = register && this.getObject(register.objectId)
+    return { register, group, device, registers: group ? this.listRegisters(group.objectId).filter(r => r.groupId === group.id) : [] }
+  }, error => this.quarantine(error))
+  prepareRegisterWrite(id: number, value: unknown, expected: unknown) { return this.registerWrites.prepare(id, value, expected) }
+  claimRegisterWrite(id: string) { return this.registerWrites.claim(id) }
+  getRegisterWrite(id: string) { return this.registerWrites.get(id) }
+  acceptRegisterWrite(plan: GuardedWritePlan, send: () => void) { return this.registerWrites.send(plan, send) }
+  finishRegisterWrite(id: string, state: 'acknowledged' | 'not-sent' | 'unknown', message: string) { return this.registerWrites.finish(id, state, message) }
+  reviewUnknownRegisterWrite(id: string) { return this.registerWrites.reviewUnknown(id) }
   private restoring = false
   private logCleanupScope = randomUUID()
   private logCleanupBlocked = false
@@ -141,7 +157,7 @@ export class ConfigStore {
       // Keep CREATEs and legacy ALTERs atomic; a failed BEGIN owns no transaction.
       db.exec('BEGIN IMMEDIATE')
       try {
-        db.exec(this.schema()); this.migrate(db); db.exec('COMMIT')
+        db.exec(this.schema()); this.migrate(db); installRegisterWriteSchema(db); db.exec('COMMIT')
       } catch (error) {
         try { db.exec('ROLLBACK') }
         catch (rollback) { throw new AggregateError([error, rollback], 'Configuration migration and rollback failed') }
@@ -196,6 +212,7 @@ export class ConfigStore {
   /** 切换工作区：关闭旧库、打开新库（幂等，CREATE TABLE IF NOT EXISTS）。 */
   reopen(dbPath: string): void {
     if (this.closing) throw new Error('Configuration is closing or closed')
+    this.registerWriteScope = randomUUID()
     this.exportSnapshotScope = randomUUID(); this.exportSnapshotBlocked = true
     this.logCleanupScope = randomUUID()
     this.recordingIntervals.reset()

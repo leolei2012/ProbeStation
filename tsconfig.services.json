@@ -132,6 +132,10 @@
     "scripts/audit-response-routing.ts",
     "scripts/test-device-write-block.ts",
     "scripts/fixtures/device-write-restart.ts",
-    "scripts/test-rtu-lifecycle.ts"
+    "scripts/test-rtu-lifecycle.ts",
+    "scripts/test-bound-register-write.ts",
+    "scripts/test-bound-register-write-ui.ts",
+    "scripts/test-bound-write-native.ts",
+    "scripts/fixtures/register-write-preview.tsx"
   ]
 }

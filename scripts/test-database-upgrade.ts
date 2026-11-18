@@ -45,7 +45,13 @@ function snapshot(path: string) {
     return JSON.stringify({
       schema,
       rows: schema.filter(row => String(row.sql).startsWith('CREATE TABLE') && !String(row.name).startsWith('sqlite_'))
-        .map(row => [row.name, db.prepare(`SELECT * FROM "${String(row.name).replaceAll('"', '""')}" ORDER BY id`).all()]),
+        .map(row => {
+          const table = '"' + String(row.name).replaceAll('"', '""') + '"'
+          const columns = db.prepare(`PRAGMA table_info(${table})`).all()
+          const primary = columns.filter(column => Number(column.pk) > 0).sort((a, b) => Number(a.pk) - Number(b.pk))
+          const order = (primary.length ? primary : columns).map(column => '"' + String(column.name).replaceAll('"', '""') + '"').join(',')
+          return [row.name, db.prepare(`SELECT * FROM ${table} ORDER BY ${order}`).all()]
+        }),
     })
   } finally { db.close() }
 }

@@ -3,6 +3,8 @@ import z from 'schemastery'
 import net from 'node:net'
 import { ModbusTCPClient, ModbusRTUClient } from 'jsmodbus'
 import { SerialPort } from 'serialport'
+import { executeBoundWrite } from './bound-write.ts'
+import type { GuardedWritePlan } from '../../core/src/guarded-register-write.ts'
 import {
   areaForFunction,
   assertModbusRequest,
@@ -588,6 +590,11 @@ export function apply(ctx: Context, config: Config): void {
     return d
   }
   ctx.provide('modbus', {
+    executeBoundWrite(plan: GuardedWritePlan, accept: (send: () => void) => void, current: () => boolean) {
+      const identity = { deviceId: plan.source.device.id, channelKey: plan.source.device.transport === 'rtu' ? 'rtu:' + plan.source.device.serialPath : 'tcp:' + plan.source.device.id }
+      const diagnostics = diagFor(plan.source.device.transport as 'tcp' | 'rtu', identity)
+      return executeBoundWrite(plan, accept, current, undefined, (direction, bytes) => diagnostics.recordFrame(direction, bytes))
+    },
     createDriver(transport = 'tcp', identity: DiagnosticsIdentity = {}): ModbusDriver {
       if (transport === 'rtu') {
         const logger = ctx.logger('modbus')
