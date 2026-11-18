@@ -13,7 +13,7 @@ async function writeRequest(path: string, body?: unknown, timeout = 15000): Prom
   } finally { clearTimeout(timer) }
 }
 
-/** Prepare is read-only. Confirmation executes exactly the frozen server plan, once, without fallback. */
+/** One click prepares and executes the bound plan. Recovery never creates another operation automatically. */
 export function RegisterWriteModal({ source, currentValue, english, onClose }: { source: RegisterWriteSource; currentValue: string; english: boolean; onClose: () => void }) {
   const [opening] = useState(() => JSON.parse(JSON.stringify(source)) as RegisterWriteSource)
   const [value, setValue] = useState(''), [operation, setOperation] = useState<GuardedWriteResult | null>(null)
@@ -23,6 +23,8 @@ export function RegisterWriteModal({ source, currentValue, english, onClose }: {
   const dialog = useRef<HTMLDivElement>(null)
   const storageKey = 'ps-register-write:' + JSON.stringify([opening.device.id, opening.device.transport, opening.device.ip, opening.device.port, opening.device.serialPath, opening.group.id, opening.register.id])
   const changed = JSON.stringify(source) !== JSON.stringify(opening)
+  const changedRef = useRef(changed)
+  changedRef.current = changed
   useEffect(() => {
     if (typeof document === 'undefined') return
     const opener = document.activeElement as HTMLElement | null
@@ -52,30 +54,36 @@ export function RegisterWriteModal({ source, currentValue, english, onClose }: {
     try { await task() } catch (e) { if (live.current) setError(e instanceof Error ? e.message : String(e)) }
     finally { lock.current = false; if (live.current) setBusy(false) }
   }
-  const prepare = () => act(async () => {
-    const result = await writeRequest('/api/registers/' + opening.register.id + '/write/prepare', { version: 1, source: opening, value })
-    // Publish the operation ID locally before any execute is permitted; a reload must never replay a write.
-    sessionStorage.setItem(storageKey, result.id)
-    if (live.current) { setOperation(result); setUncertain(false) }
-  })
-  const execute = () => act(async () => {
-    if (!operation || operation.state !== 'prepared' || changed || uncertain) return
-    if (Date.now() > operation.plan.expiresAt) throw new Error(text('写入计划已过期，请修改输入后重新准备。', 'The plan expired. Edit the value and prepare again.'))
-    const planId = operation.id
+  const write = () => act(async () => {
+    if (restoring || changedRef.current || uncertain || operation?.state === 'sending' || operation?.state === 'unknown' || !value.trim()) return
+    if (operation?.state !== 'prepared') setOperation(null)
+    // Retained prepared operations keep their ID; a delayed original request cannot become a second command.
+    const prepared = operation?.state === 'prepared' ? operation : await writeRequest('/api/registers/' + opening.register.id + '/write/prepare', { version: 1, source: opening, value })
+    if (!live.current) return
+    if (prepared.state !== 'prepared' || JSON.stringify(prepared.plan.source) !== JSON.stringify(opening)) throw new Error(text('写入目标不匹配，请重新打开窗口。', 'The write destination does not match. Reopen the dialog.'))
+    sessionStorage.setItem(storageKey, prepared.id)
+    setOperation(prepared)
+    if (changedRef.current) throw new Error(text('配置已变化，本次未发送，请重新打开窗口。', 'Configuration changed. Nothing sent; reopen the dialog.'))
+    if (Date.now() > prepared.plan.expiresAt) throw new Error(text('待处理写入已过期，请取消后重新写入。', 'The pending write expired. Cancel it and write again.'))
     setUncertain(true)
-    const result = await writeRequest('/api/register-writes/' + planId + '/execute', { version: 1 }, operation.plan.timeoutMs * 3 + 15000)
+    const result = await writeRequest('/api/register-writes/' + prepared.id + '/execute', { version: 1 }, prepared.plan.timeoutMs * 3 + 15000)
     if (live.current) { setOperation(result); setUncertain(false) }
   })
   const query = () => act(async () => {
     if (!operation) return
     const result = await writeRequest('/api/register-writes/' + operation.id)
-    if (live.current) { setOperation(result); setUncertain(false) }
+    if (live.current) { setOperation(result); setUncertain(result.state === 'prepared') }
   })
-  const reset = () => { sessionStorage.removeItem(storageKey); setOperation(null); setUncertain(false); setReviewed(false); setError('') }
+  const cancel = () => act(async () => {
+    if (!operation) return
+    const result = await writeRequest('/api/register-writes/' + operation.id + '/cancel', { version: 1 })
+    if (live.current) { setOperation(result); setUncertain(result.state === 'sending' || result.state === 'unknown') }
+  })
   const plan = operation?.plan, shown = plan?.source ?? opening
   const pending = uncertain || operation?.state === 'sending'
   const unknown = operation?.state === 'unknown'
-  const disabled = busy || restoring || changed || !value.trim() || !!operation
+  const disabled = busy || restoring || changed || !value.trim() || pending || unknown
+  const editable = !busy && !restoring && !pending && !unknown && operation?.state !== 'prepared'
   const text = (zh: string, en: string) => english ? en : zh
   return <div className="modal-mask"><div ref={dialog} className="modal register-write-modal" role="dialog" aria-modal="true" aria-labelledby={id + '-title'} aria-describedby={id + '-help'} onKeyDown={e => {
     if (e.key === 'Escape' && !busy) { e.stopPropagation(); onClose() }
@@ -90,23 +98,22 @@ export function RegisterWriteModal({ source, currentValue, english, onClose }: {
     <div className="write-context"><strong>{shown.device.name}</strong><span>{text('当前显示值', 'Current displayed value')}: {currentValue}</span></div>
     <p className="kv">{shown.device.transport.toUpperCase()} · {shown.device.transport === 'tcp' ? `${shown.device.ip}:${shown.device.port}` : `${shown.device.serialPath} · ${shown.device.baudRate} ${shown.device.parity} ${shown.device.stopBits}`}</p>
     <p className="kv">{text('从站', 'Unit')} {shown.group.slaveId} · {shown.register.alias || '#' + shown.register.id} · 0x{shown.register.startAddress.toString(16).toUpperCase()} ({shown.register.startAddress}) · {shown.register.dataType}</p>
-    <p id={id + '-help'} className="kv">{text('输入原始值，不应用系数和偏移。先准备并核对来源，再确认发送；分组无需切换写模式。', 'Enter a raw value without scale or offset. Prepare, verify the destination, then confirm. Group write mode is not required.')}</p>
+    <p id={id + '-help'} className="kv">{text('输入原始值，点击写入。', 'Enter a raw value and click Write.')}</p>
     <label htmlFor={id + '-value'}>{text('原始写入值', 'Raw write value')}</label>
-    <input id={id + '-value'} value={value} autoFocus disabled={busy || !!operation || restoring} onChange={e => setValue(e.target.value)} aria-describedby={id + '-help'} placeholder={shown.register.dataType.startsWith('hex') ? '0x0001' : '0 / 1'} />
+    <input id={id + '-value'} value={value} autoFocus disabled={!editable} onChange={e => { setValue(e.target.value); setOperation(null); setError(''); setReviewed(false) }} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && !disabled) { e.preventDefault(); void write() } }} aria-describedby={id + '-help'} placeholder={shown.register.dataType.startsWith('hex') ? '0x0001' : text('输入数值', 'Enter a value')} />
     {restoring && <p role="status">{text('正在检查上次写入…', 'Checking the previous operation…')}</p>}
     {changed && <p className="write-msg error" role="alert">{text('打开弹窗后配置已变化，请关闭后重新打开并确认来源。', 'Configuration changed. Close and reopen to review the destination.')}</p>}
-    {plan && <div className="write-plan" role="status"><strong>{text('已绑定的写入计划', 'Bound write plan')}</strong><p>FC{plan.functionCode} · {text('原始值', 'Raw value')} {plan.value} · {text('发送字', 'Words')}: {plan.words.map(w => '0x' + w.toString(16).toUpperCase().padStart(4, '0')).join(' ')}</p><small>{text('操作编号', 'Operation ID')}: {plan.id}</small></div>}
-    {operation?.message && <p className={'write-msg ' + (operation.state === 'acknowledged' ? 'ok' : 'error')} role="status">{operation.message}</p>}
-    {pending && <p className="write-msg error" role="status">{text('请求可能已发送。只查询原操作结果，不重复提交。', 'The command may have been sent. Query this operation; do not resubmit.')}</p>}
+    {operation?.state === 'acknowledged' && <p className="write-msg ok" role="status">{text('写入成功', 'Write successful')}</p>}
+    {operation?.state !== 'acknowledged' && operation?.message && <p className="write-msg error" role="status">{operation.message}</p>}
+    {!busy && pending && <p className="write-msg error" role="status">{text('结果尚未确认，请查询本次写入，勿重复发送。', 'Result not confirmed. Check this write before sending again.')}</p>}
     {error && <p className="write-msg error" role="alert">{error}</p>}
     {unknown && <label className="write-review"><input type="checkbox" checked={reviewed} disabled={busy} onChange={e => setReviewed(e.target.checked)} />{text('我已现场核实原操作，不要求重发；允许重新准备新的指令。', 'I checked the device on site. Do not replay this operation; allow a new plan.')}</label>}
     <div className="modal-actions">
       <button className="btn" type="button" disabled={busy} onClick={onClose}>{text('关闭', 'Close')}</button>
-      {!operation && <button className="btn primary" type="button" disabled={disabled} onClick={() => void prepare()}>{text('准备写入', 'Prepare write')}</button>}
-      {operation?.state === 'prepared' && !uncertain && <><button className="btn" type="button" disabled={busy} onClick={reset}>{text('修改输入', 'Edit value')}</button><button className="btn primary" type="button" disabled={busy || changed || Date.now() > operation.plan.expiresAt} onClick={() => void execute()}>{text('确认写入', 'Confirm write')}</button></>}
-      {(pending || unknown) && <button className="btn" type="button" disabled={busy} onClick={() => void query()}>{text('查询结果', 'Check result')}</button>}
+      <button className="btn primary" type="button" disabled={disabled} onClick={() => void write()}>{busy ? text('写入中…', 'Writing…') : text('写入', 'Write')}</button>
+      {!busy && (pending || unknown) && <button className="btn" type="button" onClick={() => void query()}>{text('查询结果', 'Check result')}</button>}
       {unknown && <button className="btn" type="button" disabled={busy || !reviewed} onClick={() => void act(async () => { const result = await writeRequest('/api/register-writes/' + operation!.id + '/review-unknown', { confirmedOnSite: true }); if (live.current) { setOperation(result); setUncertain(false) } })}>{text('记录现场核实', 'Record review')}</button>}
-      {operation && ['acknowledged', 'not-sent', 'reviewed-unknown'].includes(operation.state) && <button className="btn" type="button" disabled={busy} onClick={reset}>{text('准备新指令', 'New plan')}</button>}
+      {!busy && operation?.state === 'prepared' && <button className="btn" type="button" onClick={() => void cancel()}>{text('取消待处理写入', 'Cancel pending write')}</button>}
     </div>
   </div></div>
 }

@@ -5,7 +5,7 @@ description: 使用 ProbeStation 操作 Modbus TCP/RTU 主站和从站，通过 
 
 # ProbeStation 操作指南
 
-主站保持寄存器 GUI 已恢复来源绑定写入（TCP/RTU，FC06/FC16）：先准备并核对设备、从站、地址、类型和原始字，再确认单次发送。`0x1000` 开关原始值 `0/1` 不需要改成写分组。新 REST 使用 `/api/registers/:id/write/prepare` 与 `/api/register-writes/:id/execute`，不得回退到仍禁用的旧 `/write` 或旧 MCP `write_register`。结果丢失先 GET 原操作，不重发；现场核实未知结果后才能准备新指令。完整请求和边界见[来源绑定写入](../develop/213-寄存器来源绑定写入.md)。
+主站保持寄存器 GUI 已恢复来源绑定写入（TCP/RTU，FC06/FC16）：输入原始值后直接点“写入”或按 Enter，程序自动准备并校验设备、从站、地址、类型及编码，再单次发送，界面不要求额外准备/确认。`0x1000` 开关原始值 `0/1` 不需要改成写分组。新 REST 使用 `/api/registers/:id/write/prepare` 与 `/api/register-writes/:id/execute`，不得回退到仍禁用的旧 `/write` 或旧 MCP `write_register`。结果丢失先 GET 原操作，不重发；尚未被后台接纳的计划可通过 `/:id/cancel` 取消，已接纳的请求不受取消影响。完整请求和边界见[来源绑定写入](../develop/213-寄存器来源绑定写入.md)。
 
 本指南按 2026-10-27 仓库源码核对。先确认用户要操作的服务地址和设备；优先复用运行中的服务。工具自动化优先使用 MCP，缺少 MCP 时使用 REST；界面操作或曲线交互使用 Web UI。
 

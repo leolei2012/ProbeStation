@@ -76,6 +76,7 @@ export class ConfigStore {
   prepareRegisterWrite(id: number, value: unknown, expected: unknown) { return this.registerWrites.prepare(id, value, expected) }
   claimRegisterWrite(id: string) { return this.registerWrites.claim(id) }
   getRegisterWrite(id: string) { return this.registerWrites.get(id) }
+  cancelPreparedRegisterWrite(id: string) { return this.registerWrites.cancelPrepared(id) }
   acceptRegisterWrite(plan: GuardedWritePlan, send: () => void) { return this.registerWrites.send(plan, send) }
   finishRegisterWrite(id: string, state: 'acknowledged' | 'not-sent' | 'unknown', message: string) { return this.registerWrites.finish(id, state, message) }
   reviewUnknownRegisterWrite(id: string) { return this.registerWrites.reviewUnknown(id) }

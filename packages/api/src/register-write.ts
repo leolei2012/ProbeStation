@@ -10,7 +10,7 @@ interface WriteTarget {
   canWriteBoundRegisters?(): boolean
   writeBoundRegisters?(plan: GuardedWritePlan, accept: (send: () => void) => void): Promise<BoundWriteOutcome>
 }
-type WriteConfig = Pick<ConfigStore, 'getRegister' | 'getGroup' | 'log'> & Partial<Pick<ConfigStore, 'prepareRegisterWrite' | 'claimRegisterWrite' | 'getRegisterWrite' | 'acceptRegisterWrite' | 'finishRegisterWrite' | 'reviewUnknownRegisterWrite'>>
+type WriteConfig = Pick<ConfigStore, 'getRegister' | 'getGroup' | 'log'> & Partial<Pick<ConfigStore, 'prepareRegisterWrite' | 'claimRegisterWrite' | 'getRegisterWrite' | 'acceptRegisterWrite' | 'finishRegisterWrite' | 'reviewUnknownRegisterWrite' | 'cancelPreparedRegisterWrite'>>
 /** Legacy writes stay closed; only the versioned prepare/execute protocol can submit a bound command. */
 export function registerRegisterWrite(app: FastifyInstance, _cfg: WriteConfig, _poller: WriteTarget) {
   app.post('/api/registers/:id/write', async (_req, reply) => reply.code(503).header('Cache-Control', 'no-store').send(deviceWriteRefusal()))
@@ -28,6 +28,12 @@ export function registerRegisterWrite(app: FastifyInstance, _cfg: WriteConfig, _
     catch (error) { if (error instanceof Error && !('statusCode' in error)) throw Object.assign(error, { statusCode: 400 }); throw error }
   })
   app.get<{ Params: { id: string } }>('/api/register-writes/:id', options, async req => _cfg.getRegisterWrite!(req.params.id))
+  app.post<{ Params: { id: string } }>('/api/register-writes/:id/cancel', options, async (req, reply) => {
+    const body = req.body as any
+    if (!body || body.version !== 1 || Object.keys(body).length !== 1) throw Object.assign(new Error('取消参数无效。'), { statusCode: 400 })
+    if (!_cfg.cancelPreparedRegisterWrite) return reply.code(503).send({ error: '当前后台不支持取消待处理写入。' })
+    return _cfg.cancelPreparedRegisterWrite(req.params.id)
+  })
   app.post<{ Params: { id: string } }>('/api/register-writes/:id/execute', options, async req => {
     const body = req.body as any
     if (!body || body.version !== 1 || Object.keys(body).length !== 1) throw Object.assign(new Error('执行时不能改变来源、值或方法，请重新准备。'), { statusCode: 400 })

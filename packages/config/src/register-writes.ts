@@ -116,6 +116,14 @@ export class RegisterWrites {
     db.prepare("UPDATE register_write_operations SET state=?,message=? WHERE id=? AND state='sending'").run(state, message, id)
     return this.get(id)
   }
+  cancelPrepared(id: string) {
+    return this.transaction(db => {
+      this.row(db, id)
+      // Serializes with claim: a late execute sees not-sent; an already claimed operation is untouched.
+      db.prepare("UPDATE register_write_operations SET state='not-sent',message='已取消尚未提交的写入。' WHERE id=? AND state='prepared'").run(id)
+      return this.row(db, id)
+    })
+  }
   reviewUnknown(id: string) {
     const operation = this.get(id)
     if (operation.state !== 'unknown') throw writeConflict('只能人工核实结果未知的操作。')

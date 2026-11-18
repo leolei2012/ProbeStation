@@ -1022,9 +1022,6 @@ table.reg th, .btn { white-space: nowrap; }
 .communication-stats dd { margin: 4px 0; font-weight: 600; }
 .communication-last-error { white-space: pre-wrap; }
 .register-write-modal { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; overflow-wrap: anywhere; }
-.register-write-modal .write-plan { border: 1px solid var(--border-1); border-radius: 10px; padding: 12px; margin: 12px 0; overflow-wrap: anywhere; }
-.register-write-modal .write-plan p { margin: 8px 0; }
-.register-write-modal .write-plan small { color: var(--text-3); }
 .register-write-modal .write-review { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; margin: 12px 0; }
 .register-write-modal .write-review input { width: auto; margin-top: 2px; }
 .register-write-modal .modal-actions { flex-wrap: wrap; }

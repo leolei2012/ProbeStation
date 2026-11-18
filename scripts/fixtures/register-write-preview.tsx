@@ -18,6 +18,7 @@ globalThis.fetch = async (input, init) => {
     operation!.message = lose ? '模拟：已提交但没有匹配回执；请核实，不自动重发。' : '模拟：设备已返回匹配的 Modbus 写入回执。此回执不等于压缩机已实际运转。'
     if (lose) throw Error('模拟响应丢失，请查询原操作。')
   } else if (path.endsWith('/review-unknown')) { operation!.state = 'reviewed-unknown'; operation!.message = '模拟：已记录现场核实，不重发原计划。' }
+  else if (path.endsWith('/cancel') && operation!.state === 'prepared') { operation!.state = 'not-sent'; operation!.message = '模拟：已取消尚未发送的写入。' }
   return new Response(JSON.stringify(operation), { headers: { 'Content-Type': 'application/json' } })
 }
 function Preview() {
