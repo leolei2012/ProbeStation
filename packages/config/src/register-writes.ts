@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import net from 'node:net'
+import { registerWriteChannel, type PendingRegisterWrites } from '../../core/src/guarded-register-write.ts'
 import type { DatabaseSync } from 'node:sqlite'
 import { DATA_TYPES, decodeRegister, encodeRegister, registerWidth, baseType } from '../../core/src/codec.ts'
 import { parseRegisterWriteValue } from '../../core/src/register-write-value.ts'
@@ -53,6 +54,13 @@ export class RegisterWrites {
     return result
   }
   has(id: string) { return !!this.database().prepare('SELECT id FROM register_write_operations WHERE id=?').get(id) }
+  pending(device: any, registerId?: number): PendingRegisterWrites {
+    if (!device) throw Object.assign(new Error('设备或点位不存在。'), { statusCode: 404 })
+    const channel = registerWriteChannel(device)
+    const rows = this.database().prepare("SELECT id FROM register_write_operations WHERE channel=? AND state IN ('sending','unknown') ORDER BY rowid").all(channel)
+    const operations = rows.map(row => this.get(String(row.id))).filter(row => row.state === 'sending' || row.state === 'unknown')
+    return { version: 1, deviceId: device.id, ...(registerId === undefined ? {} : { registerId }), channel, operations }
+  }
   prepare(id: number, value: unknown, expected: unknown, method?: unknown, requestId?: string): GuardedWriteResult {
     return this.transaction(db => {
       const { device, group, register: r, registers } = this.graph(id)
@@ -92,7 +100,7 @@ export class RegisterWrites {
         }
       }
       const channel = device.transport === 'tcp' ? `tcp:${device.ip.toLowerCase()}:${device.port}` : `rtu:${String(device.serialPath).toLowerCase().replace(/^\\\\\.\\/, '')}`
-      if (db.prepare("SELECT id FROM register_write_operations WHERE channel=? AND state IN ('sending','unknown')").get(channel)) throw writeConflict('此通道有执行中或结果未知的写入，请先查询原操作并核实。')
+      if (db.prepare("SELECT id FROM register_write_operations WHERE channel=? AND state IN ('sending','unknown')").get(channel)) throw Object.assign(writeConflict('此通道有执行中或结果未知的写入，请在当前窗口查看并处理上次操作。'), { code: 'REGISTER_WRITE_BLOCKED' })
       const plan: GuardedWritePlan = { version: 1, id: requestId ?? randomUUID(), scope: this.scope(), revision: this.revision(db), channel, source,
         value: String(parsed), words, functionCode: method === 'multiple' || words.length > 1 ? 16 : 6, timeoutMs: Math.max(100, Math.min(60000, device.timeoutMs || 3000)), expiresAt: Date.now() + 120000 }
       db.prepare("INSERT INTO register_write_operations(id,channel,state,plan) VALUES(?,?,'prepared',?)").run(plan.id, channel, JSON.stringify(plan))
@@ -104,7 +112,10 @@ export class RegisterWrites {
       const operation = this.refreshPrepared(db, id)
       if (operation.state !== 'prepared') return { operation, claimed: false }
       this.assertPlan(db, operation.plan)
-      if (db.prepare("SELECT id FROM register_write_operations WHERE channel=? AND state IN ('sending','unknown')").get(operation.plan.channel)) throw writeConflict('通道已有未完成的操作。')
+      if (db.prepare("SELECT id FROM register_write_operations WHERE channel=? AND state IN ('sending','unknown')").get(operation.plan.channel)) {
+        db.prepare("UPDATE register_write_operations SET state='not-sent',message='通道已有未完成的操作，本次未发送；请查看并处理上次操作。' WHERE id=? AND state='prepared'").run(id)
+        return { operation: this.row(db, id), claimed: false }
+      }
       db.prepare("UPDATE register_write_operations SET state='sending',message='正在发送，请勿重复操作。' WHERE id=?").run(id)
       return { operation: this.row(db, id), claimed: true }
     })
@@ -151,9 +162,14 @@ export class RegisterWrites {
     })
   }
   reviewUnknown(id: string) {
-    const operation = this.get(id)
-    if (operation.state !== 'unknown') throw writeConflict('只能人工核实结果未知的操作。')
-    this.database().prepare("UPDATE register_write_operations SET state='reviewed-unknown',message='用户已现场核实；原操作结果仍未知，不重发原计划。' WHERE id=? AND state='unknown'").run(id)
-    return this.get(id)
+    this.get(id)
+    return this.transaction(db => {
+      const operation = this.row(db, id)
+      if (operation.state !== 'unknown') throw writeConflict('只能人工核实结果未知的操作。')
+      db.prepare("UPDATE register_write_operations SET state='reviewed-unknown',message='用户已现场核实；原操作结果仍未知，不重发原计划。' WHERE id=? AND state='unknown'").run(id)
+      // A delayed request from an older dialog cannot start an old prepared command after review.
+      db.prepare("UPDATE register_write_operations SET state='not-sent',message='通道已核实，旧的未提交计划已取消；请重新写入。' WHERE channel=? AND state='prepared'").run(operation.plan.channel)
+      return this.row(db, id)
+    })
   }
 }

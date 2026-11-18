@@ -13,11 +13,12 @@ import { registerRegisterWrite } from '../packages/api/src/register-write.ts'
 import { registerWriteSource, registerWriteSourceMatches, type GuardedWritePlan } from '../packages/core/src/guarded-register-write.ts'
 import { executeBoundWrite, type BoundWire } from '../packages/modbus/src/bound-write.ts'
 import { registerWidth } from '../packages/core/src/codec.ts'
-import { writeRequest } from '../apps/web/src/register-write-client.ts'
+import { pendingWritesRequest, writeRequest } from '../apps/web/src/register-write-client.ts'
 import { hookDriver } from './fixtures/component-hook-driver.ts'
 
 // Actual UI request helper, Fastify, SQLite and MCP SDK. Every wire is injected; no real sockets/devices.
 const ctx = new Context(), app = Fastify(), frames: Buffer[] = [], peers: Array<{ client: Client; sdk: McpServer }> = []
+const runningIds = new Set<string>()
 let echo = true
 const wire = (_plan: GuardedWritePlan): BoundWire => {
   const events = new EventEmitter(); let ready = false
@@ -27,6 +28,7 @@ const wire = (_plan: GuardedWritePlan): BoundWire => {
   } }
 }
 const sender = { canWriteBoundRegisters: () => true, write: async () => { assert.fail('legacy writer must never run') },
+  isBoundRegisterWriteRunning: (id: string) => runningIds.has(id),
   writeBoundRegisters(plan: GuardedWritePlan, accept: (send: () => void) => void) { return executeBoundWrite(plan, accept, () => true, wire) } }
 class InertHttp extends EventEmitter { listening = false; listen(_port: number, _host: string, callback: () => void) { this.listening = true; queueMicrotask(() => { this.emit('listening'); callback() }); return this }; close(callback: () => void) { this.listening = false; queueMicrotask(() => { this.emit('close'); callback() }); return this } }
 const storage = new Map<string, string>(), originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
@@ -62,7 +64,7 @@ try {
   const old = await prepare('1'); cfg.updateGroup(g.id, { name: 'changed' })
   const storageKey = 'ps-register-write:' + JSON.stringify([d.id, 'tcp', d.ip, d.port, d.serialPath, g.id, r.id])
   storage.set(storageKey, old.id)
-  const driver = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { registerWidth, registerWriteSourceMatches, writeRequest: request }, { source: reorder(source()), currentValue: '0', english: false, onClose() {} })
+  const driver = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { registerWidth, registerWriteSourceMatches, writeRequest: request, pendingWritesRequest: (source: any) => pendingWritesRequest(source, fetcher) }, { source: reorder(source()), currentValue: '0', english: false, onClose() {} })
   const settle = async () => { for (let i = 0; i < 15; i++) { await new Promise(resolve => setImmediate(resolve)); driver.render() } }
   try {
     const before = frames.length; await settle()
@@ -98,11 +100,52 @@ try {
   assert.equal(body(physical).state, 'acknowledged', JSON.stringify(physical)); assert.deepEqual(body(physical).plan.words, [583]); assert.equal(frames.at(-1)![7], 16)
   const raw = await client.callTool({ name: 'write_register', arguments: { ...args, request_id: randomUUID(), value: 583 } }); assert.deepEqual(body(raw).plan.words, [583])
   cfg.updateObject(d.id, { timeoutMs: 100 }); echo = false
+  const queuedSource = registerWriteSource(cfg.getObject(d.id), cfg.getGroup(g.id), cfg.getRegister(wide.id))
+  const beforeReview = cfg.prepareRegisterWrite(wide.id, '65538', queuedSource, 'multiple')
+  const overtaken = cfg.prepareRegisterWrite(wide.id, '65538', queuedSource, 'multiple')
   const unknownArgs = { ...args, request_id: randomUUID() }, unknown = await client.callTool({ name: 'write_register', arguments: unknownArgs })
   assert.equal(unknown.isError, true); assert.equal(body(unknown).state, 'unknown'); before = frames.length
+  assert.equal(cfg.claimRegisterWrite(overtaken.id).operation.state, 'not-sent', 'an overtaken prepared request fails definitively before sending')
   assert.equal(body(await secondClient.callTool({ name: 'write_register', arguments: unknownArgs })).state, 'unknown'); assert.equal(frames.length, before)
   assert.equal(body(await client.callTool({ name: 'get_register_write_result', arguments: { operation_id: unknownArgs.request_id } })).state, 'unknown')
-  console.log('WRITE RECOVERY OK: reordered source, precise errors, FC06/FC16 frames, distinct group ids, covered points, expired/stale dialog recovery, actual MCP SDK dispatch, physical/raw values, ambiguity and cross-session receipt replay; injected wire only')
+  const discovered = body(await secondClient.callTool({ name: 'list_pending_register_writes', arguments: { device_id: d.id } }))
+  assert.equal(discovered.operations[0].id, unknownArgs.request_id)
+  const blocked = await secondClient.callTool({ name: 'write_register', arguments: { ...args, request_id: randomUUID() } })
+  assert.equal(body(blocked).code, 'REGISTER_WRITE_BLOCKED'); assert.equal(body(blocked).pending.operations[0].id, unknownArgs.request_id)
+  assert.equal(frames.length, before)
+  const reviewArgs = { device_id: d.id, operation_id: unknownArgs.request_id, confirmed_on_site: true }
+  assert.equal((await client.callTool({ name: 'review_register_write_result', arguments: { ...reviewArgs, confirmed_on_site: false } })).isError, true)
+  runningIds.add(unknownArgs.request_id)
+  assert.equal((await client.callTool({ name: 'review_register_write_result', arguments: reviewArgs })).isError, true)
+  await assert.rejects(request(`/api/register-writes/${unknownArgs.request_id}/review-unknown`, { confirmedOnSite: true }), /仍在执行/)
+  runningIds.delete(unknownArgs.request_id)
+  storage.clear(); echo = true
+  const recovery = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { registerWidth, registerWriteSourceMatches, writeRequest: request, pendingWritesRequest: (source: any) => pendingWritesRequest(source, fetcher) },
+    { source: registerWriteSource(cfg.getObject(d.id), cfg.getGroup(g.id), cfg.getRegister(wide.id)), currentValue: '0', english: false, onClose() {} })
+  const flush = async () => { for (let i = 0; i < 15; i++) { await new Promise(resolve => setImmediate(resolve)); recovery.render() } }
+  try {
+    await flush()
+    recovery.one('input', p => p.type !== 'checkbox').props.onChange({ target: { value: '65538' } }); recovery.render()
+    assert.equal(recovery.one('button', p => p.children === '写入').props.disabled, true)
+    assert.equal(recovery.one('button', p => p.children === '已核实，解除阻塞').props.disabled, true)
+    recovery.one('input', p => p.type === 'checkbox').props.onChange({ target: { checked: true } }); recovery.render()
+    recovery.one('button', p => p.children === '已核实，解除阻塞').props.onClick(); await flush()
+    assert.equal(frames.length, before, 'review cannot send/replay a command')
+    assert.equal(cfg.getRegisterWrite(unknownArgs.request_id).state, 'reviewed-unknown')
+    assert.equal(cfg.getRegisterWrite(beforeReview.id).state, 'not-sent')
+    assert.equal(cfg.claimRegisterWrite(beforeReview.id).claimed, false, 'a delayed execute from an older dialog cannot send after unblocking')
+    assert.equal(recovery.one('input', p => p.type !== 'checkbox').props.value, '65538', 'recovery preserves the new point/value draft')
+    assert.equal(recovery.one('button', p => p.children === '写入').props.disabled, false)
+    recovery.one('button', p => p.children === '写入').props.onClick(); await flush()
+    assert.equal(frames.length, before + 1, 'the separate explicit Write sends exactly one fresh operation')
+  } finally { recovery.dispose() }
+  echo = false
+  const againArgs = { ...args, request_id: randomUUID() }
+  await client.callTool({ name: 'write_register', arguments: againArgs }); before = frames.length
+  assert.equal(body(await secondClient.callTool({ name: 'review_register_write_result', arguments: { ...reviewArgs, operation_id: againArgs.request_id } })).state, 'reviewed-unknown')
+  assert.equal(body(await client.callTool({ name: 'list_pending_register_writes', arguments: { device_id: d.id } })).operations.length, 0)
+  assert.equal(frames.length, before, 'MCP review never sends or replays')
+  console.log('WRITE RECOVERY OK: FC06/FC16, sources, expiry, actual MCP dispatch/receipt replay, pending discovery across points/clients, explicit review without replay, active-send protection, preserved draft, old prepared cancellation and fresh explicit send; injected wire only')
 } finally {
   for (const { client, sdk } of peers) { await client.close(); await sdk.close() }
   await app.close(); await ctx.fiber.dispose()

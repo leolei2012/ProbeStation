@@ -334,7 +334,11 @@ export function apply(ctx: Context, config: Config): void {
       try {
         const result = await mcpWriteRegister(cfg, poller, args) as { error?: string; state?: string }
         return { content: [{ type: 'text', text: JSON.stringify(result) }], ...((result.error || result.state === 'not-sent' || result.state === 'unknown') ? { isError: true } : {}) }
-      } catch (error: any) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error.message, code: error.code, status: error.statusCode }) }] } }
+      } catch (error: any) {
+        let pending
+        if (error.code === 'REGISTER_WRITE_BLOCKED') try { pending = cfg.listPendingRegisterWrites(args.device_id) } catch { /* Preserve original refusal if metadata is unavailable. */ }
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error.message, code: error.code, status: error.statusCode, pending }) }] }
+      }
     })
 
     tools.registerTool('get_register_write_result', {
@@ -343,6 +347,25 @@ export function apply(ctx: Context, config: Config): void {
     }, async args => {
       try { return { content: [{ type: 'text', text: JSON.stringify(cfg.getRegisterWrite(args.operation_id.toLowerCase())) }] } }
       catch (error: any) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error.message, status: error.statusCode }) }] } }
+    })
+
+    tools.registerTool('list_pending_register_writes', {
+      title: 'List pending register writes', description: '查询设备当前物理通道上的sending/unknown写入，包含同串口其他设备/点位的旧操作、固定来源、值和错误；重启后仍可发现。不发指令，不解除阻塞。',
+      annotations: { readOnlyHint: true }, inputSchema: { device_id: zz.number().int().positive() },
+    }, async args => {
+      try { return { content: [{ type: 'text', text: JSON.stringify(cfg.listPendingRegisterWrites(args.device_id)) }] } }
+      catch (error: any) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error.message, status: error.statusCode }) }] } }
+    })
+    tools.registerTool('review_register_write_result', {
+      title: 'Review unknown register write', description: '只在用户明确确认已核实该旧指令对应的设备状态后调用。将unknown记为reviewed-unknown解除阻塞，不发送/重发旧指令，不写入新值。禁止把当前读数、超时或重启自动当成人工核实；sending或仍在执行的操作拒绝解除。先list_pending_register_writes核对原设备、从站、地址和值。',
+      inputSchema: { device_id: zz.number().int().positive(), operation_id: zz.string().uuid(), confirmed_on_site: zz.literal(true) },
+    }, async args => {
+      try {
+        const id = args.operation_id.toLowerCase(), pending = cfg.listPendingRegisterWrites(args.device_id)
+        if (!pending.operations.some((row: { id: string }) => row.id === id)) throw Object.assign(new Error('原操作不在该设备当前通道的未完成列表中，请重新查询。'), { statusCode: 409 })
+        if (poller.isBoundRegisterWriteRunning?.(id)) throw Object.assign(new Error('原写入仍在执行，不能解除。'), { statusCode: 409 })
+        return { content: [{ type: 'text', text: JSON.stringify(cfg.reviewUnknownRegisterWrite(id)) }] }
+      } catch (error: any) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error.message, status: error.statusCode }) }] } }
     })
 
     tools.registerTool('export_history', {

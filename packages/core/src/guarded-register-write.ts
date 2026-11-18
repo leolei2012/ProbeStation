@@ -10,6 +10,10 @@ export function registerWriteSource(device: any, group: any, register: any) {
   }
 }
 export type RegisterWriteSource = ReturnType<typeof registerWriteSource>
+export function registerWriteChannel(device: { transport: string; ip: string; port: number; serialPath: string | null }) {
+  return device.transport === 'tcp' ? `tcp:${device.ip.toLowerCase()}:${device.port}` : `rtu:${String(device.serialPath).toLowerCase().replace(/^\\\\\.\\/, '')}`
+}
+export interface PendingRegisterWrites { version: 1; deviceId: number; registerId?: number; channel: string; operations: GuardedWriteResult[] }
 /** JSON object key order is not part of a Modbus destination. Preserve strict field/value checks. */
 export function registerWriteSourceMatches(expected: unknown, actual: RegisterWriteSource): boolean {
   const equal = (a: unknown, b: unknown): boolean => {

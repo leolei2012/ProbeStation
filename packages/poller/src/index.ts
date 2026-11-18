@@ -38,6 +38,8 @@ export const Config: z<Config> = z.object({
 class PollingEngine {
   private boundWrites = new Map<string, Promise<BoundWriteOutcome>>()
   private boundEpoch = new Map<string, symbol>()
+  private boundOperationIds = new Set<string>()
+  isBoundRegisterWriteRunning(id: string) { return this.boundOperationIds.has(id) }
   private boundChannel(obj: any): string { return obj.transport === 'rtu' ? 'rtu:' + String(obj.serialPath).toLowerCase().replace(/^\\\\\.\\/, '') : `tcp:${String(obj.ip).toLowerCase()}:${obj.port}` }
   canWriteBoundRegisters() { return !this.closing && typeof this.ctx.modbus.executeBoundWrite === 'function' }
   writeBoundRegisters(plan: GuardedWritePlan, accept: (send: () => void) => void): Promise<BoundWriteOutcome> {
@@ -49,6 +51,7 @@ class PollingEngine {
     const keys = [...new Set<string>(objects.map((o: any) => this.driverKey(o)))]
     if (keys.some(key => this.writeLocks.has(key))) return Promise.resolve({ state: 'not-sent', message: '通道已有写入，未发送。' })
     for (const key of keys) this.writeLocks.add(key)
+    let accepted = false
     const run = async (): Promise<BoundWriteOutcome> => {
       try {
         const deadline = Date.now() + plan.timeoutMs
@@ -69,14 +72,14 @@ class PollingEngine {
             // At least 3.5 characters of silence; timeout of a previous read is already awaited above.
             await new Promise(resolve => setTimeout(resolve, Math.max(4, Math.ceil(38500 / plan.source.device.baudRate))))
           }
-          return await this.ctx.modbus.executeBoundWrite(plan, accept, valid)
+          return await this.ctx.modbus.executeBoundWrite(plan, (send: () => void) => accept(() => { accepted = true; send() }), valid)
         }
         return plan.source.device.transport === 'rtu' ? await this.enqueueRtu(plan.source.device.serialPath!, execute) : await execute()
-      } catch (error) { return { state: 'unknown', message: '通道异常，无法确认写入结果：' + String(error) } }
-      finally { for (const key of keys) this.writeLocks.delete(key); this.boundWrites.delete(channel); if (this.running) this.schedule() }
+      } catch (error) { return { state: accepted ? 'unknown' : 'not-sent', message: (accepted ? '通道异常，无法确认写入结果：' : '发送前通道处理失败，本次未发送：') + String(error) } }
+      finally { for (const key of keys) this.writeLocks.delete(key); this.boundWrites.delete(channel); this.boundOperationIds.delete(plan.id); if (this.running) this.schedule() }
     }
     // Begin after publishing ownership; even a synchronous failure cannot delete a newer operation.
-    const task = Promise.resolve().then(run); this.boundWrites.set(channel, task)
+    const task = Promise.resolve().then(run); this.boundWrites.set(channel, task); this.boundOperationIds.add(plan.id)
     return task
   }
   private readonly diagnosticsCleanup = new DiagnosticsCleanup(id => {

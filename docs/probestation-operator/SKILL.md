@@ -91,7 +91,15 @@ npm run start
 
 写入、OTA、删除配置、缩短历史保留时间都不是观测所必需的步骤。只在用户已授权的范围执行；目标或写值单位不清楚时先补齐信息，不重复索要已明确给予的授权。
 
-MCP `write_register` 现在走来源绑定发送链路，支持主站保持寄存器 FC06/FC16；缺少新后台能力时返回 DEVICE_WRITE_BLOCKED。`ota_upgrade` 及无条件 REST 写值/从站内存/升级启动入口仍禁用。MCP value_mode 默认 physical 会反算 factor/offset，明确传 raw 才直接编码原始值；GUI/新 REST 的 value 始终为原始值。单字可选 single 或 multiple，多字只用 multiple。检查回执 state，acknowledged 仅表示协议确认，不证明设备实际动作；unknown 请查询原 ID 并现场核实，不要盲目重复写入。现场核实后的解除可使用 GUI 或已授权的新 REST review-unknown，不自动确认未知结果。
+MCP `write_register` 现在走来源绑定发送链路，支持主站保持寄存器 FC06/FC16；缺少新后台能力时返回 DEVICE_WRITE_BLOCKED。`ota_upgrade` 及无条件 REST 写值/从站内存/升级启动入口仍禁用。MCP value_mode 默认 physical 会反算 factor/offset，明确传 raw 才直接编码原始值；GUI/新 REST 的 value 始终为原始值。单字可选 single 或 multiple，多字只用 multiple。检查回执 state，acknowledged 仅表示协议确认，不证明设备实际动作；unknown 请查询原 ID 并核实，不盲目重复写入。
+
+#### 通道未完成写入的恢复
+
+收到 REGISTER_WRITE_BLOCKED 时，用 `list_pending_register_writes {device_id}` 找出当前物理通道上的旧操作，返回原设备、从站、地址、值、状态和错误。同串口其他设备/点位的记录也会阻塞；不能因为不是当前 register_id 就忽略。该查询不发指令，重启后也能发现原记录，不依赖浏览器保存的 ID。
+
+向用户展示实际旧指令；只有用户明确核实其对应设备状态后，才能调用 `review_register_write_result {device_id, operation_id, confirmed_on_site:true}`。该工具把 unknown 记录为 reviewed-unknown，同时取消同通道旧的未提交计划，保留回执，不发送任何值。不得把超时、当前读数为 0 或程序重启当作用户已核实。sending 或仍在执行的操作不能解除；正常等待结束后查询，进程中断后的 sending 在查询时变为 unknown。解除后若用户仍要求写入，再使用新的 request_id 发起新指令。
+
+GUI 打开当前写入窗口即可看到同通道的未完成记录，无需找回原窗口；核实后勾选并点“已核实，解除阻塞”，输入的新值保留，仍需用户点“写入”才发送。REST 可 GET `/api/registers/:id/write/pending`（需要 `x-probestation-write:1`），人工核实后 POST `/api/register-writes/:operation_id/review-unknown`，body 为 `{confirmedOnSite:true}`。不要删除操作表或切换数据目录绕过锁。
 
 ### 点位表和告警
 

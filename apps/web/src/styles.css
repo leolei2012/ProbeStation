@@ -1025,3 +1025,7 @@ table.reg th, .btn { white-space: nowrap; }
 .register-write-modal .write-review { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; margin: 12px 0; }
 .register-write-modal .write-review input { width: auto; margin-top: 2px; }
 .register-write-modal .modal-actions { flex-wrap: wrap; }
+.write-blockers{border:1px solid var(--border-2);border-radius:10px;padding:12px;margin:12px 0;overflow-wrap:anywhere}
+.write-blocker{border-bottom:1px solid var(--border-2);padding:8px 0;margin-bottom:8px}
+.write-blocker p{margin:4px 0}
+.write-blocker .btn{margin:6px 0}

@@ -8,9 +8,10 @@ import type { BoundWriteOutcome } from '../../modbus/src/bound-write.ts'
 interface WriteTarget {
   write(objectId: number, address: number, words: number[], method: 'single' | 'multiple', slaveId: number, area: ModbusArea): Promise<void>
   canWriteBoundRegisters?(): boolean
+  isBoundRegisterWriteRunning?(id: string): boolean
   writeBoundRegisters?(plan: GuardedWritePlan, accept: (send: () => void) => void): Promise<BoundWriteOutcome>
 }
-type WriteConfig = Pick<ConfigStore, 'getRegister' | 'getGroup' | 'log'> & Partial<Pick<ConfigStore, 'prepareRegisterWrite' | 'claimRegisterWrite' | 'getRegisterWrite' | 'acceptRegisterWrite' | 'finishRegisterWrite' | 'reviewUnknownRegisterWrite' | 'cancelPreparedRegisterWrite'>>
+type WriteConfig = Pick<ConfigStore, 'getRegister' | 'getGroup' | 'log'> & Partial<Pick<ConfigStore, 'pendingRegisterWritesForPoint' | 'prepareRegisterWrite' | 'claimRegisterWrite' | 'getRegisterWrite' | 'acceptRegisterWrite' | 'finishRegisterWrite' | 'reviewUnknownRegisterWrite' | 'cancelPreparedRegisterWrite'>>
 /** Legacy writes stay closed; only the versioned prepare/execute protocol can submit a bound command. */
 export function registerRegisterWrite(app: FastifyInstance, _cfg: WriteConfig, _poller: WriteTarget) {
   app.post('/api/registers/:id/write', async (_req, reply) => reply.code(503).header('Cache-Control', 'no-store').send(deviceWriteRefusal()))
@@ -21,6 +22,10 @@ export function registerRegisterWrite(app: FastifyInstance, _cfg: WriteConfig, _
     if (!_cfg.prepareRegisterWrite || !_poller.canWriteBoundRegisters?.() || !_poller.writeBoundRegisters) return reply.code(503).send({ error: '当前后台不支持来源绑定写入，请更新前后端。', code: 'BOUND_WRITE_UNAVAILABLE' })
     reply.header('Cache-Control', 'no-store')
   } }
+  app.get<{ Params: { id: string } }>('/api/registers/:id/write/pending', options, async (req, reply) => {
+    if (!_cfg.pendingRegisterWritesForPoint) return reply.code(503).send({ error: '后台不支持查看未完成写入，请更新服务。' })
+    return _cfg.pendingRegisterWritesForPoint(Number(req.params.id))
+  })
   app.post<{ Params: { id: string } }>('/api/registers/:id/write/prepare', options, async req => {
     const body = req.body as any
     if (!body || body.version !== 1 || Object.keys(body).some(key => !['version', 'value', 'source', 'method'].includes(key))) throw Object.assign(new Error('写入准备参数无效。'), { statusCode: 400 })
@@ -53,6 +58,7 @@ export function registerRegisterWrite(app: FastifyInstance, _cfg: WriteConfig, _
   })
   app.post<{ Params: { id: string } }>('/api/register-writes/:id/review-unknown', options, async req => {
     if ((req.body as any)?.confirmedOnSite !== true || Object.keys(req.body as object).length !== 1) throw Object.assign(new Error('请先现场核实原操作结果。'), { statusCode: 400 })
+    if (_poller.isBoundRegisterWriteRunning?.(req.params.id)) throw Object.assign(new Error('原写入仍在执行，请等待结束后查询，不能解除正在发送的操作。'), { statusCode: 409 })
     return _cfg.reviewUnknownRegisterWrite!(req.params.id)
   })
 }

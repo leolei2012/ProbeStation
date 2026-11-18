@@ -75,6 +75,11 @@ export class ConfigStore {
   }, error => this.quarantine(error))
   prepareRegisterWrite(id: number, value: unknown, expected: unknown, method?: unknown, requestId?: string) { return this.registerWrites.prepare(id, value, expected, method, requestId) }
   hasRegisterWrite(id: string) { return this.registerWrites.has(id) }
+  listPendingRegisterWrites(deviceId: number) { return this.registerWrites.pending(this.getObject(deviceId)) }
+  pendingRegisterWritesForPoint(registerId: number) {
+    const register = this.getRegister(registerId)
+    return this.registerWrites.pending(register && this.getObject(register.objectId), registerId)
+  }
   claimRegisterWrite(id: string) { return this.registerWrites.claim(id) }
   getRegisterWrite(id: string) { return this.registerWrites.get(id) }
   cancelPreparedRegisterWrite(id: string) { return this.registerWrites.cancelPrepared(id) }

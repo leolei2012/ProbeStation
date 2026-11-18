@@ -19,7 +19,7 @@ class FakeHttp extends EventEmitter {
 const expectedCatalog: { baseline: string; names: string[]; sha256: string } = JSON.parse(readFileSync(new URL('./fixtures/mcp-tool-catalog.json', import.meta.url), 'utf8'))
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)])) : value
 const source = readFileSync(new URL('../packages/mcp/src/index.ts', import.meta.url), 'utf8')
-assert.equal((source.match(/^    tools\.registerTool\(/gm) ?? []).length, 43)
+assert.equal((source.match(/^    tools\.registerTool\(/gm) ?? []).length, 45)
 verifyForwardingIdentity()
 
 const ctx = new Context(), fakeHttp = new FakeHttp(), clients: Client[] = [], servers: McpServer[] = []
@@ -40,7 +40,7 @@ try {
   if (process.argv.includes('--update-catalog')) {
     expectedCatalog.names = listed.tools.map(tool => tool.name)
     expectedCatalog.sha256 = createHash('sha256').update(JSON.stringify(canonical(listed.tools))).digest('hex')
-    expectedCatalog.baseline = 'bound FC06/FC16 write_register and get_register_write_result'
+    expectedCatalog.baseline = 'bound write recovery: pending discovery and explicit onsite review'
     writeFileSync(new URL('./fixtures/mcp-tool-catalog.json', import.meta.url), JSON.stringify(expectedCatalog, null, 2) + '\n')
   }
   assert.deepEqual(listed.tools.map(tool => tool.name), expectedCatalog.names)

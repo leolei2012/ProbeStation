@@ -96,6 +96,10 @@ try {
   assert.equal((await execute(reconnect.id)).json().state, 'not-sent'); assert.equal(frames.length, before); beforeOpen = undefined
   const fail = await prepare(); connectionFailure = true
   assert.equal((await execute(fail.id)).json().state, 'not-sent'); connectionFailure = false
+  const disconnectFailure = await prepare()
+  engine.drivers.set('tcp:' + d.id, { async disconnect() { throw Error('synthetic disconnect before submission') } })
+  assert.equal((await execute(disconnectFailure.id)).json().state, 'not-sent', 'a polling disconnect failure cannot create an unknown write that was never submitted')
+  assert.equal(frames.length, before)
   const changeAfter = await prepare(); acceptedHook = () => cfg.updateGroup(g.id, { name: '发送后变更' })
   assert.equal((await execute(changeAfter.id)).json().state, 'acknowledged', 'configuration edits after native submission do not undo that command'); acceptedHook = undefined
   cfg.updateObject(d.id, { timeoutMs: 100 })
@@ -118,6 +122,8 @@ try {
   assert.equal((await execute(rtu.id)).json().state, 'acknowledged'); assert.equal(frames.at(-1)![0], 9); assert.equal(frames.at(-1)![1], 16)
   const bad = await prepare(); corrupt = true
   assert.equal((await execute(bad.id)).json().state, 'unknown'); corrupt = false
+  assert.equal(cfg.pendingRegisterWritesForPoint(r.id).channel, 'rtu:com77')
+  assert.equal(cfg.listPendingRegisterWrites(d.id).operations[0].id, bad.id, 'RTU blockers are discoverable without the original browser receipt')
   const tamper = await execute(wide.id, { version: 1, value: 0 }); assert.equal(tamper.statusCode, 400)
   assert.equal((await app.inject({ method: 'POST', url: `/api/registers/${r.id}/write/prepare`, headers: { ...headers, origin: 'https://elsewhere.example' }, payload: { version: 1, value: 1, source: source() } })).statusCode, 403)
   console.log('BOUND REGISTER WRITE OK: real API/config/poller/private transport with fake wire; FC06 0x1000 0/1, FC16 LE, TCP/RTU, prepare-only, source/ABA/queue/connect/final-gate checks, replay, unknown quarantine, no firmware or physical I/O')
@@ -138,6 +144,7 @@ try {
   })
   other.close(); await memory.close(); memory = new ConfigStore({ dbPath: path })
   assert.equal(memory.getRegisterWrite(pending.id).state, 'unknown', 'process/lifecycle restart never retries a pending command')
+  assert.equal(memory.listPendingRegisterWrites(d.id).operations[0].id, pending.id, 'a fresh client can discover prior-process blockers without knowing their IDs')
   assert.equal(memory.claimRegisterWrite(pending.id).claimed, false)
   assert.throws(() => memory.prepareRegisterWrite(r.id, 0, getSource()), /结果未知/)
   memory.reviewUnknownRegisterWrite(pending.id)

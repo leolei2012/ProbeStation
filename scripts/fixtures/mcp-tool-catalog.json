@@ -1,5 +1,5 @@
 {
-  "baseline": "bound FC06/FC16 write_register and get_register_write_result",
+  "baseline": "bound write recovery: pending discovery and explicit onsite review",
   "names": [
     "get_register_edit_snapshot",
     "update_register",
@@ -24,6 +24,8 @@
     "query_history",
     "write_register",
     "get_register_write_result",
+    "list_pending_register_writes",
+    "review_register_write_result",
     "export_history",
     "delete_history",
     "create_group",
@@ -56,5 +58,5 @@
     "ota_status",
     "ota_abort"
   ],
-  "sha256": "fa4d702f83adebaf62e7b97a54802833831c5e9c9f7385fca91ecb7ca26ea04d"
+  "sha256": "3cdc2c56d559b4cf196e7ba3126e21ec00f6a8df6eab2b72230a3d0ba5582b7e"
 }

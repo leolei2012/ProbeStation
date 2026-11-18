@@ -4,7 +4,7 @@ import { hookDriver } from './fixtures/component-hook-driver.ts'
 import { registerWriteSource, registerWriteSourceMatches, type GuardedWriteResult } from '../packages/core/src/guarded-register-write.ts'
 
 import { registerWidth } from '../packages/core/src/codec.ts'
-const scope = { registerWidth, registerWriteSourceMatches }
+const scope = { registerWidth, registerWriteSourceMatches, pendingWritesRequest: async () => [] }
 
 const memory = new Map<string, string>(), originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
 Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: (key: string) => memory.get(key) ?? null, setItem: (key: string, value: string) => memory.set(key, value), removeItem: (key: string) => memory.delete(key) } })
