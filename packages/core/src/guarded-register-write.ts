@@ -10,6 +10,16 @@ export function registerWriteSource(device: any, group: any, register: any) {
   }
 }
 export type RegisterWriteSource = ReturnType<typeof registerWriteSource>
+/** JSON object key order is not part of a Modbus destination. Preserve strict field/value checks. */
+export function registerWriteSourceMatches(expected: unknown, actual: RegisterWriteSource): boolean {
+  const equal = (a: unknown, b: unknown): boolean => {
+    if (a === b) return true
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) || Array.isArray(b)) return false
+    const left = a as Record<string, unknown>, right = b as Record<string, unknown>
+    return Object.keys(left).length === Object.keys(right).length && Object.keys(right).every(key => Object.hasOwn(left, key) && equal(left[key], right[key]))
+  }
+  return equal(expected, actual)
+}
 export type GuardedWriteState = 'prepared' | 'sending' | 'acknowledged' | 'not-sent' | 'unknown' | 'reviewed-unknown'
 export interface GuardedWritePlan {
   version: 1; id: string; scope: string; revision: string; channel: string; source: RegisterWriteSource

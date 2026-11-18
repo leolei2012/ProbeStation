@@ -57,6 +57,7 @@
     "scripts/test-alarm-log-failure.ts",
     "scripts/test-api-types.ts",
     "scripts/test-mcp-types.ts",
+    "scripts/test-register-write-recovery.ts",
     "scripts/test-mcp-lifecycle.ts",
     "scripts/test-mcp-disconnect.ts",
     "scripts/test-mcp-write-outcome.ts",

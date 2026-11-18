@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { hookDriver } from './fixtures/component-hook-driver.ts'
-import { registerWriteSource, type GuardedWriteResult } from '../packages/core/src/guarded-register-write.ts'
+import { registerWriteSource, registerWriteSourceMatches, type GuardedWriteResult } from '../packages/core/src/guarded-register-write.ts'
+
+import { registerWidth } from '../packages/core/src/codec.ts'
+const scope = { registerWidth, registerWriteSourceMatches }
 
 const memory = new Map<string, string>(), originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
 Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: (key: string) => memory.get(key) ?? null, setItem: (key: string, value: string) => memory.set(key, value), removeItem: (key: string) => memory.delete(key) } })
@@ -17,13 +20,13 @@ try {
     const calls: any[] = []
     const request = async (path: string, body?: any) => {
       calls.push({ path, body })
-      if (path.endsWith('/prepare')) { assert.deepEqual(body.source, source); return operation = makeOperation(body.value) }
+      if (path.endsWith('/prepare')) { assert.deepEqual(body.source, source); operation = makeOperation(body.value); operation.plan.functionCode = body.method === 'multiple' ? 16 : 6; return operation }
       if (path.endsWith('/execute')) { writes++; assert.deepEqual(body, { version: 1 }); if (loseResponse) { operation.state = 'unknown'; throw Error('synthetic lost response') }; operation.state = 'acknowledged'; operation.message = 'Matching Modbus receipt'; return operation }
       if (path.endsWith('/review-unknown')) { assert.deepEqual(body, { confirmedOnSite: true }); operation.state = 'reviewed-unknown'; return operation }
       assert.equal(body, undefined, 'result lookup is read-only'); return operation
     }
     const props = { source, english, currentValue: '0', onClose() { closed++ } }
-    const driver = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { writeRequest: request }, props)
+    const driver = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { ...scope, writeRequest: request }, props)
     const writeLabel = english ? 'Write' : '写入'
     try {
       await settle(driver)
@@ -40,10 +43,14 @@ try {
       assert(!markup.includes('Prepare write') && !markup.includes('准备写入') && !markup.includes('Confirm write') && !markup.includes('确认写入'))
       assert.equal(driver.one('input', p => p.type !== 'checkbox').props.disabled, false, 'keep input editable after success')
       driver.one('input', p => p.type !== 'checkbox').props.onChange({ target: { value: '0' } }); driver.render()
+      assert.equal(driver.one('select').props.value, 'single')
+      driver.one('select').props.onChange({ target: { value: 'multiple' } }); driver.render()
       driver.one('input', p => p.type !== 'checkbox').props.onKeyDown({ key: 'Enter', nativeEvent: { isComposing: true }, preventDefault() { assert.fail('IME must not submit') } })
       await settle(driver); assert.equal(writes, 1)
       driver.one('input', p => p.type !== 'checkbox').props.onKeyDown({ key: 'Enter', nativeEvent: { isComposing: false }, preventDefault() {} })
       await settle(driver); assert.equal(writes, 2); assert.equal(operation.plan.value, '0')
+      assert.equal(operation.plan.functionCode, 16, 'user can write one word using FC16')
+      assert.equal(calls.filter(c => c.path.endsWith('/prepare')).at(-1).body.method, 'multiple')
       driver.one('input', p => p.type !== 'checkbox').props.onChange({ target: { value: '1' } }); driver.render()
       loseResponse = true; button(driver, writeLabel).props.onClick(); await settle(driver)
       assert.equal(writes, 3); assert(renderToStaticMarkup(driver.tree).includes('synthetic lost response'))
@@ -63,13 +70,13 @@ try {
       button(driver, english ? 'Close' : '关闭').props.onClick(); assert.equal(closed, 1)
     } finally { driver.dispose() }
     const before = writes
-    const restored = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { writeRequest: request }, props)
+    const restored = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { ...scope, writeRequest: request }, props)
     try { await settle(restored); assert.equal(writes, before); assert(calls.at(-1).body === undefined, 'reopen only queries the saved operation') } finally { restored.dispose() }
   }
   for (const mode of ['source-change', 'unmount'] as const) {
     memory.clear(); let finish!: (value: GuardedWriteResult) => void, executes = 0
     const props = { source, english: false, currentValue: '0', onClose() {} }
-    const driver = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { writeRequest: async (path: string) => {
+    const driver = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { ...scope, writeRequest: async (path: string) => {
       if (path.endsWith('/prepare')) return await new Promise<GuardedWriteResult>(resolve => { finish = resolve })
       executes++; return makeOperation()
     } }, props)
@@ -85,7 +92,7 @@ try {
   }
   memory.clear()
   let old = makeOperation(), prepares = 0, executeCalls = 0
-  const pendingDriver = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { writeRequest: async (path: string) => {
+  const pendingDriver = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { ...scope, writeRequest: async (path: string) => {
     if (path.endsWith('/prepare')) { prepares++; return old }
     if (path.endsWith('/execute')) { executeCalls++; throw Error('delayed request; outcome unknown') }
     if (path.endsWith('/cancel')) { old = { ...old, state: 'not-sent', message: 'cancelled' }; return old }
@@ -102,5 +109,11 @@ try {
     assert.equal(pendingDriver.one('input').props.disabled, false)
     assert.equal(executeCalls, 1, 'cancel never sends a command')
   } finally { pendingDriver.dispose() }
-  console.log('BOUND WRITE UI OK: one-click raw 0/1, automatic prepare/execute, compact bilingual feedback, Enter/IME, duplicate suppression, source/unmount races, response loss/read-only query, safe pending cancellation and reload without replay')
+  for (const [type, expected] of [['hex16', '0xff'], ['bin16', '0b11111111']]) {
+    memory.clear(); memory.set('ps-register-write:' + JSON.stringify([source.device.id, source.device.transport, source.device.ip, source.device.port, source.device.serialPath, source.group.id, source.register.id]), makeOperation().id)
+    const original = makeOperation('255'); original.plan.source = { ...source, register: { ...source.register, dataType: type } }; original.state = 'not-sent'
+    const restored = hookDriver('RegisterWriteModal.tsx', 'RegisterWriteModal', { ...scope, writeRequest: async () => original }, { source: original.plan.source, currentValue: '0', english: false, onClose() {} })
+    try { await settle(restored); assert.equal(restored.one('input').props.value, expected, 'restoring a raw-radix point must not reinterpret a decimal receipt as hex/binary') } finally { restored.dispose() }
+  }
+  console.log('BOUND WRITE UI OK: FC06/FC16 choice, one-click raw 0/1, automatic prepare/execute, Enter/IME, duplicate suppression, source/unmount races, response loss/query/cancellation, stale and radix receipt restoration')
 } finally { if (originalStorage) Object.defineProperty(globalThis, 'sessionStorage', originalStorage); else delete (globalThis as any).sessionStorage }

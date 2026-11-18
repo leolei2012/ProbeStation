@@ -84,7 +84,7 @@ try {
   cfg.updateRegister(r.id, { alias: '队列期间变化' }); engine.inflight.delete('tcp:' + d.id)
   assert.equal((await waitingRequest).json().state, 'not-sent'); assert.equal(frames.length, before)
   const stale = await prepare(); cfg.updateGroup(g.id, { slaveId: 9 }); cfg.updateGroup(g.id, { slaveId: 7 })
-  assert.equal((await execute(stale.id)).statusCode, 409); assert.equal(frames.length, before, 'ABA cannot reuse a confirmation')
+  assert.equal((await execute(stale.id)).json().state, 'not-sent'); assert.equal(frames.length, before, 'ABA cannot reuse a confirmation')
   const oldSource = source(); cfg.updateRegister(r.id, { dataType: 'int16' })
   assert.equal((await app.inject({ method: 'POST', url: `/api/registers/${r.id}/write/prepare`, headers, payload: { version: 1, value: 1, source: oldSource } })).statusCode, 409)
   cfg.updateRegister(r.id, { dataType: 'uint16' })
@@ -131,7 +131,7 @@ try {
   const ticket = memory.prepareRegisterWrite(r.id, 1, getSource())
   const other = new DatabaseSync(path)
   other.exec('UPDATE register_groups SET slave_id=2; UPDATE register_groups SET slave_id=1;')
-  assert.throws(() => memory.claimRegisterWrite(ticket.id), /配置已变化/)
+  assert.equal(memory.claimRegisterWrite(ticket.id).operation.state, 'not-sent')
   const pending = memory.prepareRegisterWrite(r.id, 1, getSource()); memory.claimRegisterWrite(pending.id)
   memory.acceptRegisterWrite(pending.plan, () => {
     assert.throws(() => other.exec('UPDATE register_groups SET slave_id=2'), /locked/)
@@ -142,6 +142,6 @@ try {
   assert.throws(() => memory.prepareRegisterWrite(r.id, 0, getSource()), /结果未知/)
   memory.reviewUnknownRegisterWrite(pending.id)
   const beforeReopen = memory.prepareRegisterWrite(r.id, 0, getSource()); memory.reopen(path)
-  assert.throws(() => memory.claimRegisterWrite(beforeReopen.id), /配置已变化/)
+  assert.equal(memory.claimRegisterWrite(beforeReopen.id).operation.state, 'not-sent')
   console.log('BOUND GENERATION OK: persisted SQLite triggers, external-writer ABA, synchronous send exclusion, reopen invalidation and restart unknown outcomes')
 } finally { await memory.close(); const inside = relative(base, dir); assert(inside.startsWith('probe-bound-write-') && !inside.includes('/') && !inside.includes('\\')); rmSync(dir, { recursive: true }) }

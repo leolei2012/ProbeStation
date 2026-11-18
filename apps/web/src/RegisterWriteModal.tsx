@@ -1,28 +1,21 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { GuardedWriteResult, RegisterWriteSource } from '../../../packages/core/src/guarded-register-write'
-
-async function writeRequest(path: string, body?: unknown, timeout = 15000): Promise<GuardedWriteResult> {
-  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeout)
-  try {
-    const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', 'x-probestation-write': '1' }, body: body === undefined ? undefined : JSON.stringify(body) })
-    const data = await response.json()
-    if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`)
-    if (data.version !== 1 || typeof data.id !== 'string' || data.plan?.version !== 1 || data.plan?.id !== data.id || !Array.isArray(data.plan.words) || data.plan.words.length < 1 || data.plan.words.length > 4 || data.plan.words.some((w: unknown) => !Number.isInteger(w) || Number(w) < 0 || Number(w) > 65535) || !data.plan.source?.device || !data.plan.source?.group || !data.plan.source?.register || !Number.isFinite(data.plan.expiresAt) || !Number.isFinite(data.plan.timeoutMs) || !['prepared', 'sending', 'acknowledged', 'not-sent', 'unknown', 'reviewed-unknown'].includes(data.state)) throw new Error('后台返回了不支持的写入协议，请核对前后端版本。')
-    return data
-  } finally { clearTimeout(timer) }
-}
+import { registerWriteSourceMatches } from '../../../packages/core/src/guarded-register-write'
+import { registerWidth } from '../../../packages/core/src/codec'
+import { writeRequest } from './register-write-client'
 
 /** One click prepares and executes the bound plan. Recovery never creates another operation automatically. */
 export function RegisterWriteModal({ source, currentValue, english, onClose }: { source: RegisterWriteSource; currentValue: string; english: boolean; onClose: () => void }) {
   const [opening] = useState(() => JSON.parse(JSON.stringify(source)) as RegisterWriteSource)
   const [value, setValue] = useState(''), [operation, setOperation] = useState<GuardedWriteResult | null>(null)
+  const width = registerWidth(opening.register.dataType)
+  const [method, setMethod] = useState<'single' | 'multiple'>(() => width > 1 ? 'multiple' : 'single')
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [uncertain, setUncertain] = useState(false)
   const [restoring, setRestoring] = useState(true), [reviewed, setReviewed] = useState(false)
   const lock = useRef(false), live = useRef(true), id = useId()
   const dialog = useRef<HTMLDivElement>(null)
   const storageKey = 'ps-register-write:' + JSON.stringify([opening.device.id, opening.device.transport, opening.device.ip, opening.device.port, opening.device.serialPath, opening.group.id, opening.register.id])
-  const changed = JSON.stringify(source) !== JSON.stringify(opening)
+  const changed = !registerWriteSourceMatches(source, opening)
   const changedRef = useRef(changed)
   changedRef.current = changed
   useEffect(() => {
@@ -41,7 +34,11 @@ export function RegisterWriteModal({ source, currentValue, english, onClose }: {
         const saved = sessionStorage.getItem(storageKey)
         if (!saved) return
         const result = await writeRequest('/api/register-writes/' + encodeURIComponent(saved))
-        if (live.current) { setOperation(result); setValue(result.plan.value) }
+        if (live.current) {
+          const type = result.plan.source.register.dataType
+          const restoredValue = type.startsWith('hex') ? '0x' + BigInt(result.plan.value).toString(16) : type.startsWith('bin') ? '0b' + BigInt(result.plan.value).toString(2) : result.plan.value
+          setOperation(result); setValue(restoredValue); setMethod(width > 1 || result.plan.functionCode === 16 ? 'multiple' : 'single')
+        }
       } catch (e) { if (live.current) setError((english ? 'Could not restore the previous write. Do not resend until checked: ' : '无法恢复上次写入，请先核实，勿重复发送：') + String(e)) }
       finally { if (live.current) setRestoring(false) }
     }
@@ -58,9 +55,10 @@ export function RegisterWriteModal({ source, currentValue, english, onClose }: {
     if (restoring || changedRef.current || uncertain || operation?.state === 'sending' || operation?.state === 'unknown' || !value.trim()) return
     if (operation?.state !== 'prepared') setOperation(null)
     // Retained prepared operations keep their ID; a delayed original request cannot become a second command.
-    const prepared = operation?.state === 'prepared' ? operation : await writeRequest('/api/registers/' + opening.register.id + '/write/prepare', { version: 1, source: opening, value })
+    const prepared = operation?.state === 'prepared' ? operation : await writeRequest('/api/registers/' + opening.register.id + '/write/prepare', { version: 1, source: opening, value, method })
     if (!live.current) return
-    if (prepared.state !== 'prepared' || JSON.stringify(prepared.plan.source) !== JSON.stringify(opening)) throw new Error(text('写入目标不匹配，请重新打开窗口。', 'The write destination does not match. Reopen the dialog.'))
+    if (prepared.state !== 'prepared' || !registerWriteSourceMatches(prepared.plan.source, opening)) throw new Error(text('写入目标不匹配，请重新打开窗口。', 'The write destination does not match. Reopen the dialog.'))
+    if (prepared.plan.functionCode !== (method === 'multiple' ? 16 : 6)) throw new Error(text('后台未采用所选的 FC06/FC16 写入方式，本次未发送，请核对程序版本。', 'The server did not use the selected FC06/FC16 function. Nothing sent; check versions.'))
     sessionStorage.setItem(storageKey, prepared.id)
     setOperation(prepared)
     if (changedRef.current) throw new Error(text('配置已变化，本次未发送，请重新打开窗口。', 'Configuration changed. Nothing sent; reopen the dialog.'))
@@ -88,7 +86,7 @@ export function RegisterWriteModal({ source, currentValue, english, onClose }: {
   return <div className="modal-mask"><div ref={dialog} className="modal register-write-modal" role="dialog" aria-modal="true" aria-labelledby={id + '-title'} aria-describedby={id + '-help'} onKeyDown={e => {
     if (e.key === 'Escape' && !busy) { e.stopPropagation(); onClose() }
     if (e.key === 'Tab') {
-      const controls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'))
+      const controls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)'))
       const first = controls[0], last = controls.at(-1)
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
@@ -101,6 +99,12 @@ export function RegisterWriteModal({ source, currentValue, english, onClose }: {
     <p id={id + '-help'} className="kv">{text('输入原始值，点击写入。', 'Enter a raw value and click Write.')}</p>
     <label htmlFor={id + '-value'}>{text('原始写入值', 'Raw write value')}</label>
     <input id={id + '-value'} value={value} autoFocus disabled={!editable} onChange={e => { setValue(e.target.value); setOperation(null); setError(''); setReviewed(false) }} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && !disabled) { e.preventDefault(); void write() } }} aria-describedby={id + '-help'} placeholder={shown.register.dataType.startsWith('hex') ? '0x0001' : text('输入数值', 'Enter a value')} />
+    <label htmlFor={id + '-method'}>{text('写入方式', 'Write function')}</label>
+    <select id={id + '-method'} value={method} disabled={!editable} onChange={e => { setMethod(e.target.value as 'single' | 'multiple'); setOperation(null); setError('') }}>
+      <option value="single" disabled={width > 1}>{text('FC06 · 写单个寄存器', 'FC06 · Write single register')}</option>
+      <option value="multiple">{text('FC16 · 写多个寄存器', 'FC16 · Write multiple registers')}</option>
+    </select>
+    {width > 1 && <p className="kv">{text(`此类型占用 ${width} 个寄存器，使用 FC16 一次写入。`, `This type occupies ${width} registers and uses FC16.`)}</p>}
     {restoring && <p role="status">{text('正在检查上次写入…', 'Checking the previous operation…')}</p>}
     {changed && <p className="write-msg error" role="alert">{text('打开弹窗后配置已变化，请关闭后重新打开并确认来源。', 'Configuration changed. Close and reopen to review the destination.')}</p>}
     {operation?.state === 'acknowledged' && <p className="write-msg ok" role="status">{text('写入成功', 'Write successful')}</p>}

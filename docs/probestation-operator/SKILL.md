@@ -5,7 +5,7 @@ description: 使用 ProbeStation 操作 Modbus TCP/RTU 主站和从站，通过 
 
 # ProbeStation 操作指南
 
-主站保持寄存器 GUI 已恢复来源绑定写入（TCP/RTU，FC06/FC16）：输入原始值后直接点“写入”或按 Enter，程序自动准备并校验设备、从站、地址、类型及编码，再单次发送，界面不要求额外准备/确认。`0x1000` 开关原始值 `0/1` 不需要改成写分组。新 REST 使用 `/api/registers/:id/write/prepare` 与 `/api/register-writes/:id/execute`，不得回退到仍禁用的旧 `/write` 或旧 MCP `write_register`。结果丢失先 GET 原操作，不重发；尚未被后台接纳的计划可通过 `/:id/cancel` 取消，已接纳的请求不受取消影响。完整请求和边界见[来源绑定写入](../develop/213-寄存器来源绑定写入.md)。
+主站保持寄存器 GUI/MCP 已恢复来源绑定写入（TCP/RTU，FC06/FC16）：GUI 输入原始值，选择写入方式后直接点“写入”或按 Enter，程序自动准备、校验并发送。MCP 用 `write_register`，支持 `slave_id/register_id` 精确选点、`method: single/multiple` 和 `value_mode: raw/physical`，默认 multiple/physical；写原始开关值时明确传 raw。建议每条新指令传唯一 UUID `request_id`，结果丢失用 `get_register_write_result {operation_id: 原request_id}` 查询，不重发。重复 request_id 只返回原操作，即使 value 改变也不再发送；不同指令使用新 ID。`0x1000` 的 `0/1` 不需要改成写分组。歧义返回候选、不猜从站。新 REST 使用 `/api/registers/:id/write/prepare` 与 `/api/register-writes/:id/execute`，不得回退到禁用的旧 `/write`。尚未接纳的计划可通过 `/:id/cancel` 取消；已接纳的请求不受取消影响。完整请求和边界见[来源绑定写入](../develop/213-寄存器来源绑定写入.md)。
 
 本指南按 2026-10-27 仓库源码核对。先确认用户要操作的服务地址和设备；优先复用运行中的服务。工具自动化优先使用 MCP，缺少 MCP 时使用 REST；界面操作或曲线交互使用 Web UI。
 
@@ -91,7 +91,7 @@ npm run start
 
 写入、OTA、删除配置、缩短历史保留时间都不是观测所必需的步骤。只在用户已授权的范围执行；目标或写值单位不清楚时先补齐信息，不重复索要已明确给予的授权。
 
-旧 MCP `write_register`、`ota_upgrade` 及无条件 REST 写值/从站内存/升级启动入口仍返回 DEVICE_WRITE_BLOCKED，不能用来绕过新写入确认。需要写入时，使用开头说明的新准备/执行协议或 GUI；新协议的 value 为原始值，不应用 factor/offset，仅支持主站保持寄存器 FC06/FC16。先准备、展示固定目标及编码字，再在用户授权范围确认执行；查询响应与快照，真实协议读回及设备实际动作需另行核实。不要因超时盲目重复写入，OTA 也不在此次恢复范围。
+MCP `write_register` 现在走来源绑定发送链路，支持主站保持寄存器 FC06/FC16；缺少新后台能力时返回 DEVICE_WRITE_BLOCKED。`ota_upgrade` 及无条件 REST 写值/从站内存/升级启动入口仍禁用。MCP value_mode 默认 physical 会反算 factor/offset，明确传 raw 才直接编码原始值；GUI/新 REST 的 value 始终为原始值。单字可选 single 或 multiple，多字只用 multiple。检查回执 state，acknowledged 仅表示协议确认，不证明设备实际动作；unknown 请查询原 ID 并现场核实，不要盲目重复写入。现场核实后的解除可使用 GUI 或已授权的新 REST review-unknown，不自动确认未知结果。
 
 ### 点位表和告警
 

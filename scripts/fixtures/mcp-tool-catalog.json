@@ -1,5 +1,5 @@
 {
-  "baseline": "9e492bd8a5eeb98813d14e7db3f82e701f642293",
+  "baseline": "bound FC06/FC16 write_register and get_register_write_result",
   "names": [
     "get_register_edit_snapshot",
     "update_register",
@@ -23,6 +23,7 @@
     "get_device_snapshot",
     "query_history",
     "write_register",
+    "get_register_write_result",
     "export_history",
     "delete_history",
     "create_group",
@@ -55,5 +56,5 @@
     "ota_status",
     "ota_abort"
   ],
-  "sha256": "373e387fd0fe5a402e38e581ebfef58d411c357505f8b826655a14899f069c1b"
+  "sha256": "fa4d702f83adebaf62e7b97a54802833831c5e9c9f7385fca91ecb7ca26ea04d"
 }

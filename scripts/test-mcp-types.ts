@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { Context } from 'cordis'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -19,7 +19,7 @@ class FakeHttp extends EventEmitter {
 const expectedCatalog: { baseline: string; names: string[]; sha256: string } = JSON.parse(readFileSync(new URL('./fixtures/mcp-tool-catalog.json', import.meta.url), 'utf8'))
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value !== null && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)])) : value
 const source = readFileSync(new URL('../packages/mcp/src/index.ts', import.meta.url), 'utf8')
-assert.equal((source.match(/^    tools\.registerTool\(/gm) ?? []).length, 42)
+assert.equal((source.match(/^    tools\.registerTool\(/gm) ?? []).length, 43)
 verifyForwardingIdentity()
 
 const ctx = new Context(), fakeHttp = new FakeHttp(), clients: Client[] = [], servers: McpServer[] = []
@@ -37,6 +37,12 @@ try {
   servers.push(current)
   const connect = async (server: McpServer) => { const client = new Client({ name: 'synthetic-types', version: '1' }), [a, b] = InMemoryTransport.createLinkedPair(); clients.push(client); await Promise.all([server.connect(b), client.connect(a)]); return client }
   const client = await connect(current), listed = await client.listTools()
+  if (process.argv.includes('--update-catalog')) {
+    expectedCatalog.names = listed.tools.map(tool => tool.name)
+    expectedCatalog.sha256 = createHash('sha256').update(JSON.stringify(canonical(listed.tools))).digest('hex')
+    expectedCatalog.baseline = 'bound FC06/FC16 write_register and get_register_write_result'
+    writeFileSync(new URL('./fixtures/mcp-tool-catalog.json', import.meta.url), JSON.stringify(expectedCatalog, null, 2) + '\n')
+  }
   assert.deepEqual(listed.tools.map(tool => tool.name), expectedCatalog.names)
   assert.equal(createHash('sha256').update(JSON.stringify(canonical(listed.tools))).digest('hex'), expectedCatalog.sha256, 'all schemas, descriptions and annotations must match the reviewed baseline; intentional protocol changes require snapshot review')
   assert(listed.tools.length > 42); assert.equal(new Set(listed.tools.map(t => t.name)).size, listed.tools.length)

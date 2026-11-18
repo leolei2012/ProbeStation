@@ -30,6 +30,7 @@ tests.push('controlled-send-adapter')
 tests.push('device-write-block')
 tests.push('rtu-lifecycle')
 tests.push('bound-register-write', 'bound-register-write-ui', 'bound-write-native')
+tests.push('register-write-recovery')
 const cli = fileURLToPath(import.meta.resolve('tsx/cli'))
 const root = fileURLToPath(new URL('../', import.meta.url))
 for (const name of tests) {

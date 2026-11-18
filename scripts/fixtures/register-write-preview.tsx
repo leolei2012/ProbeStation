@@ -12,7 +12,7 @@ globalThis.fetch = async (input, init) => {
   const path = String(input), body = JSON.parse(String(init?.body ?? '{}'))
   if (path.endsWith('/prepare')) {
     const id = '12345678-1234-1234-1234-123456789abc'
-    operation = { version: 1, id, state: 'prepared', message: '', plan: { version: 1, id, source, scope: 'preview-only', revision: 'preview-only', channel: 'preview-only', value: body.value, words: [Number(body.value)], functionCode: 6, timeoutMs: 100, expiresAt: Date.now() + 120000 } }
+    operation = { version: 1, id, state: 'prepared', message: '', plan: { version: 1, id, source, scope: 'preview-only', revision: 'preview-only', channel: 'preview-only', value: body.value, words: [Number(body.value)], functionCode: body.method === 'multiple' ? 16 : 6, timeoutMs: 100, expiresAt: Date.now() + 120000 } }
   } else if (path.endsWith('/execute')) {
     writes++; publish(); operation!.state = lose ? 'unknown' : 'acknowledged'
     operation!.message = lose ? '模拟：已提交但没有匹配回执；请核实，不自动重发。' : '模拟：设备已返回匹配的 Modbus 写入回执。此回执不等于压缩机已实际运转。'

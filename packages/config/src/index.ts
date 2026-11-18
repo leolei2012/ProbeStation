@@ -71,9 +71,10 @@ export class ConfigStore {
     return this.db
   }, () => this.registerWriteScope, id => {
     const register = this.getRegister(id), group = register && this.getGroup(register.groupId), device = register && this.getObject(register.objectId)
-    return { register, group, device, registers: group ? this.listRegisters(group.objectId).filter(r => r.groupId === group.id) : [] }
+    return { register, group, device, registers: group ? this.listRegisters(group.id) : [] }
   }, error => this.quarantine(error))
-  prepareRegisterWrite(id: number, value: unknown, expected: unknown) { return this.registerWrites.prepare(id, value, expected) }
+  prepareRegisterWrite(id: number, value: unknown, expected: unknown, method?: unknown, requestId?: string) { return this.registerWrites.prepare(id, value, expected, method, requestId) }
+  hasRegisterWrite(id: string) { return this.registerWrites.has(id) }
   claimRegisterWrite(id: string) { return this.registerWrites.claim(id) }
   getRegisterWrite(id: string) { return this.registerWrites.get(id) }
   cancelPreparedRegisterWrite(id: string) { return this.registerWrites.cancelPrepared(id) }

@@ -3,7 +3,7 @@ import net from 'node:net'
 import type { DatabaseSync } from 'node:sqlite'
 import { DATA_TYPES, decodeRegister, encodeRegister, registerWidth, baseType } from '../../core/src/codec.ts'
 import { parseRegisterWriteValue } from '../../core/src/register-write-value.ts'
-import { registerWriteSource, writeConflict, type GuardedWritePlan, type GuardedWriteResult, type GuardedWriteState } from '../../core/src/guarded-register-write.ts'
+import { registerWriteSource, registerWriteSourceMatches, writeConflict, type GuardedWritePlan, type GuardedWriteResult, type GuardedWriteState } from '../../core/src/guarded-register-write.ts'
 
 export function installRegisterWriteSchema(db: DatabaseSync) {
   db.exec(`CREATE TABLE IF NOT EXISTS register_write_revision(singleton INTEGER PRIMARY KEY CHECK(singleton=1), revision TEXT NOT NULL);
@@ -44,6 +44,7 @@ export class RegisterWrites {
   }
   get(id: string) {
     const db = this.database(), result = this.row(db, id)
+    if (result.state === 'prepared') return this.transaction(transaction => this.refreshPrepared(transaction, id))
     // A previous process/workspace lifetime cannot establish whether its sending operation reached the device.
     if (result.state === 'sending' && result.plan.scope !== this.scope()) {
       db.prepare("UPDATE register_write_operations SET state='unknown', message='上次运行在确认结果前结束；请现场核实，不能自动重发。' WHERE id=? AND state='sending'").run(id)
@@ -51,19 +52,22 @@ export class RegisterWrites {
     }
     return result
   }
-  prepare(id: number, value: unknown, expected: unknown): GuardedWriteResult {
+  has(id: string) { return !!this.database().prepare('SELECT id FROM register_write_operations WHERE id=?').get(id) }
+  prepare(id: number, value: unknown, expected: unknown, method?: unknown, requestId?: string): GuardedWriteResult {
     return this.transaction(db => {
       const { device, group, register: r, registers } = this.graph(id)
       if (!device || !group || !r || group.objectId !== device.id || r.objectId !== device.id || r.groupId !== group.id || group.functionCode !== r.functionCode) throw writeConflict('点位、分组与设备关系无效。')
       const source = registerWriteSource(device, group, r)
       // Canonical projection, plus strict shape, prevents clients dropping source fields.
-      if (!expected || JSON.stringify(expected) !== JSON.stringify(source)) throw writeConflict()
+      if (!registerWriteSourceMatches(expected, source)) throw writeConflict('页面与后台的设备、从站或点位配置不一致，本次未发送。请关闭写入框并刷新页面后重试。')
+      if (method !== undefined && method !== 'single' && method !== 'multiple') throw Object.assign(new Error('写入方式无效，请选择 FC06 或 FC16。'), { statusCode: 400 })
       if (device.mode !== 'master' || !['tcp', 'rtu'].includes(device.transport) || r.functionCode !== 3) throw writeConflict('当前支持主站保持寄存器 FC06/FC16 写入；该点位不支持。')
       if (!Number.isInteger(group.slaveId) || group.slaveId < 1 || group.slaveId > 247) throw writeConflict('从站地址必须为 1–247，不使用广播写入。')
       if (device.transport === 'tcp' && (!net.isIP(device.ip) || !Number.isInteger(device.port) || device.port < 1 || device.port > 65535)) throw writeConflict('条件写入需要明确的 IP 地址和端口，不能使用动态域名。')
       if (device.transport === 'rtu' && (!device.serialPath || device.dataBits !== 8 || !Number.isInteger(device.baudRate) || device.baudRate < 300 || device.baudRate > 4000000 || !['none', 'even', 'odd'].includes(device.parity) || ![1, 2].includes(device.stopBits) || !['none', 'rtscts', 'xonxoff'].includes(device.flowControl))) throw writeConflict('请核对 RTU 串口参数，数据位须为 8。')
       if (!(DATA_TYPES as readonly string[]).includes(r.dataType)) throw writeConflict('点位类型不受支持。')
       const width = registerWidth(r.dataType)
+      if (method === 'single' && width > 1) throw Object.assign(new Error('此类型占用多个寄存器，请选择 FC16 写多个寄存器。'), { statusCode: 400 })
       if (!Number.isInteger(r.startAddress) || r.startAddress < 0 || !Number.isInteger(group.startAddress) || !Number.isInteger(group.quantity) || r.startAddress < group.startAddress || r.startAddress + width > group.startAddress + group.quantity || r.startAddress + width > 65536) throw writeConflict('点位字宽超出分组范围。')
       let covered = -1
       for (const item of [...registers].sort((a, b) => a.startAddress - b.startAddress || a.id - b.id)) {
@@ -78,17 +82,26 @@ export class RegisterWrites {
       const words = encodeRegister(r.dataType, parsed)
       const decoded = decodeRegister(r.dataType, words)
       if (typeof decoded === 'number' && !Number.isFinite(decoded)) throw Object.assign(new Error('编码后数值无效。'), { statusCode: 400 })
+      if (requestId !== undefined) {
+        if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId)) throw Object.assign(new Error('request_id 必须为 UUID。'), { statusCode: 400 })
+        requestId = requestId.toLowerCase()
+        if (db.prepare('SELECT id FROM register_write_operations WHERE id=?').get(requestId)) {
+          const previous = this.row(db, requestId)
+          if (!registerWriteSourceMatches(source, previous.plan.source) || JSON.stringify(words) !== JSON.stringify(previous.plan.words) || previous.plan.functionCode !== (method === 'multiple' || words.length > 1 ? 16 : 6)) throw writeConflict('request_id 已用于其他指令，不能更换目标、值或写入方式。')
+          return previous
+        }
+      }
       const channel = device.transport === 'tcp' ? `tcp:${device.ip.toLowerCase()}:${device.port}` : `rtu:${String(device.serialPath).toLowerCase().replace(/^\\\\\.\\/, '')}`
       if (db.prepare("SELECT id FROM register_write_operations WHERE channel=? AND state IN ('sending','unknown')").get(channel)) throw writeConflict('此通道有执行中或结果未知的写入，请先查询原操作并核实。')
-      const plan: GuardedWritePlan = { version: 1, id: randomUUID(), scope: this.scope(), revision: this.revision(db), channel, source,
-        value: String(parsed), words, functionCode: words.length === 1 ? 6 : 16, timeoutMs: Math.max(100, Math.min(60000, device.timeoutMs || 3000)), expiresAt: Date.now() + 120000 }
+      const plan: GuardedWritePlan = { version: 1, id: requestId ?? randomUUID(), scope: this.scope(), revision: this.revision(db), channel, source,
+        value: String(parsed), words, functionCode: method === 'multiple' || words.length > 1 ? 16 : 6, timeoutMs: Math.max(100, Math.min(60000, device.timeoutMs || 3000)), expiresAt: Date.now() + 120000 }
       db.prepare("INSERT INTO register_write_operations(id,channel,state,plan) VALUES(?,?,'prepared',?)").run(plan.id, channel, JSON.stringify(plan))
       return this.row(db, plan.id)
     })
   }
   claim(id: string) {
     return this.transaction(db => {
-      const operation = this.row(db, id)
+      const operation = this.refreshPrepared(db, id)
       if (operation.state !== 'prepared') return { operation, claimed: false }
       this.assertPlan(db, operation.plan)
       if (db.prepare("SELECT id FROM register_write_operations WHERE channel=? AND state IN ('sending','unknown')").get(operation.plan.channel)) throw writeConflict('通道已有未完成的操作。')
@@ -97,9 +110,22 @@ export class RegisterWrites {
     })
   }
   private assertPlan(db: DatabaseSync, plan: GuardedWritePlan) {
-    if (plan.scope !== this.scope() || Date.now() > plan.expiresAt || this.revision(db) !== plan.revision) throw writeConflict()
+    if (plan.scope !== this.scope()) throw writeConflict('程序或工作区已重启，旧写入尚未发送，已取消；可以重新写入。')
+    if (Date.now() > plan.expiresAt) throw writeConflict('旧写入已过期且尚未发送，已取消；可以重新写入。')
+    if (this.revision(db) !== plan.revision) throw writeConflict('配置已更新，旧写入尚未发送，已取消；请核对后重新写入。')
     const graph = this.graph(plan.source.register.id)
-    if (!graph.device || !graph.group || !graph.register || JSON.stringify(registerWriteSource(graph.device, graph.group, graph.register)) !== JSON.stringify(plan.source)) throw writeConflict()
+    if (!graph.device || !graph.group || !graph.register || !registerWriteSourceMatches(plan.source, registerWriteSource(graph.device, graph.group, graph.register))) throw writeConflict('写入目标已变化，本次未发送，请刷新页面后重新写入。')
+  }
+  private refreshPrepared(db: DatabaseSync, id: string): GuardedWriteResult {
+    const operation = this.row(db, id)
+    if (operation.state !== 'prepared') return operation
+    try { this.assertPlan(db, operation.plan) }
+    catch (error) {
+      if ((error as any)?.code !== 'WRITE_SOURCE_CHANGED') throw error
+      // Only unclaimed plans are retired. An accepted/sending/unknown command is never labelled not-sent.
+      db.prepare("UPDATE register_write_operations SET state='not-sent',message=? WHERE id=? AND state='prepared'").run((error as Error).message, id)
+    }
+    return this.row(db, id)
   }
   send(plan: GuardedWritePlan, accept: () => void) {
     // This lock excludes other SQLite writers until bytes have been handed to the fixed native handle.

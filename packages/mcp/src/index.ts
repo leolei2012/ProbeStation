@@ -11,11 +11,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z as zz } from 'zod'
-import { areaForFunction, encodeRegister, invertSemantic, parseEnum, registerWidth, resolveSemantic, smartParseCsv, type ModbusArea } from '@probebench/core'
+import { areaForFunction, parseEnum, registerWidth, resolveSemantic, smartParseCsv, type ModbusArea } from '@probebench/core'
 import { Recorder, MAX_RECORDING_PAGE_SIZE } from './recorder.ts'
 import { registerConfigEditTools } from './config-edit.ts'
 import { configEditRegistrar } from './config-edit-registry.ts'
 import { toolRegistrar } from './tool-registrar.ts'
+import { mcpWriteRegister } from './register-write.ts'
 import type { AlarmRule } from '../../core/src/alarm.ts'
 import { registerAlarmTools } from './alarm-settings.ts'
 import { registerResourceCleanup, throwCleanupErrors } from '../../core/src/resource-close.ts'
@@ -71,10 +72,6 @@ export function apply(ctx: Context, config: Config): void {
     if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from > to) throw new Error('时间范围无效')
     return { start: from.toISOString(), end: to.toISOString() }
   }
-
-  /** 按设备、数据区和协议地址定位点，四数据区地址空间相互独立。 */
-  const findRegisterByAddress = (deviceId: number, area: ModbusArea, address: number) =>
-    cfg.listRegistersByObject(deviceId).find((r: any) => r.startAddress === address && areaForFunction(r.functionCode) === area)
 
   const sourceRegisters = (id: number) => withRegisterSources<any>(cfg.listRegistersByObject(id), cfg.listGroups(id), cfg.getObject(id))
   const findSourceRegister = (id: number, area: ModbusArea, address: number, slaveId?: number, registerId?: number) =>
@@ -327,27 +324,25 @@ export function apply(ctx: Context, config: Config): void {
     })
 
     tools.registerTool('write_register', {
-      title: 'Write register', description: 'value 是工程值，反向应用 factor/offset 后编码。主站写真实设备，仅支持 holding-register/coil；从站修改本机点位内存，四数据区均支持，供外部主站读取，不主动连接外部设备。',
-      inputSchema: { device_id: zz.number(), address: zz.number(), value: zz.number(), area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']).optional(), method: zz.enum(['single', 'multiple']).optional() },
+      title: 'Write register', boundDeviceWrite: true,
+      description: '来源绑定写入主站保持寄存器（TCP/RTU）：method single=FC06、multiple=FC16（默认），多字类型仅FC16。value_mode默认physical，反算factor/offset；raw直接写原始值。整数/hex16/64位可传字符串。slave_id/register_id精确选点，歧义返回候选且不发送。建议为每条指令传唯一UUID request_id；重用只返回原回执，不重发。检查state：acknowledged仅协议确认，unknown须现场核实，不能盲目重发。用get_register_write_result查询结果。',
+      inputSchema: { device_id: zz.number().int().positive(), address: zz.number().int().min(0).max(65535), value: zz.union([zz.number(), zz.string()]),
+        area: zz.enum(['coil', 'discrete-input', 'holding-register', 'input-register']).optional(), method: zz.enum(['single', 'multiple']).optional(),
+        slave_id: zz.number().int().min(1).max(247).optional(), register_id: zz.number().int().positive().optional(),
+        value_mode: zz.enum(['physical', 'raw']).optional(), request_id: zz.string().uuid().optional() },
     }, async (args) => {
-      const area = (args.area ?? 'holding-register') as 'holding-register' | 'coil' | 'discrete-input' | 'input-register'
-      const device = cfg.getObject(args.device_id)
-      if (!device) return { content: [{ type: 'text', text: 'device not found' }], isError: true }
-      if (device.mode !== 'slave' && area !== 'holding-register' && area !== 'coil') return { content: [{ type: 'text', text: 'master can only write holding-register and coil' }], isError: true }
-      const reg = findRegisterByAddress(args.device_id, area, args.address)
-      if (!reg) return { content: [{ type: 'text', text: 'register not found at address ' + args.address }], isError: true }
-      // 物理值 → 逆变换（÷factor、−offset）→ 寄存器值 → 编码
-      const raw = invertSemantic(semanticOf(reg), args.value)
-      const words = encodeRegister(reg.dataType ?? 'int16', raw)
-      const method = words.length > 1 ? 'multiple' : (args.method ?? 'multiple')
-      const grp = cfg.getGroup(reg.groupId)
-      await poller.write(reg.objectId, reg.startAddress, words, method, grp?.slaveId ?? 1, area)
-      try { cfg.log('INFO', 'mcp', 'write ' + area + ' addr ' + args.address + ' = ' + args.value) }
-      catch {
-        // The write has returned; a later diagnostics failure must not encourage replay.
-        try { ctx.logger('mcp').warn(`device ${args.device_id}: 写调用已完成，但操作日志记录失败；勿因此重复写入。`) } catch { /* Diagnostics cannot change the completed write result. */ }
-      }
-      return { content: [{ type: 'text', text: JSON.stringify({ register_id: reg.id, address: reg.startAddress, area, value: args.value, method }) }] }
+      try {
+        const result = await mcpWriteRegister(cfg, poller, args) as { error?: string; state?: string }
+        return { content: [{ type: 'text', text: JSON.stringify(result) }], ...((result.error || result.state === 'not-sent' || result.state === 'unknown') ? { isError: true } : {}) }
+      } catch (error: any) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error.message, code: error.code, status: error.statusCode }) }] } }
+    })
+
+    tools.registerTool('get_register_write_result', {
+      title: 'Get register write result', description: '按写入回执id或request_id查询原操作，不发送指令。prepared过期自动记为not-sent；unknown请现场核实，不应自动重发。',
+      annotations: { readOnlyHint: true }, inputSchema: { operation_id: zz.string().uuid() },
+    }, async args => {
+      try { return { content: [{ type: 'text', text: JSON.stringify(cfg.getRegisterWrite(args.operation_id.toLowerCase())) }] } }
+      catch (error: any) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error.message, status: error.statusCode }) }] } }
     })
 
     tools.registerTool('export_history', {

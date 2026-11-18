@@ -23,8 +23,8 @@ export function registerRegisterWrite(app: FastifyInstance, _cfg: WriteConfig, _
   } }
   app.post<{ Params: { id: string } }>('/api/registers/:id/write/prepare', options, async req => {
     const body = req.body as any
-    if (!body || body.version !== 1 || Object.keys(body).some(key => !['version', 'value', 'source'].includes(key))) throw Object.assign(new Error('写入准备参数无效。'), { statusCode: 400 })
-    try { return _cfg.prepareRegisterWrite!(Number(req.params.id), body.value, body.source) }
+    if (!body || body.version !== 1 || Object.keys(body).some(key => !['version', 'value', 'source', 'method'].includes(key))) throw Object.assign(new Error('写入准备参数无效。'), { statusCode: 400 })
+    try { return _cfg.prepareRegisterWrite!(Number(req.params.id), body.value, body.source, body.method) }
     catch (error) { if (error instanceof Error && !('statusCode' in error)) throw Object.assign(error, { statusCode: 400 }); throw error }
   })
   app.get<{ Params: { id: string } }>('/api/register-writes/:id', options, async req => _cfg.getRegisterWrite!(req.params.id))
